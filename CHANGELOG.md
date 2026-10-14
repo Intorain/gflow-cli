@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.85.0] — 2026-10-14
+
 ### Added
 
 - **`@Character` mentions work for images on flow.google.com (#723).** On an account Flow
@@ -24,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worker. A `--reference-entity` id without a `--reference-entity-name` still exits 36
   there (the picker finds characters by name), and on a page served labs a character
   known only by name exits 29, since that picker attaches by id. **Video is
-  unchanged**: character references on `video t2v`/`r2v` still exit 36 on that host.
+  unchanged**: on `video t2v`/`r2v` there, `--reference-entity` still exits 36 and a
+  `@Name` exits 29 (the catalog is unreadable on that host).
 
 ### Fixed
 
@@ -6055,7 +6058,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...HEAD
+[0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0
 [0.84.0]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...v0.84.0
 [0.83.2]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...v0.83.2
 [0.83.1]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...v0.83.1

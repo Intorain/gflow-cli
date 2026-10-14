@@ -4,6 +4,25 @@
 
 ## Current release
 
+**v0.85.0 — alpha.** Images on flow.google.com can tag a character.
+
+**`@Character` on `gflow image t2i`/`i2i` (#723, #979).** On an account Flow serves from
+flow.google.com, an image prompt such as `"@Kael reading by the fire"` now attaches that
+Flow character through the composer's `@` picker. Before, it failed with exit 29 or 36.
+Characters and media sit in one picker, and an image captioned with the character's
+name can rank above the character. gflow therefore commits only the option titled
+exactly that name, never on trial, and checks the committed chip's kind and name. The
+submit must then carry exactly the requested references, or it is aborted before Flow
+acts. The MCP image tool takes the same path. A `--reference-entity` id without a name
+still exits 36. Video characters on that host are not ported yet (#723 stays open).
+Contributed by @BeckZero.
+
+**`gflow image t2i --project-name` titles a multi-prompt run's project (#975).**
+
+Full ledger: [LIVE_VERIFICATION_v0.85.0](LIVE_VERIFICATION_v0.85.0.md).
+
+<details><summary>v0.84.0 — batch image runs target an existing project</summary>
+
 **v0.84.0 — alpha.** Batch image runs can target an existing Flow project.
 
 **`gflow run --project ID` (#970).** Every run used to create a new project titled
@@ -17,6 +36,8 @@ on the same path. `--reference-entity` stays single-prompt only.
 
 Neither command has an MCP twin for this: `gflow run` is not ported yet, and the MCP image
 tool takes one prompt. Full ledger: [LIVE_VERIFICATION_v0.84.0](LIVE_VERIFICATION_v0.84.0.md).
+
+</details>
 
 <details><summary>v0.83.2 — non-English UIs, image upscale, and auth status without Chrome</summary>
 
@@ -466,6 +487,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `@Character` mentions on flow.google.com images attach the Flow character by exact picker title, verified as an entity chip, with an exact-set submit guard (#723, #979); multi-prompt `t2i --project-name` titles its project (#975) | ✅ done (v0.85.0) |
 | `gflow run --project` (#970) and multi-prompt `gflow image t2i --project` (#971) generate into an existing Flow project and create none | ✅ done (v0.84.0) |
 | `--duration` binds in a non-English Flow UI (#963), a notice-only cookie bar is acknowledged, image upscale clicks through locators (#957), and `auth status` probes with the profile's own channel (#962) | ✅ done (v0.83.2) |
 | The default image model (`nano2`) runs Nano Banana 2.1 on flow.google.com — the submit guard accepts its `BELUGA` token (#958) | ✅ done (v0.83.1) |
