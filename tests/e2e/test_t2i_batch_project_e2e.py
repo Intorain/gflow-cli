@@ -1,4 +1,4 @@
-"""E2E: a multi-prompt `gflow image t2i --project ID` runs every prompt in that project.
+"""E2E: a multi-prompt `gflow image t2i` with `--project ID` or `--project-name` (#975).
 
     GFLOW_CLI_E2E_PROFILE=<profile> uv run pytest -m e2e_image \
         tests/e2e/test_t2i_batch_project_e2e.py -v -o addopts=""
@@ -63,3 +63,27 @@ def test_multi_prompt_t2i_runs_every_prompt_in_the_given_project(
     # No project was created, and the one we made keeps its title.
     assert projects == [(project_id, title)], projects
     assert asset_projects == {project_id}, asset_projects
+
+
+def test_multi_prompt_t2i_titles_its_new_project_with_project_name(
+    e2e_env: dict[str, str], tmp_path: Path
+) -> None:
+    # #975: the name was accepted and dropped; the project was titled `gflow-cli t2i`.
+    title = f"gflow-e2e-t2i-name-{uuid.uuid4().hex[:6]}"
+    out = tmp_path / "out"
+    _gflow(
+        e2e_env,
+        "image",
+        "t2i",
+        "a paper boat on a pond",
+        "a kite above a green hill",
+        "--project-name",
+        title,
+        "--out",
+        str(out),
+    )
+
+    assert len([p for p in out.iterdir() if p.is_file()]) >= 2
+    with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as con:
+        titles = [r[0] for r in con.execute("SELECT title FROM projects")]
+    assert titles == [title], titles

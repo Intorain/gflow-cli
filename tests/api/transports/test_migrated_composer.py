@@ -3012,6 +3012,36 @@ async def test_an_image_submit_missing_its_reference_is_refused_not_reported_as_
     assert missing in str(info.value)
 
 
+@pytest.mark.parametrize(
+    ("reference_ids", "entity_ids", "guarded"),
+    [((), (), False), ((), ("ent-1",), True), (("m-1",), (), True)],
+)
+async def test_the_submit_guard_is_installed_whenever_a_reference_is_expected(
+    reference_ids: tuple[str, ...], entity_ids: tuple[str, ...], guarded: bool
+) -> None:
+    """A character-only run (#723) must be guarded too: without the route, a lost
+    character or a stray media id would reach Flow instead of aborting the submit."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+    routed: list[Any] = []
+
+    async def spy(url: Any, _handler: Any) -> None:
+        routed.append(url)
+
+    page.route = spy  # type: ignore[method-assign]
+    await MigratedComposer().submit_images_and_observe(
+        page,
+        GenerateImageRequest(prompt="a blue cup"),
+        reference_ids=reference_ids,
+        entity_ids=entity_ids,
+    )
+    assert bool(routed) is guarded
+
+
 async def test_a_non_200_image_submit_is_a_wire_format_error_carrying_the_status() -> None:
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.transports.migrated_composer import MigratedComposer

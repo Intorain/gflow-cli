@@ -767,7 +767,9 @@ def _build_video_media_inputs(
         "@Name; reference an arbitrary one-off image via reference_images. See "
         "docs/REFERENCE_STRATEGIES.md. "
         "On accounts served from flow.google.com, use an existing project and local "
-        "reference files; UUID/entity references and image4 are not ported to that "
+        "reference files. A character attaches there by name (@Name, or "
+        "reference_entities paired with reference_entity_names); UUID media "
+        "references, an entity id without a name, and image4 are not ported to that "
         "composer yet and fail before submit; retrying will not clear it. "
         "Returns local file paths to the generated images."
     ),

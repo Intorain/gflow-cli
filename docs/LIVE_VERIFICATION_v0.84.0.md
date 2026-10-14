@@ -58,4 +58,11 @@
 
 ## Post-tag evidence
 
-_Filled after the signed tag is pushed and the release workflow publishes._
+| Check | Result |
+|---|---|
+| Signed tag | `v0.84.0` pushed; SSH signature present (`git cat-file -p v0.84.0` carries `BEGIN SSH SIGNATURE`) |
+| Release workflow | run 38248825863: success (`build-and-publish`, `mcp-registry / publish`) |
+| PyPI | `gflow-cli` 0.84.0 is the latest version on pypi.org |
+| GitHub Release | `v0.84.0` published 2026-10-12T12:25:20Z, not a prerelease |
+| Release PR | #972 merged into `main` (merge commit `f4a414b9`), SonarCloud gate passed |
+| Back-merge | `main` → `develop` as `77df3929`; `main` is not ahead of `develop` |

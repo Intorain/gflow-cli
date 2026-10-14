@@ -1,6 +1,6 @@
 ---
 name: flow-recon-must-run-on-denon82-ffroliva-migrated
-description: "Both maintainer accounts are FULLY migrated to flow.google.com (one-way, not a flap) — there is no labs.google account left, so labs-side behaviour is cohort-external. Recon and live-verification run on either account through the migrated composer, which drives t2v, i2v/r2v from local files, character create, and image t2i/i2i from local files; unported forms still exit 36. Also: a capability claim without the frontend AND profile named is meaningless."
+description: "Both maintainer accounts are FULLY migrated to flow.google.com (one-way, not a flap) — there is no labs.google account left, so labs-side behaviour is cohort-external. Recon and live-verification run on either account through the migrated composer, which drives t2v, i2v/r2v from local files, character create, and image t2i/i2i from local files, with characters by name on images (#723); unported forms still exit 36. Also: a capability claim without the frontend AND profile named is meaningless."
 ---
 
 **Measured 2026-09-03.** Running `scripts/dev/capture_video_model_capability_matrix.py`
@@ -47,9 +47,10 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   `_unported_form` and `_unported_image_form` in `migrated_composer.py` ARE the
   matrix. As of #639's end-frame slice the ported set is t2v; i2v from a local start
   frame AND from a local start+end pair (interpolation, 2026-09-17); r2v from local
-  files; `character create`/`list`; and image t2i/i2i from local files — each with
-  `--project`. Unported: frames/references by UUID or `@Name`, character
-  entities on a generation, Agent instructions, Imagen 4, `image batch`, the 3:4
+  files; `character create`/`list`; image t2i/i2i from local files; and a character
+  by name on an image (`@Name`, #723) — each with `--project`. Unported:
+  frames/references by UUID or `@Name`, character entities on a VIDEO generation, an
+  entity id without a name on an image, Agent instructions, Imagen 4, `image batch`, the 3:4
   image aspect, scenes, extend and tools. Of those only i2v-by-UUID rests on a
   positive observation of absence; the rest are *unported by gflow*, never proven
   impossible on the host.

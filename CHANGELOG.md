@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.85.0] — 2026-10-14
+
+### Added
+
+- **`@Character` mentions work for images on flow.google.com (#723).** On an account Flow
+  serves from `flow.google.com`, `gflow image t2i "@Sussy …" --project <id>` (and `i2i`)
+  used to exit 29 (the character catalog's labs route answers 401) or exit 36 (character
+  references not ported). When the catalog is unreadable, an image mention that matches
+  no media becomes a character named by the **first word** after `@` (multi-word names
+  still need the catalog). The composer attaches it through its `@` picker. Character
+  and media options look identical in the DOM, and a generated image captioned with the
+  character's name can outrank it, so gflow commits the one option whose title equals
+  the name. It refuses before submit (exit 32) when none or several do, or when the match
+  is media. Nothing is committed on trial: a chip deleted from the prompt still went
+  into the generation. The `ogiZ0b` submit must carry exactly the requested references
+  plus the character, or it is aborted. The MCP image tool takes the same path through the
+  worker. A `--reference-entity` id without a `--reference-entity-name` still exits 36
+  there (the picker finds characters by name), and on a page served labs a character
+  known only by name exits 29, since that picker attaches by id. **Video is
+  unchanged**: on `video t2v`/`r2v` there, `--reference-entity` still exits 36 and a
+  `@Name` exits 29 (the catalog is unreadable on that host).
+
+### Fixed
+
+- **`gflow image t2i --project-name` titles a multi-prompt run's project (#975).** With
+  several prompts (positional, `--prompts-file` or `--stdin`) the option was accepted and
+  then dropped: the shared project was always titled `gflow-cli t2i`. It now gets the name
+  you pass, as a single-prompt run does; with `--project` no project is created, so the
+  name is not used. The MCP image tool takes one prompt, so there is nothing to mirror.
+
 ## [0.84.0] — 2026-10-12
 
 ### Added
@@ -6028,7 +6058,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...HEAD
+[0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0
 [0.84.0]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...v0.84.0
 [0.83.2]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...v0.83.2
 [0.83.1]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...v0.83.1

@@ -1043,7 +1043,15 @@ def t2i(  # NOSONAR
     if tool_specs:
         batch_prompts = _apply_tools_to_batch_prompts(batch_prompts, tool_specs)
     _execute_t2i_batch(
-        batch_prompts, count, continue_on_error, profile, out, transport, jitter_spec, project_id
+        batch_prompts,
+        count,
+        continue_on_error,
+        profile,
+        out,
+        transport,
+        jitter_spec,
+        project_id,
+        project_name,
     )
 
 
@@ -1118,10 +1126,12 @@ def _execute_t2i_batch(
     transport: str | None,
     jitter_spec: str | None = None,
     project_id: str | None = None,
+    project_name: str | None = None,
 ) -> None:
     """Run a multi-prompt t2i batch and print the summary table.
 
-    ``project_id`` runs every prompt in that existing project instead of a new one.
+    ``project_id`` runs every prompt in that existing project instead of a new one;
+    otherwise the new project is titled ``project_name`` (default ``gflow-cli t2i``).
     """
     jitter_range = resolve_jitter_range(jitter_spec)
     profile_name = _resolve_profile(profile)
@@ -1149,7 +1159,7 @@ def _execute_t2i_batch(
                 prompts=batch_prompts,
                 output_dir=output_dir,
                 continue_on_error=continue_on_error,
-                project_title=_T2I_PROJECT_TITLE,
+                project_title=project_name or _T2I_PROJECT_TITLE,
                 jitter_range=jitter_range,
                 _profile_name=profile_name,
                 _recorder=recorder,

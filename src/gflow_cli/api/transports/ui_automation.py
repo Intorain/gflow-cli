@@ -61,6 +61,7 @@ from gflow_cli.errors import (
     ContentPolicyError,
     FlowAppError,
     GFlowError,
+    MentionIndexUnavailableError,
     RateLimitError,
     UiSelectorDriftError,
     WafRejectionError,
@@ -3246,6 +3247,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         # project we generate in (pass --project / project_id). Flow's JS then
         # includes them on the submit; the request logger below records whether the
         # outgoing batchGenerateImages carries `referenceEntities` (spike signal).
+        if len(request.reference_entity_names) > len(request.reference_entities):
+            # A character resolved by name only (#723: the character catalog failed) has
+            # no id, and this picker attaches by id — refuse rather than drop it.
+            raise MentionIndexUnavailableError(detail="the character source is unavailable")
         if request.reference_entities:
             await self._attach_character_entities(
                 page,
