@@ -64,8 +64,8 @@ Which reference methods each path accepts (design spec §2, verified against `cl
 
 | Path | Character (identity) | Media / ingredient (image) |
 |---|---|---|
-| `image t2i` | `@Name` · `--reference-entity <id>` | `@Name` (in-project UUID → `referenceImages`) |
-| `image i2i` | `@Name` · `--reference-entity <id>` | `@Name` · `--ref <path-or-uuid>` |
+| `image t2i` | `@Name` · `--reference-entity <id>` (+ `--reference-entity-name` on flow.google.com) | `@Name` (in-project UUID → `referenceImages`) |
+| `image i2i` | `@Name` · `--reference-entity <id>` (+ `--reference-entity-name` on flow.google.com) | `@Name` · `--ref <path-or-uuid>` |
 | `video t2v` | `@Name` · `--reference-entity <id>` | ❌ — media mentions on the video path are Phase 3 |
 | `video i2v` | ❌ — start/end frames replace ingredients | local path or catalog UUID via `IMAGE` / `--initial-frame` · optional `--end-frame` |
 | `video r2v` | `@Name` · `--reference-entity <id>` | `--ref <path>` (local ingredients); `@media` is Phase 3 |
@@ -83,10 +83,10 @@ Notes:
 
 On an account Flow serves from `flow.google.com`, `image t2i` and `image i2i` take a character
 mention (`@Name` or `--reference-entity`) through the composer's own `@` picker. **Video is
-unchanged:** `video t2v`/`r2v` with a character still exit 36 there.
+unchanged:** video characters are still refused there: `--reference-entity` exits 36, and a video `@Name` exits 29 because the character catalog cannot be read on that host.
 
 - **No catalog needed.** On that host `gflow character list` cannot read the catalog (its labs route
-  answers 401). When the character source fails, an image mention that matches no media asset
+  answers an error: 401 or 404 measured, the labs route is retired). When the character source fails, an image mention that matches no media asset
   becomes a character **by name**: the name is the **first word after `@`**. A character
   whose name has several words needs the catalog to resolve, so use a one-word name on that
   host. The name stays in the prompt as plain text (`@Sussy cooks` → chip + `Sussy cooks`).
@@ -98,12 +98,19 @@ unchanged:** `video t2v`/`r2v` with a character still exit 36 there.
   name, which is your data, not a UI label). It then commits the one option whose title
   equals the name, case-insensitive. Nothing is committed on trial: a chip deleted from
   the prompt still goes into the generation. The run is refused before submit (exit 32),
-  listing what the picker offered, when no option matches exactly, when several do (for
+  reporting how many options the picker offered, when no option matches exactly, when several do (for
   example an upload literally named `Sussy`), or when the match turns out to be media.
 - **The submit is checked for exactly the requested references.** The `ogiZ0b` body
   carries media at one slot and characters at another. It must hold exactly the
   requested local references plus the committed character: one missing or one extra
   aborts the submit before Flow generates anything.
+- **What to do on a refusal.**
+  - **Exit 32:** no option, or several, carry the exact name. Rename the colliding asset in
+    Flow, or give the character a unique one-word name.
+  - **Exit 36 on `--reference-entity <id>`:** the picker finds characters by name, so pair
+    the id with `--reference-entity-name <Name>`.
+  - **Exit 29 on a page served labs:** the character was resolved by name, without an id,
+    and that picker attaches by id. Pass `--reference-entity <id>`.
 
 ## Prerequisite: a mention only works if the asset can actually ride
 

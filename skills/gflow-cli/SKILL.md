@@ -76,8 +76,9 @@ gflow run --config <batch.json> [--project ID]            # JSON image batch; a 
                                                           # --project (or "project" in the config) reuses an existing project
 # For accounts Flow serves flow.google.com (#639), t2i, i2i, and upscale are ported (a project is
 # created when --project is omitted, #864): i2i accepts local --ref files only, all
-# five aspects. UUIDs, @Name/entity references, Imagen 4 (image4), and image batch
-# are refused there with exit 36.
+# five aspects. Images take a character by name (@Name, or --reference-entity with
+# --reference-entity-name; #723). UUID references, an entity id without a name,
+# Imagen 4 (image4), image batch, and characters on video are refused there (exit 36).
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: omni-flash only; without --project a project is created first, on either host (#864); 10s is omni-flash-only
