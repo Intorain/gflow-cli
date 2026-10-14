@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`@Character` mentions work for images on flow.google.com (#723).** On an account Flow
+  serves from `flow.google.com`, `gflow image t2i "@Sussy …" --project <id>` (and `i2i`)
+  used to exit 29 (the character catalog's labs route answers 401) or exit 36 (character
+  references not ported). When the catalog is unreadable, an image mention that matches
+  no media becomes a character named by the **first word** after `@` (multi-word names
+  still need the catalog). The composer attaches it through its `@` picker. Character
+  and media options look identical in the DOM, and a generated image captioned with the
+  character's name can outrank it, so gflow commits the one option whose title equals
+  the name. It refuses before submit (exit 32) when none or several do, or when the match
+  is media. Nothing is committed on trial: a chip deleted from the prompt still went
+  into the generation. The `ogiZ0b` submit must carry exactly the requested references
+  plus the character, or it is aborted. The MCP image tool takes the same path through the
+  worker. A `--reference-entity` id without a `--reference-entity-name` still exits 36
+  there (the picker finds characters by name), and on a page served labs a character
+  known only by name exits 29, since that picker attaches by id. **Video is
+  unchanged**: character references on `video t2v`/`r2v` still exit 36 on that host.
+
 ### Fixed
 
 - **`gflow image t2i --project-name` titles a multi-prompt run's project (#975).** With

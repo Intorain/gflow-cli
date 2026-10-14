@@ -41,7 +41,12 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
     zip_entity_refs,
 )
-from gflow_cli.errors import ContentPolicyError, UiSelectorDriftError, WafRejectionError
+from gflow_cli.errors import (
+    ContentPolicyError,
+    MentionIndexUnavailableError,
+    UiSelectorDriftError,
+    WafRejectionError,
+)
 
 # ---------------------------------------------------------------------------
 # Async helpers shared across units
@@ -1398,6 +1403,27 @@ class TestGenerateImages:
             await t.generate_images(project_id="x", request=_req())
 
         attach.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_by_name_character_without_an_id_is_refused(self) -> None:
+        """A character resolved by name only (#723 fallback) has no entity id, and
+        this picker attaches by id — refuse instead of generating without it."""
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+        req = GenerateImageRequest(
+            prompt="Sussy cooks", model=Model.NARWHAL, reference_entity_names=("Sussy",)
+        )
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()) as send,
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+            pytest.raises(MentionIndexUnavailableError),
+        ):
+            await t.generate_images(project_id="x", request=req)
+
+        send.assert_not_awaited()
 
 
 class TestZipEntities:

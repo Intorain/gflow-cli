@@ -51,7 +51,7 @@ def _patch_profile_and_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 
 @pytest.fixture(autouse=True)
 def _patch_mentions_index(monkeypatch: pytest.MonkeyPatch, active_index: dict[str, Any]) -> None:
-    async def _fake_build(cls: Any, client: Any, project_id: str) -> Any:
+    async def _fake_build(cls: Any, client: Any, project_id: str, **_: Any) -> Any:
         return active_index["index"]
 
     monkeypatch.setattr(

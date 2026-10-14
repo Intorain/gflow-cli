@@ -18,6 +18,7 @@ from gflow_cli.api.transports.migrated_composer import (
     _image_body_problem,
     _unported_image_form,
 )
+from tests.api.transports._ogiz0b import submit_body
 from tests.api.transports.test_migrated_images import (
     MEDIA,
     PROJECT,
@@ -74,7 +75,7 @@ def _request_i2i(image_world: dict[str, Any]) -> None:
     # decides whether Flow was actually asked for an i2i run, and it is the only
     # thing standing between "the upload was dropped" and a plausible T2I result
     # reported as image-to-image.
-    body = f'[["ogiZ0b", "GEM_PIX_2 {REFERENCE}"]]'
+    body = submit_body(media=(REFERENCE,), model="GEM_PIX_2")
     image_world["result"] = image_world["records"][0]
     image_world["body_problem"] = _image_body_problem(body, (REFERENCE,))
     image_world["missing_ref_problem"] = _image_body_problem(body, (REFERENCE, MEDIA))

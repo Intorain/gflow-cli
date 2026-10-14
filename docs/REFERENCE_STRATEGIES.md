@@ -79,6 +79,32 @@ Notes:
   fails fast with a clear exit-11 message naming the Phase-3 limitation — no silent drop, no wasted
   credit.
 
+## On flow.google.com (images only, #723)
+
+On an account Flow serves from `flow.google.com`, `image t2i` and `image i2i` take a character
+mention (`@Name` or `--reference-entity`) through the composer's own `@` picker. **Video is
+unchanged:** `video t2v`/`r2v` with a character still exit 36 there.
+
+- **No catalog needed.** On that host `gflow character list` cannot read the catalog (its labs route
+  answers 401). When the character source fails, an image mention that matches no media asset
+  becomes a character **by name**: the name is the **first word after `@`**. A character
+  whose name has several words needs the catalog to resolve, so use a one-word name on that
+  host. The name stays in the prompt as plain text (`@Sussy cooks` → chip + `Sussy cooks`).
+  Media mentions resolve as before.
+- **The option titled exactly the name is picked, not the first option.** The picker
+  lists characters and media in one list, and their DOM is identical apart from a translated
+  subtitle. An image whose caption starts with the character's name can rank above the
+  character (measured 2026-10-13). gflow reads each option's own title (the asset's
+  name, which is your data, not a UI label). It then commits the one option whose title
+  equals the name, case-insensitive. Nothing is committed on trial: a chip deleted from
+  the prompt still goes into the generation. The run is refused before submit (exit 32),
+  listing what the picker offered, when no option matches exactly, when several do (for
+  example an upload literally named `Sussy`), or when the match turns out to be media.
+- **The submit is checked for exactly the requested references.** The `ogiZ0b` body
+  carries media at one slot and characters at another. It must hold exactly the
+  requested local references plus the committed character: one missing or one extra
+  aborts the submit before Flow generates anything.
+
 ## Prerequisite: a mention only works if the asset can actually ride
 
 An `@Name` character mention only resolves if the entity **has at least one reference image** (its
