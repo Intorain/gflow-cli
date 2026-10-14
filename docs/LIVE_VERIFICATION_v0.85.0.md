@@ -73,4 +73,11 @@ tests/e2e/test_t2i_batch_project_e2e.py::test_multi_prompt_t2i_titles_its_new_pr
 
 ## Post-tag evidence
 
-Filled after the tag is pushed and the release workflow publishes.
+| Check | Result |
+|---|---|
+| Signed tag | `v0.85.0` pushed; SSH signature present (`git cat-file -p v0.85.0` carries `BEGIN SSH SIGNATURE`) |
+| Release workflow | run 38582576870: success (`build-and-publish`, `mcp-registry / publish`) |
+| PyPI | `gflow-cli` 0.85.0 is the latest version on pypi.org (wheel and sdist) |
+| GitHub Release | `v0.85.0` published 2026-10-14T14:41:07Z, not a prerelease |
+| Release PR | #980 merged into `main` (merge commit `31b6e139`), SonarCloud gate passed |
+| Back-merge | `main` → `develop` as `451a8c23`; `main` is not ahead of `develop` |
