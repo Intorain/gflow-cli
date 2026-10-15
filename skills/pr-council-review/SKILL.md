@@ -1,6 +1,6 @@
 ---
 name: pr-council-review
-version: "2.2"
+version: "2.3"
 description: Multi-dimensional LLM council review of an open PR (default) or a local feature branch (§ 8 branch mode, invoked via `/gflow:branch-review`). Five baseline dimensions (correctness, quality, security, tests, memory-hygiene) plus adaptive dimensions per surface (transports / data / CLI / docs / auth / BDD / scripts / release-gate). Each agent invokes specialized skills (security-review, code-review, verify) for its dimension. Reads files via `git show <sha>:<path>` to avoid stale-working-tree false positives. Cross-tool portable.
 ---
 
@@ -246,6 +246,8 @@ The orchestrator's working tree is on `<base_branch>` (typically `develop`), NOT
 
 3. **SHA pinning verification (v2.1 NEW):** before reporting findings, run `git rev-parse $REVIEWED_SHA` (or `git ls-remote origin <head_branch>`) and confirm your reads were against `<REVIEWED_SHA>`. If the author has pushed new commits during your dispatch, your findings still apply to `<REVIEWED_SHA>` — the synthesizer will note any divergence at Phase 5 step 5.
 
+4. **Say how you know (v2.3 NEW).** Tag every must-fix `evidence: read | ran | spiked`. `read` = you inferred it from code or docs; `ran` = you executed something offline (a test, `--help`, a script) and quote its output; `spiked` = you observed it on a live Flow surface or a real profile. A must-fix about what Flow, Google, or a command on a real profile *does* that is tagged `read` is a hypothesis — say what run would settle it. Do not launch browsers or touch profiles yourself; the synthesizer owns the § 5 Spike gate.
+
 **Specialized skill (if listed for your dimension):** before deep analysis, invoke the Skill tool for `<skill_name>` to load specialized review guidance. Apply that skill's checklists in addition to the dimension-specific questions below.
 
 Assess specifically:
@@ -256,7 +258,7 @@ Assess specifically:
 
 Output a structured report under 500 words:
 - Verdict: GREEN / YELLOW / RED
-- Must-fix (numbered, file:line refs)
+- Must-fix (numbered, file:line refs, each tagged `evidence: read | ran | spiked`)
 - Nice-to-have (numbered)
 - Confirmed-<good/safe/correct> (1-line bullets)
 
@@ -366,9 +368,63 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
    - **Spot-check 2-3 file-state claims** via `git show <REVIEWED_SHA>:<path>` (NOT `git show origin/<head>:<path>` — the remote may have moved since dispatch). If any agent claim contradicts `<REVIEWED_SHA>`, mark it FALSE POSITIVE in the report — do not silently drop, so accuracy is auditable.
    - **Also spot-check 1-2 BEHAVIOR/content claims** (v2.1) — e.g. "marker X isn't registered", "addopts doesn't have Y". Same `git show` verification. The v2 council had a real false-claim here from D5 (assumed-not-verified).
    - **SHA divergence note:** check `gh pr view <N> --json headRefOid --jq '.headRefOid'`. If the current head differs from `<REVIEWED_SHA>`, note this prominently in the report: *"Author pushed N new commits during the review. This verdict reports against `<REVIEWED_SHA>`; the new commits may have resolved findings (re-run the council to confirm)."* Do NOT try to re-review the new commits silently.
+5b. **Spike gate** — run it on every must-fix that makes a live-behaviour claim before the report is written or posted. See § Spike gate below.
 6. **Live-verify gate** (D6 fired + PR body has unchecked live-verify boxes): explicit `AskUserQuestion` with three options — *Run now (~1 Flow credit per locale)*, *Block merge — add to PR body as required reviewer action*, *Skip and accept risk*. Cite `[[verification-ledger-5-layer]]`. Do NOT spend credits without affirmative click.
 7. **Memory-action gate** (D5 fired with must-fix items): explicit `AskUserQuestion` offering to APPLY the memory edits/additions/deletions in the same PR or as a follow-up.
 8. **YELLOW escape valve:** the Phase 6 `AskUserQuestion` MUST include a *"Dismiss YELLOW with justification (logged)"* option. Dismissal requires a one-line reason appended to the PR body or comment, so the override is auditable.
+
+### Spike gate
+
+§ 2's spike traversal reads the spikes that already exist. This gate covers the case it
+cannot: a dimension *predicts* what Flow, Google, or a command on a real profile will do,
+and nobody has observed it yet. False-positive filtering (step 5) checks findings against
+the code. This gate checks them against Flow. Both are needed.
+
+**In scope:** any must-fix that states what happens at runtime outside the test suite, and
+was inferred from reading the code (`evidence: read`). Examples: "reports success on an
+`/about` profile", "a held profile makes this crash", "this doc sentence is false on
+flow.google.com", "Google flags this launch". **Out of scope:** findings about the code,
+the docs, or the PR's own evidence, such as a missing test, a stale sentence, or the D4
+"e2e absent" rule. Those are checked by reading, and step 5 covers them.
+
+For each in-scope finding, follow [`spike`](../spike/SKILL.md):
+
+1. **Pre-register the reading** before running anything: what you will run, and what result
+   means CONFIRMED, REFUTED, or unmeasured. Use a table, like the spike skill's.
+2. **Take the cheapest rung that answers it.** Rung 1 is an existing capture or spike, which
+   § 2 already gathered. Rung 2 is a run against the reviewed SHA: an in-process probe, or
+   the CLI on a real profile in a worktree pinned to `REVIEWED_SHA`. Navigation, auth/session
+   reads and credit reads cost $0. Anything that costs credits or quota goes through the
+   step 6 `AskUserQuestion`; the council never spends without that click.
+3. **Profile etiquette is the spike skill's, unchanged:** `agentctl.py join`, lease the
+   profile, and treat `ProfileLockedError` as the answer "use another profile", never as a
+   reason to kill a browser.
+4. **Label the outcome in the report:**
+   - **CONFIRMED**: observed. Cite the command and the redacted output line.
+   - **REFUTED**: list it under *False positives* with the observation. It never reaches the PR.
+   - **PLAUSIBLE — unmeasured**: no profile was in the right state, or the run needed a click
+     nobody gave. Keep it, mark it, and name the run that would settle it.
+
+**Verdict effect.** A PLAUSIBLE live-behaviour finding is not enough on its own to make the
+council RED. If it is the only thing holding the verdict there, cap the verdict at YELLOW
+and make the settling run the action. A guess posted as a blocker sends the contributor to
+fix behaviour that may not exist.
+
+**The gate also points at the PR.** If the PR body claims live results (for example
+"3 → 7 of 10 profiles"), reproduce the cheapest one on a profile we hold. A claim the
+council can reproduce is evidence. A claim it cannot reproduce is a question to ask the
+contributor, not a finding to report.
+
+**Autonomous mode (§ 9)** cannot spike: no profiles, no network. There, every in-scope
+finding is PLAUSIBLE by definition, and the report says so.
+
+> **Written from PR #982** (2026-10-15). The council posted three must-fix items about
+> runtime behaviour: `auth renew` claiming success on `/about` profiles, a traceback on a
+> profile held by the user's own Chrome, and a USAGE sentence "disproved" by the
+> contributor's run. All three came from reading code, and the review went out as RED
+> without one run of them. Each could have been checked at $0 on profiles we hold. The
+> maintainer caught it: a review that does not spike its own runtime claims is asking the
+> contributor to do the verification the council skipped.
 
 ---
 
@@ -385,7 +441,7 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 | <D2> | … | … |
 
 ## Must-fix (<N>)
-1. **<short title>** — `<file>:<line>`. <description>. <which dimension flagged>.
+1. **<short title>** — `<file>:<line>`. <description>. <which dimension flagged>. <CONFIRMED (spiked: cmd → result) | PLAUSIBLE — unmeasured (settle by: …) — live-behaviour claims only, § Spike gate>.
 2. …
 
 ## Nice-to-have (<N>)
@@ -507,6 +563,7 @@ When invoked unattended by `hermes-ops`'s automated triage runner, the agent and
 |---|---|
 | § 0 step 4, draft-PR confirmation | N/A — draft PRs are filtered out upstream by the Stage 0 gate. |
 | § 5 step 6, live-verify credit-spend gate | Always skip; never run live e2e tests or spend Flow/Veo credits. On a GREEN verdict, carry this in the mandatory "Next step — live validation" report section (see Live-validation ceiling below), not as a loose informational note. |
+| § 5 step 5b, Spike gate | Never spike (no profiles, no network). Label every live-behaviour must-fix **PLAUSIBLE — unmeasured** with the run that would settle it. |
 | § 5 step 7, memory-action gate | Report the suggested memory actions in the text, but **never** auto-apply or write them. |
 | § 5 step 8, YELLOW-dismiss escape valve | Never auto-dismiss or override. Report the consensus verdict (`YELLOW`/`RED`) exactly as-is. |
 | § 6, final "How to proceed" User Question | Omit the interactive question. Print the compiled markdown report directly to stdout. |
