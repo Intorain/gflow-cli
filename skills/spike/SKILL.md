@@ -162,7 +162,8 @@ gap named is a lead; an unmeasured gap implied is the next day lost.
 Feeds: [`issue-assessment`](../issue-assessment/SKILL.md) (triage needs evidence, not a
 hypothesis), [`predict`](../predict/SKILL.md) (persona claims about a live surface must
 cite a capture), [`live-verify`](../live-verify/SKILL.md) (proves the fix; this proves
-the diagnosis), and — for a bug — [`scenario`](../scenario/SKILL.md), where what you
+the diagnosis), [`pr-council-review`](../pr-council-review/SKILL.md) (§ 5 Spike gate — a
+review's runtime claims are spiked before they are posted), and — for a bug — [`scenario`](../scenario/SKILL.md), where what you
 observed becomes the `Given`/`When`/`Then` of a test.
 
 ## A spike is step 0, never the deliverable
