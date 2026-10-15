@@ -356,10 +356,11 @@ If you are NOT sure a finding is real because it depends on file content, VERIFY
 
 ## 5 · Synthesize the verdict
 
-1. **Tally verdicts** per dimension.
+1. **Tally verdicts** per dimension — *after* step 5b's Spike gate has labelled the live-behaviour findings, since its outcome feeds step 3.
 2. **Handle missing agents:** any dimension that failed → mark `UNKNOWN`, downgrade consensus by one step (GREEN→YELLOW, YELLOW→YELLOW, RED→RED). Never wait indefinitely.
 3. **Consensus rule:**
    - **`D0` (mechanical CI gate, Pre-flight step 6) RED or UNVERIFIED → the overall verdict cannot be GREEN.** A D0 RED forces **RED** even if every LLM dimension is GREEN — CI will reject the tree. A D0 UNVERIFIED caps the verdict at **YELLOW** with an explicit "confirm CI green before merge" action.
+   - **A RED held up only by PLAUSIBLE — unmeasured live-behaviour findings (§ Spike gate) caps at YELLOW**, with the settling run as the action. A REFUTED finding counts for nothing.
    - Any RED → **RED** (block merge).
    - Any YELLOW → **YELLOW** (soft block; dismissal requires a logged justification).
    - All GREEN (including D0) → **GREEN** (mergeable).
@@ -391,32 +392,27 @@ For each in-scope finding, follow [`spike`](../spike/SKILL.md):
 
 1. **Pre-register the reading** before running anything: what you will run, and what result
    means CONFIRMED, REFUTED, or unmeasured. Use a table, like the spike skill's.
-2. **Take the cheapest rung that answers it.** Rung 1 is an existing capture or spike, which
-   § 2 already gathered. Rung 2 is a run against the reviewed SHA: an in-process probe, or
-   the CLI on a real profile in a worktree pinned to `REVIEWED_SHA`. Navigation, auth/session
-   reads and credit reads cost $0. Anything that costs credits or quota goes through the
-   step 6 `AskUserQuestion`; the council never spends without that click.
-3. **Profile etiquette is the spike skill's, unchanged:** `agentctl.py join`, lease the
-   profile, and treat `ProfileLockedError` as the answer "use another profile", never as a
-   reason to kill a browser.
+2. **Take the cheapest rung that answers it.** Start with an existing capture or spike, which
+   § 2 already gathered. Next is the spike skill's in-process probe, or the CLI on a real
+   profile in a worktree pinned to `REVIEWED_SHA`. Navigation, auth/session reads and credit
+   reads cost $0. Anything that costs credits or quota needs its own `AskUserQuestion`, under
+   the same rule as step 6: the council never spends without that click.
+3. **Profile etiquette:** follow the spike skill's lease rules. Treat `ProfileLockedError` as
+   the answer "use another profile", never as a reason to kill a browser. Join through
+   `agentctl.py` first, as the multi-agent rule requires.
 4. **Label the outcome in the report:**
    - **CONFIRMED**: observed. Cite the command and the redacted output line.
    - **REFUTED**: list it under *False positives* with the observation. It never reaches the PR.
    - **PLAUSIBLE — unmeasured**: no profile was in the right state, or the run needed a click
      nobody gave. Keep it, mark it, and name the run that would settle it.
 
-**Verdict effect.** A PLAUSIBLE live-behaviour finding is not enough on its own to make the
-council RED. If it is the only thing holding the verdict there, cap the verdict at YELLOW
-and make the settling run the action. A guess posted as a blocker sends the contributor to
-fix behaviour that may not exist.
+**Verdict effect** is part of step 3's consensus rule. A guess posted as a blocker sends the
+contributor to fix behaviour that may not exist.
 
 **The gate also points at the PR.** If the PR body claims live results (for example
 "3 → 7 of 10 profiles"), reproduce the cheapest one on a profile we hold. A claim the
 council can reproduce is evidence. A claim it cannot reproduce is a question to ask the
 contributor, not a finding to report.
-
-**Autonomous mode (§ 9)** cannot spike: no profiles, no network. There, every in-scope
-finding is PLAUSIBLE by definition, and the report says so.
 
 > **Written from PR #982** (2026-10-15). The council posted three must-fix items about
 > runtime behaviour: `auth renew` claiming success on `/about` profiles, a traceback on a

@@ -154,5 +154,8 @@ def test_council_review_routes_live_behaviour_findings_through_spike() -> None:
     assert "**PLAUSIBLE — unmeasured**" in council
     # Agents must tag how they know, so the synthesizer can find the guesses.
     assert "`evidence: read | ran | spiked`" in council
+    # The cap must live in the consensus rule itself; prose after the tally is too late.
+    consensus = council.split("3. **Consensus rule:**", 1)[1].split("4. **Deduplicate", 1)[0]
+    assert "PLAUSIBLE — unmeasured live-behaviour findings" in consensus
     # And the spike skill must name the council as a consumer.
     assert "[`pr-council-review`](../pr-council-review/SKILL.md)" in spike
