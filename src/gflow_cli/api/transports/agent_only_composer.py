@@ -791,19 +791,41 @@ async def run_agent_images(
     finally:
         await _restore_quietly(composer, page, snapshot)
     log.info("migrated.agent_only.images_done", project_id=project_id, count=len(media))
-    return [
-        GeneratedImage(
-            media_name=m.uuid,
-            workflow_id="",
-            seed=0,
-            prompt=request.prompt,
-            model_name_type=request.model.value,
-            aspect_ratio=request.aspect.value,
-            fife_url=_full_size_src(m.src),
-            dimensions=(m.width, m.height),
+    images: list[GeneratedImage] = []
+    for m in media:
+        src = _full_size_src(m.src)
+        images.append(
+            GeneratedImage(
+                media_name=m.uuid,
+                workflow_id="",
+                seed=0,
+                prompt=request.prompt,
+                model_name_type=request.model.value,
+                aspect_ratio=request.aspect.value,
+                fife_url=src,
+                dimensions=await _natural_size(page, src),
+            )
         )
-        for m in media
-    ]
+    return images
+
+
+#: The tile's `naturalWidth` is the 512-px grid preview's (#824 printed 382x512 for an
+#: 896x1200 file), so size the URL the download fetches. 0x0 when it cannot load.
+_NATURAL_SIZE_JS = r"""
+async (src) => {
+  const img = new Image();
+  img.src = src;
+  try { await img.decode(); } catch (e) { return [0, 0]; }
+  return [img.naturalWidth, img.naturalHeight];
+}
+"""
+
+
+async def _natural_size(page: Page, src: str) -> tuple[int, int]:
+    w, h = await page.evaluate(_NATURAL_SIZE_JS, src)
+    if not (w and h):
+        log.warning("migrated.agent_only.image_size_unknown", src_kind=src.split("/")[2])
+    return int(w), int(h)
 
 
 async def run_agent_video(

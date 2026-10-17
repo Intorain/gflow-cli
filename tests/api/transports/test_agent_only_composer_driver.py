@@ -349,6 +349,42 @@ async def test_an_opaque_asb_image_is_named_by_its_data_media_id_and_fetched_ful
 
 
 @pytest.mark.asyncio
+async def test_an_image_reports_the_size_of_the_file_it_downloads_not_of_the_grid_preview(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reported live on #824: the table printed 382x512 for an 896x1200 file, because the
+    size was read off the 512-px grid preview while the download asks `/asb/` for `=s0`."""
+    import io
+
+    from PIL import Image
+
+    from gflow_cli.config import reset_settings
+
+    def png(w: int, h: int) -> bytes:
+        buf = io.BytesIO()
+        Image.new("RGB", (w, h)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    sizes = {"=s512-rw": png(382, 512), "=s0": png(896, 1200)}
+
+    async def serve(route: Any) -> None:
+        body = next((b for spec, b in sizes.items() if route.request.url.endswith(spec)), None)
+        if body is None:
+            await route.abort()
+        else:
+            await route.fulfill(body=body, content_type="image/png")
+
+    await page.route("https://flow.google.com/asb/**", serve)
+    monkeypatch.setenv("GFLOW_CLI_AGENT_CONFIRM", "account")
+    reset_settings()
+    await _load(page, kind="image", asbImages=True)
+    (image,) = await aoc.run_agent_images(
+        page, image_api.GenerateImageRequest(prompt="x"), project_id="p1"
+    )
+    assert image.dimensions == (896, 1200)
+
+
+@pytest.mark.asyncio
 async def test_more_images_than_requested_is_a_typed_failure(page: Page) -> None:
     await _load(page, kind="image", produce=3)
     with pytest.raises(FlowAgentUiError, match="3") as exc:
