@@ -212,7 +212,8 @@ def _frame(rpcid: str, payload: Any) -> str:
 
 class _Resp:
     def __init__(self, rpcid: str, payload: Any) -> None:
-        self.url = f"https://flow.google.com/_/X/data/batchexecute?rpcids={rpcid}&rt=c"
+        # Batched with another rpc ahead of it, as the app may send the project read.
+        self.url = f"https://flow.google.com/_/X/data/batchexecute?rpcids=HTrJv,{rpcid}&rt=c"
         self._text = _frame(rpcid, payload)
 
     async def text(self) -> str:

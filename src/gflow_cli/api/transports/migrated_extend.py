@@ -290,7 +290,9 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
     found: asyncio.Future[SourceClip | None] = asyncio.get_running_loop().create_future()
 
     async def on_response(response: Any) -> None:
-        if found.done() or _rpcid(str(getattr(response, "url", ""))) != LISTING_RPC:
+        # Matched on the whole URL, not the first `rpcids` entry: the read can be batched
+        # with others (`rpcids=A,Zzl0ze`), and parse_frames picks its frame out.
+        if found.done() or LISTING_RPC not in str(getattr(response, "url", "")):
             return
         try:
             text = await response.text()
