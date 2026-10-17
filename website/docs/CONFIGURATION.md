@@ -438,7 +438,7 @@ Measurement script: `scripts/dev/spike_offscreen_window.py`.
 **What:** On an account Flow serves the agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), Agent settings carries a **Confirm before generating** choice. This sets it before a run.
 **Values:**
 - `account` (default) — leave the account's setting as it is. If Flow asks for confirmation, gflow approves exactly one request its own submit produced, and stops without approving if a second one appears.
-- `always` — set **Always**. The approval step is the only point where an agent that queues more generations than requested can be stopped before credits are spent.
+- `always` — set **Always**. gflow approves the **first** confirmation without reading the count it names, and one confirmation can cover several generations. What this stops before credits are spent is a **second** confirmation in the same run; an agent that queues more than requested under the first one is caught only after the fact (gflow fails the run when more clips are pending, or more images appear, than were requested — the credits are already spent).
 - `never` — set **Never**. No approval step; a result count that differs from the request is detected only after the credits are spent.
 **Default:** `account`
 **Persistence:** unlike model / aspect / count (applied per run and restored afterwards), this value is saved to the Flow account and **not** restored — it is your standing choice, and it also applies when you use Flow in the browser.

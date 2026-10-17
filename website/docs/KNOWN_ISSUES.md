@@ -1386,6 +1386,14 @@ video per request.
   `img[data-media-id]`; gflow downloads the original size by rewriting the size spec to `=s0`.
 - The request text is English. Whether the agent honours it on a non-English account is
   unmeasured (the original reporter's account is `ru`).
+- **The confirmation step does not bound the spend of the first ask.** gflow approves the
+  first confirmation without reading the count it names, and one confirmation can cover
+  several generations. Only a *second* confirmation is stopped before billing; an agent that
+  queues more than requested under the first is detected after the fact (more clips pending,
+  or more images on the grid, than requested), with the credits already spent — even with
+  `GFLOW_CLI_AGENT_CONFIRM=always`.
+- An image whose orientation does not match the requested aspect is kept (the run is
+  billed and the file is valid) and logged as `migrated.agent_only.aspect_mismatch`.
 
 **Detection** is unchanged from v0.74.0: a hidden settings trigger with **no chip anywhere**
 is this composer; with a chip it is the recoverable agent mode of

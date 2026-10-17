@@ -1107,10 +1107,13 @@ async def gflow_generate_video(  # NOSONAR
             that envelope too.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
-            including 'r2v'). Video generation only has a classic driver:
+            including 'r2v'). Labs video only has a classic driver:
             'classic'/'auto' verify the classic editor pre-submit (best-effort
             DOM probe) and abort before spending credits if it is unreachable;
-            'agentic' is not yet supported for video and is rejected (400).
+            'agentic' is not yet supported for video and is rejected (400). An
+            agent-only flow.google.com composer (#799) is routed to its own
+            driver before that check, so 't2v' runs there under 'auto' or
+            'classic'.
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
