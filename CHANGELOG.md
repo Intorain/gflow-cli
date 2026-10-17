@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generating" choice, applied before a run and kept. `account` (default) leaves the account's
   setting alone. With a confirmation step gflow approves exactly one that its own submit
   produced, and stops without approving a second. A video run also refuses to start while another clip is still generating in the project, and stops if more clips are queued than were requested.
+- **`gflow auth renew` refreshes saved sessions without signing in again.** It opens each
+  profile (`--profile`, or `--all`) in a headless browser and loads Flow, so Google and Flow
+  rotate the saved cookies. It then verifies the session like `gflow auth status`. No credits
+  are spent. A revoked session still needs `gflow auth login`, and a profile in use by another
+  gflow process is skipped. It reports a profile as renewed only when it saw it renewed: an
+  account Flow holds at its public `/about` page is `public_landing`; a labs.google session that
+  stayed expired, or never answered readably, is `labs_stale` / `labs_unverified`; a browser
+  that cannot start (the profile is open in your own Chrome) is a `launch_error` row, and the
+  rest of an `--all` run carries on. `--json` prints JSON on every path, including errors.
+- **`gflow credits user|list --refresh` renews expired sessions again.** Since #802, an expired
+  session fails the credits read without opening a browser. That is the right default, because
+  re-asking aisandbox-pa with the same Bearer cannot change its answer. It also removed the only
+  automatic renewal that `credits list` used to give stale profiles. `--refresh` brings it back as
+  an opt-in. A profile whose fast path raises an expired-session error is renewed through
+  `auth renew` and asked again, while the others are untouched. A failed renewal keeps the
+  original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`. The credits 401 hint
+  now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
+  account whose labs session issues no token at all is not helped by renewal, and says so.
 
 ### Changed
 
@@ -39,8 +57,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--aspect 3:4` was refused up front because the classic settings pane has no 3:4 option; the
   agent-only pane does.
 
+## [0.85.0] — 2026-10-14
+
+### Added
+
+- **`@Character` mentions work for images on flow.google.com (#723).** On an account Flow
+  serves from `flow.google.com`, `gflow image t2i "@Sussy …" --project <id>` (and `i2i`)
+  used to exit 29 (the character catalog's labs route answers 401) or exit 36 (character
+  references not ported). When the catalog is unreadable, an image mention that matches
+  no media becomes a character named by the **first word** after `@` (multi-word names
+  still need the catalog). The composer attaches it through its `@` picker. Character
+  and media options look identical in the DOM, and a generated image captioned with the
+  character's name can outrank it, so gflow commits the one option whose title equals
+  the name. It refuses before submit (exit 32) when none or several do, or when the match
+  is media. Nothing is committed on trial: a chip deleted from the prompt still went
+  into the generation. The `ogiZ0b` submit must carry exactly the requested references
+  plus the character, or it is aborted. The MCP image tool takes the same path through the
+  worker. A `--reference-entity` id without a `--reference-entity-name` still exits 36
+  there (the picker finds characters by name), and on a page served labs a character
+  known only by name exits 29, since that picker attaches by id. **Video is
+  unchanged**: on `video t2v`/`r2v` there, `--reference-entity` still exits 36 and a
+  `@Name` exits 29 (the catalog is unreadable on that host).
+
 ### Fixed
 
+- **`gflow image t2i --project-name` titles a multi-prompt run's project (#975).** With
+  several prompts (positional, `--prompts-file` or `--stdin`) the option was accepted and
+  then dropped: the shared project was always titled `gflow-cli t2i`. It now gets the name
+  you pass, as a single-prompt run does; with `--project` no project is created, so the
+  name is not used. The MCP image tool takes one prompt, so there is nothing to mirror.
+
+## [0.84.0] — 2026-10-12
+
+### Added
+
+- **`gflow run --project ID` generates a batch into an existing Flow project (#970).** Every
+  run used to create a new project titled `gflow-cli run`, so a user who keeps their
+  images in one project had to fall back to one `gflow image t2i --project` call per
+  prompt. `--project` (or a top-level `"project"` key in the config; the CLI wins) now
+  runs every row in that project and creates none, and a title already in the local
+  catalog is kept, as with `t2i --project`. `gflow run` has no MCP twin yet, so
+  there is no MCP option to mirror.
+- **`gflow image t2i` takes `--project` with several prompts (#971).** A multi-prompt run
+  (several positional prompts, `--prompts-file` or `--stdin`) used to reject
+  `--project` as single-prompt only; it now runs every prompt in that project and
+  creates none, on the same path as `gflow run --project`. `--reference-entity` stays
+  single-prompt only. The MCP image tool takes one prompt, so there is nothing to
+  mirror.
+
+## [0.83.2] — 2026-10-11
+
+### Fixed
+
+- **`--duration` failed before submit on a Flow account whose UI is not in English
+  (#963).** On `flow.google.com` the duration radio was matched on its exact English
+  label (`8s`), so a Vietnamese pane reading `8 giây` matched nothing and every run with
+  `--duration` stopped with exit 11, before any credit was spent. The radio is now matched
+  on its number, refusing a `4K`/`480p` sibling that shares the leading digit. CLI and MCP
+  share this transport, so both are fixed.
+
+- **A notice-only cookie bar blocked every run on `flow.google.com`, at exit 23.** Some
+  languages are served a consent bar with only an *OK, got it* button and no reject
+  option; the driver looked only for reject, so the bar stayed over the settings control.
+  It now clicks reject where the bar offers one and acknowledges the notice only when it
+  does not. Found while live-checking #963 under a Vietnamese UI.
+
+- **`gflow image upscale` on `flow.google.com` failed with *Element is not attached to
+  the DOM* (#957).** The image tile and the download button were held as element handles
+  resolved once, and Flow re-renders the grid after it first appears, so the click landed
+  on a detached node. They are now Playwright locators, re-resolved on every action. Video
+  upscale opens its download menu through the same helper, so it shares the fix; the MCP
+  tools call the same transport. Image upscale was verified live on the CLI and over MCP.
+
+- **`gflow auth status` reported a migrated account as not signed in to Flow on hosts
+  without Google Chrome (PR #962, by @mohaidoss).** For a `flow.google.com` account, the migrated-host probe opened
+  the profile with a hard-coded `channel="chrome"`. Playwright resolves that only to
+  `/opt/google/chrome/chrome` on Linux. On a host with just the bundled Chromium the launch
+  raised, the probe logged `auth_migrated_fallback_probe_error`, and status printed
+  *"Signed in to Google, but not to the Flow app"*, even though generation, which picks its
+  channel with `channel_for_profile`, ran fine on the same profile. The probe now opens the
+  profile with that same resolver and runs the #477 engine-downgrade guard first.
+
+## [0.83.1] — 2026-10-08
+
+### Fixed
+
+- **The default image model failed on `flow.google.com` once Flow moved to Nano Banana 2.1
+  (#958).** Flow replaced "Nano Banana 2" with "Nano Banana 2.1" in the migrated model menu,
+  and the submit now carries `BELUGA` where it carried `NARWHAL`, so the submit guard refused
+  every `nano2` run (the default) with exit 7: *the image submit body does not carry requested
+  model NARWHAL*. `nano2` now accepts that token; upgrade with `gflow update`. On an older
+  version, `--model nano-pro` or `--model nano2-lite` still works. Measured on two
+  accounts on that host: 2.1 replaced 2 rather than appearing beside it, and Flow's
+  catalogue there no longer lists `NARWHAL`. Found and first fixed by @omid-io.
+
+## [0.83.0] — 2026-10-07
+
+### Added
+
+- **Image and video upscaling on the migrated `flow.google.com` frontend (Refs #914).**
+  `gflow image upscale` now drives the migrated editor's download menu via the `SPrCad`
+  batchexecute wire, decoding the upscaled JPEG directly without hitting the legacy
+  aisandbox REST route (2K captured live; 4K is driven the same way but was only seen
+  disabled, on a non-Ultra account). The menu item is picked by its resolution token
+  (`2K`, `1080p`), which was measured identical across locales, never by its label.
+- **`gflow video upscale` command.** Upscales or exports platform-generated videos to 1080p
+  Full HD, downloads the original 720p, or exports a 270p animated GIF, on
+  `flow.google.com` only (`GFLOW_CLI_FLOW_HOST=labs.google` refuses it, exit 36). The
+  1080p export was measured free (1 observation, 2026-10-07), and the saved MP4 is checked
+  to really be 1080p so a preview or the 720p original is never written as the export.
+- **MCP tools `gflow_upscale_image` and `gflow_upscale_video`.** Exposes image upscaling
+  and video upscaling/export over the MCP interface with full catalog resolution.
+
+### Changed
+
+- **Proactive 4K tier detection.** On accounts below the Ultra tier, 4K image upscaling
+  detects the disabled UI state and fails fast with exit code 22 (`UpscaleUnavailableError`),
+  advising `--scale 2k`, without waiting for an API 403. A missing menu item raises
+  `UiSelectorDriftError` (exit 23) instead.
+
+### Fixed
+
+- **`gflow video upscale --scale 270p` no longer gives up while Flow is still rendering the
+  GIF.** Flow renders the animated GIF in the page, and the delay varies: measured on
+  2026-10-07, once 40 s, once a 104 s run, and once past the 120 s that MP4 exports get. A
+  270p export now waits up to 5 minutes. A timeout now says to re-run (an export spends no
+  credits) instead of the generic "a single API call exceeded the 30 s deadline".
 - **flow.google.com video runs no longer fail after Flow has billed them (#948).** Since
   about 2026-10-05, Flow sends `null` in the generation record's fourth slot, where it
   used to send `"CAE"`. gflow located the record by that marker. As a result,
@@ -5966,7 +6108,12 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...HEAD
+[0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0
+[0.84.0]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...v0.84.0
+[0.83.2]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...v0.83.2
+[0.83.1]: https://github.com/ffroliva/gflow-cli/compare/v0.83.0...v0.83.1
+[0.83.0]: https://github.com/ffroliva/gflow-cli/compare/v0.82.1...v0.83.0
 [0.82.1]: https://github.com/ffroliva/gflow-cli/compare/v0.82.0...v0.82.1
 [0.82.0]: https://github.com/ffroliva/gflow-cli/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/ffroliva/gflow-cli/compare/v0.80.0...v0.81.0

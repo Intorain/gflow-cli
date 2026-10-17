@@ -17,3 +17,9 @@ Feature: A run config row generates from an earlier row's image, in place
     When gflow run executes it on the live profile
     Then both rows succeed and save a real image
     And the file was uploaded once and attached in place by both rows
+
+  Scenario: A run given an existing project generates every row into it and creates none
+    Given an existing project and a run config of two rows
+    When gflow run executes it into that project on the live profile
+    Then both rows succeed and save a real image
+    And every image is in that project, no project was created, and its title is kept

@@ -850,7 +850,7 @@ class FlowHostMigratedError(GFlowError):
         "gflow drives that frontend for text-to-video, image-to-video from local "
         "start (and end) frames, reference-to-video from local --ref files, "
         "text-to-image, and image-to-image from local files (no UUID or @Name "
-        "frame, no character entities; --project required) "
+        "frame; images take a character by name, video none; --project required) "
         "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
         "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
         "off, or because this request type is not ported to the migrated host yet. "

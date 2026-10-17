@@ -202,7 +202,7 @@ clip is never silently passed off as character-consistent. The recorded
 `consistency_method` in the run state is `entity` when the entity rode (vs
 `text`).
 
-### The same trap on the migrated host, and it is not ported yet
+### The same trap on the migrated host (ported for images, not yet for video)
 
 The bullet above — *the inline include button attaches the character's thumbnail as a plain
 image, not the entity* — is not a labs quirk. It is how Flow's reference surfaces work, and
@@ -218,12 +218,15 @@ and the same query resolves to either depending on the keystroke.
 | `@` + query + **ArrowDown** + Enter | `kael_ref.jpg` | `media` — `entity_id` is `null` |
 
 So a name that matches both a character and a file is **ambiguous at the picker**, and Flow
-does not rank them. Whatever drives it must: **the character wins**, and the committed chip's
+does not rank characters first — measured again 2026-10-13 (#979), an image captioned with
+the character's name ranked above the character, so Enter alone can commit the image. Whatever drives it must: **the character wins**, and the committed chip's
 `data-reference-type` is read back before submit — exactly the assertion
 `_assert_entities_attached` already makes on labs.
 
-None of this is driven yet: `--reference-entity` / `@Name` on the migrated video path exits
-36, so `movie run` cannot produce an entity-consistent scene there. Tracked in
+Images drive it since #979: the option whose `.asset-title` equals the name exactly is
+selected, and the chip's kind is verified before submit. The migrated **video** path still
+exits 36 on `--reference-entity` / `@Name`, so `movie run` cannot produce an
+entity-consistent scene there. Tracked in
 [#723](https://github.com/ffroliva/gflow-cli/issues/723) with the working gesture recorded.
 
 ### A costume change is a new character, not a variant

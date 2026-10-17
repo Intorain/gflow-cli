@@ -12,7 +12,7 @@ optimization_notes: |
   - reCAPTCHA direction inverted: agents suggest GFLOW_CLI_HEADLESS=true to fix detection; correct fix is =false
   - UUID reuse: agents call 'gflow image upload' again for an already-uploaded UUID instead of passing it directly to --ref
   - Model alias confusion: '--model imagen' / '--model quality' instead of '--model image4' / '--model nano2'
-  - Auth recovery: agents suggest 'gflow auth refresh' / 'gflow auth renew' which do not exist; correct command is 'gflow auth login'
+  - Auth recovery: agents suggest 'gflow auth refresh' / 'gflow auth reset' which do not exist; an expired session is renewed with 'gflow auth renew' (headless, no sign-in), and a revoked one needs 'gflow auth login'
 ---
 
 # gflow-cli skill
@@ -56,12 +56,13 @@ Before any gflow-cli invocation, verify:
 # Auth (one-time)
 gflow auth login                                          # opens Chromium, user signs in
 gflow auth status                                         # confirms session
+gflow auth renew [--profile NAME | --all] [--json]        # headless cookie refresh, no re-login
 gflow auth                                                # bare: list profiles or trigger first login
 gflow auth logout                                         # delete a saved session
 
 # Veo video-credit balance (read-only; image models use separate daily quotas)
-gflow credits user [--profile NAME] [--json]
-gflow credits list [--json]                               # all saved profiles
+gflow credits user [--profile NAME] [--refresh] [--json]
+gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews expired sessions
 
 # Image generation (Imagen / Nano Banana)
 gflow image upload <path>                                 # → asset UUID + dimensions
@@ -69,19 +70,23 @@ gflow image t2i "<prompt>" [--model {nano2|nano2-lite|nano-pro|image4}] \
                             [--aspect {9:16|16:9|1:1|4:3|3:4}] \
                             [-n 1..4] [--out DIR]
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
+gflow image upscale <mediaId> --scale {2k|4k} [--project ID] [--out DIR]  # 4K is Ultra-only
 gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts; refuses any row ref (exit 2)
-gflow run --config <batch.json>                           # JSON image batch; a row's "ref" may be "batch:N" (an earlier
-                                                          # row's image, in place, no upload) or a local file (uploaded once)
-# On migrated flow.google.com accounts (#639), t2i and i2i are ported (a project is
+gflow run --config <batch.json> [--project ID]            # JSON image batch; a row's "ref" may be "batch:N" (an earlier
+                                                          # row's image, in place, no upload) or a local file (uploaded once);
+                                                          # --project (or "project" in the config) reuses an existing project
+# For accounts Flow serves flow.google.com (#639), t2i, i2i, and upscale are ported (a project is
 # created when --project is omitted, #864): i2i accepts local --ref files only, all
-# five aspects. UUIDs, @Name/entity references, Imagen 4 (image4), and image batch
-# are refused there with exit 36.
+# five aspects. Images take a character by name (@Name, or --reference-entity with
+# --reference-entity-name; #723). UUID references, an entity id without a name,
+# Imagen 4 (image4), image batch, and characters on video are refused there (exit 36).
 # An agent-only composer (#799) is different: t2i and t2v only;
-# i2i, i2v and r2v exit 36 there.
+# i2i, i2v, r2v and character references exit 36 there.
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: omni-flash only; without --project a project is created first, on either host (#864); 10s is omni-flash-only
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project)
+gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF
 # `gflow video` has no `batch` subcommand — that stub never worked and was
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
@@ -276,7 +281,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `gflow video generate` or `gflow video create` | `gflow video t2v` (text→video) or `gflow video i2v` (image→video) |
 | `--output DIR` (a directory) as the output location | `-o`/`--output PATH` is an explicit FILE path on `image t2i`/`i2i` and `video t2v`/`i2v` (v0.48.0+, single-prompt only); use `--out DIR` (image) / `--out-dir DIR` (video) for directory output. `r2v`/`chain` have no `-o` |
 | `gflow auth` bare or `gflow login` to sign in | `gflow auth login` — bare `gflow auth` only lists profiles |
-| `gflow auth refresh` / `gflow auth renew` (don't exist) | `gflow auth login` to refresh a stale or expired session |
+| `gflow auth refresh` (doesn't exist), or `gflow auth login` as the first move on an expired session | `gflow auth renew` renews an expired session headlessly with no sign-in; `gflow auth login` only when renew reports the session could not be renewed (revoked) |
 | `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |
 | Running two generations on the same `--profile` in parallel | Use different `--profile` names — Chromium refuses two persistent contexts on the same dir |
 | `GFLOW_CLI_HEADLESS=true` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS=false` — headless mode *causes* bot-detection, not prevents it |
@@ -284,7 +289,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
-| `gflow video t2v`/`i2v`/`r2v` with an unported UUID/entity reference or model on an account served `flow.google.com` (exit 36) | Pass local files instead — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs) only — and an agent-only composer (#799) image t2i and video t2v only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
+| `gflow video t2v`/`i2v`/`r2v` with an unported UUID/entity reference or model on an account served `flow.google.com` (exit 36) | Pass local files instead — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs, plus `@Character` mentions on images, #723) only — and an agent-only composer (#799) image t2i and video t2v only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
 | Telling a user on `flow.google.com` whose run exits **25** to retry, switch profile or pass `--ui-mode classic` | On an **agent-only** composer gflow drives `image t2i` and `video t2v` through the agent ([#799](https://github.com/ffroliva/gflow-cli/issues/799)); exit 25 there means the agent went off-script — a second credit confirmation, more results than asked, or a turn that made nothing (`retryable: false`). Read the envelope's `detail`; rephrase the prompt rather than re-running blind, and check the project first — a video may still be rendering. Other forms on that composer exit **36**. Exit 25 on `labs.google` IS the retryable A/B cohort — check the host before advising |
 | Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 

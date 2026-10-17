@@ -127,16 +127,27 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-> **Unavailable where Flow serves `flow.google.com`.** The balance comes from a `labs.google` endpoint. On an
-> account Google has moved to `flow.google.com`, the labs session answers `200` with no access
-> token, so the command fails with "the labs.google session returned no access token". That is
-> expected on that cohort — the session is fine and re-authenticating will not help; generation
-> still works. Open, tracked in [#795](https://github.com/ffroliva/gflow-cli/issues/795).
+> **Unavailable on an account whose labs session issues no token.** The balance comes from a
+> `labs.google` endpoint. On some accounts the labs session answers `200` with no access token,
+> so the command fails with "the labs.google session returned no access token". The session is
+> fine, and re-authenticating will not help; generation still works. Which host Flow serves does
+> not predict this: on 2026-10-14, 7 of 10 profiles served `flow.google.com` read a balance after
+> `--refresh`. Open, tracked in [#795](https://github.com/ffroliva/gflow-cli/issues/795).
 
 ```text
-gflow credits user [--profile NAME] [--json]
-gflow credits list [--json]
+gflow credits user [--profile NAME] [--refresh] [--json]
+gflow credits list [--refresh] [--json]
 ```
+
+`--refresh` renews an expired session instead of reporting it. When the fast path says the
+session has expired, gflow opens that profile in a headless browser, loads Flow so Google and Flow
+rotate the saved cookies (the same renewal as [`gflow auth renew`](AUTHENTICATION.md#gflow-auth-renew)),
+then asks for the balance again. That costs one Chrome launch per expired profile and no credits.
+Without `--refresh`, nothing launches. A session Google has revoked cannot be renewed, so the row
+keeps its original diagnosis. A profile another gflow process is using is recorded as
+`ProfileLockedError` and the list carries on. `--refresh` cannot help an account whose labs
+session issues no token at all (#795, above), and it does not clear Flow's public `/about` page
+(see [KNOWN_ISSUES](../KNOWN_ISSUES.md)). Both keep their original diagnosis.
 
 `credits user` applies the normal profile precedence chain. `credits list` inspects every saved
 profile sequentially and returns successful balances even when another profile is expired or
@@ -196,6 +207,10 @@ gflow image i2i "make it cinematic" --ref "$UUID"
 Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Flow's
 download menu offers) and save it locally. Uploaded images are not supported.
 
+> **When Flow serves `flow.google.com` (#639):** gflow drives the image detail view's download
+> menu, which answers on the `SPrCad` batchexecute wire with the upscaled JPEG. Verified for 2K
+> on 2026-10-07; 4K was seen only as a disabled option (exit 22) on the account used.
+
 ```text
 gflow image upscale MEDIA_ID --scale 2k|4k [OPTIONS]
 
@@ -204,20 +219,20 @@ Arguments:
                             `gflow data list images`).
 
 Options:
-  --scale [2k|4k]           Target resolution. 4k requires a Flow Ultra
+  --scale 2k|4k             Target resolution (required). 4k requires a Flow Ultra
                             subscription; 1k is the original (no upscale).
   --project ID              Project that owns the image. Resolved from the local
                             catalog when omitted; pass it explicitly for images
                             gflow didn't record (e.g. generated in the web UI).
   --out PATH                Output directory (see "Output paths" below).
   --profile NAME            Profile name (overrides default).
+  --transport ui_automation Override transport strategy (advanced).
 ```
 
-```bash
-# Upscale a previously generated image to 2K (project auto-resolved from the catalog)
-gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
+Examples:
 
-# Upscale an image generated in the Flow web UI (not in the local catalog)
+```bash
+gflow image upscale 3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14 --scale 2k
 gflow image upscale <mediaId> --scale 2k --project <projectId>
 ```
 
@@ -225,17 +240,57 @@ Notes:
 
 - **Credit-free** — upscaling is an image operation and spends no credits.
 - **4K is Ultra-only.** On a non-Ultra account a 4K request fails with exit code 22
-  (`UpscaleUnavailableError`) and a hint to use `--scale 2k` or upgrade.
+  (`UpscaleUnavailableError`, detected from the disabled UI state or 403) and a hint to use `--scale 2k` or upgrade.
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
+
+## `gflow video upscale`
+
+Upscale or export a **platform-generated** video to 1080p Full HD, download the original 720p,
+or export as a 270p animated GIF and save it locally.
+
+```text
+gflow video upscale MEDIA_ID [OPTIONS]
+
+Arguments:
+  MEDIA_ID                  UUID of a Flow-generated video (find one with
+                            `gflow data list videos`).
+
+Options:
+  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (original download),
+                            or 270p (animated GIF export). [default: 1080p]
+  --project ID              Project that owns the video. Resolved from the local
+                            catalog when omitted; pass it explicitly for videos
+                            gflow didn't record (e.g. generated in the web UI).
+  --out PATH                Output directory (see "Output paths" below).
+  --profile NAME            Profile name (overrides default).
+```
+
+Examples:
+
+```bash
+gflow video upscale 00000000-0000-4000-8000-000000000002 --scale 1080p
+gflow video upscale 00000000-0000-4000-8000-000000000002 --scale 270p
+```
+
+Notes:
+
+- **Quality options**: 720p is the original generation download, 1080p is the enhanced Full HD export,
+  and 270p exports an animated GIF. A saved MP4 is checked to really be at least the
+  requested resolution, so a preview or the 720p original is refused (exit 7,
+  `WireFormatError`) rather than saved as the export.
+- **flow.google.com only.** There is no labs.google route; `GFLOW_CLI_FLOW_HOST=labs.google`
+  refuses the command with exit 36.
+- **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
+- Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
 ## `gflow image t2i`
 
 Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1–50
 prompts through one Flow session/project.
 
-> **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2
-> (`nano2`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
+> **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2.1
+> (`nano2`, #958), Nano Banana 2 Lite (`nano2-lite`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
 > `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project`, gflow creates a fresh project
 > there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
 > migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
@@ -270,7 +325,11 @@ Options:
   --out PATH                Output directory (see "Output paths" below).
   --project ID              Generate in this EXISTING Flow project instead of a
                             scratch project. Required to reference locked
-                            entities/assets in that project. Single-prompt only.
+                            entities/assets in that project. With several
+                            prompts, every prompt runs in it.
+  --project-name, --project-title TEXT
+                            Title for the fresh project gflow creates when
+                            --project is omitted (single- or multi-prompt).
   -o, --output PATH         Explicit destination file path for the generated asset
                             (e.g., `./out/bird.png`). Overrides automatic filename.
   --reference-entity ID     Flow CHARACTER entity id to reference for character
@@ -294,7 +353,7 @@ Options:
 
 | Alias | Backing model | Notes |
 |---|---|---|
-| `nano2` | Nano Banana 2 (`NARWHAL`) | Default. Fast, balanced quality. |
+| `nano2` | Nano Banana 2 (`NARWHAL`) | Default. Fast, balanced quality. On `flow.google.com` Flow now offers Nano Banana 2.1 (wire `BELUGA`) in its place, and `nano2` selects it (#958). |
 | `nano-pro` | Nano Banana Pro (`GEM_PIX_2`) | Higher quality, slower. |
 | `nano2-lite` | Nano Banana 2 Lite (`HARBOR_SEAL`) | Lightweight Nano Banana 2 variant. Its i2i reference cap is a provisional 3 and its daily quota is unmeasured (#787). |
 | `image4` | Imagen 4 (`IMAGEN_3_5`) | Photoreal-leaning Imagen variant. |
@@ -454,7 +513,8 @@ project that owns them** via `--project <id>` (this also means no throwaway
 scratch project is created). The CLI attaches each entity through the Flow editor's
 resource picker; the submit then carries `referenceEntities`, exactly like the
 video R2V path. Entities count toward the same per-model reference cap as `--ref`
-images. `--reference-entity` / `--project` / `--output` are **single-prompt only**.
+images. `--reference-entity` / `--output` are **single-prompt only**; `--project` also
+works with several prompts, which then all run in that project.
 
 For a *pure* character reference (no starting image) use `t2i` — `i2i` still
 requires at least one `--ref`.
@@ -666,9 +726,11 @@ Options:
 > `--initial-frame` runs there too — **including with a local `--end-frame`**
 > (start+end interpolation, #639; see [`gflow video i2v`](#gflow-video-i2v)) — as does
 > `r2v` from local `--ref` files (see [`gflow video r2v`](#gflow-video-r2v)). An end frame
-> or start frame given by UUID or `@Name`, and references given by `@Name` or
-> `--reference-entity`, are not ported to the migrated composer yet. `image t2i` and local-file `image i2i` also run on a moved
-> account; UUID/entity/instruction/Imagen-4 image forms still exit 36. `flow.google.com` forces the migrated composer,
+> or start frame given by UUID or `@Name`, and video character references (`@Name` or
+> `--reference-entity`), are not ported to the migrated composer yet. `image t2i` and local-file `image i2i` also run on a moved
+> account, and on images a character can be tagged with `@Name` or `--reference-entity`
+> (see [REFERENCE_STRATEGIES § flow.google.com](REFERENCE_STRATEGIES.md#on-flowgooglecom-images-only-723);
+> video is unchanged); UUID/instruction/Imagen-4 image forms still exit 36. `flow.google.com` forces the migrated composer,
 > `labs.google` switches it off — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host).
 
 ```bash
@@ -1756,12 +1818,18 @@ For MCP over HTTP, see `gflow serve` and [MCP.md](MCP.md).
 Sequential JSON-described batch image generation. New in v0.5.0a1.
 
 ```text
-gflow run --config FILE [--output-dir DIR] [--profile NAME] [--continue-on-error|--fail-fast]
+gflow run --config FILE [--output-dir DIR] [--profile NAME] [--project ID] [--continue-on-error|--fail-fast]
 ```
 
 The config is a JSON file with a top-level `prompts` array; each entry
 produces 1–4 images through one `FlowApiClient` session (one Playwright
 browser, one Flow project; prompts run one after another).
+
+By default each run creates a new Flow project titled `gflow-cli run`. Pass
+`--project ID` (or set `"project"` in the config; the CLI wins) to generate every
+row into an existing project instead, as `gflow image t2i --project` does: no
+project is created, and a title already in the local catalog is kept (a project the
+catalog has not seen yet is recorded without one, as with `t2i --project`).
 
 ### Config schema
 
@@ -1798,6 +1866,7 @@ browser, one Flow project; prompts run one after another).
 | `profile` | no | active profile | CLI `--profile` overrides. |
 | `transport` | no | `ui_automation` | Experimental strategies need `GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`. |
 | `output_dir` | no | `out/<UTC-timestamp>/` | CLI `--output-dir` overrides. |
+| `project` | no | new `gflow-cli run` project | Existing Flow project id (letters, digits, hyphens) to generate every row into. CLI `--project` overrides. |
 
 ### Error semantics
 
@@ -1836,8 +1905,8 @@ that row's position in `prompts` (0-based).
   was generated but whose download failed still counts as generated: its children run.
 - **Tracking.** Each row is recorded in the local catalog; a referencing row is recorded
   as image-to-image with its parent as the input (`gflow data`).
-- **No resume.** A re-run starts a new project and regenerates every row, parents
-  included.
+- **No resume.** A re-run regenerates every row, parents included, in a new project
+  (or, with `--project`, in that same project).
 - **`batch:N` or a local file.** A media id or `reference_entity` in a row is refused
   (exit 11); for those use `gflow image i2i --ref` or `--reference-entity`.
 - **A parent Flow returned without a caption** cannot be found in the composer's `@`
@@ -1857,7 +1926,8 @@ A row's `ref` can also be a local image: `"ref": "refs/product.png"`.
   project holds one copy.
 - **A failed upload** fails that row with the reason; a later row naming the same file
   tries the upload again.
-- **Not resumable.** A re-run uploads the file again into its new project.
+- **Not resumable.** A re-run uploads the file again, into its new project (or, with
+  `--project`, into that same project).
 - **Measured on flow.google.com** (2026-10-01). When Flow serves the project from labs,
   the file goes through the REST upload instead; that path has not been observed live.
   `GFLOW_CLI_FLOW_HOST=labs.google` on a project Flow serves from flow.google.com is
@@ -2025,21 +2095,21 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
-| `22` | `UpscaleUnavailableError` | 4K upscale is gated to Flow **Ultra** accounts (HTTP 403) | Use `--scale 2k`, or upgrade the Flow plan                |
+| `22` | `UpscaleUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | Update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation — **or**, on `flow.google.com`'s agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), the agent did something other than what was asked: a second credit confirmation, more results than requested, or an image turn that made nothing (a video turn that makes nothing ends in exit 9, `TransportTimeoutError`, instead) | On labs this is rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`. On the agent-only composer it is `retryable: false` — read `detail` (it may include the agent's last reply), rephrase the prompt, and check the project before re-running a video. See KNOWN_ISSUES |
 | `26` | `MediaAttributionError` | Generated media could not be reliably attributed to this request (issue #281) | Re-run; a dedicated project with fewer pre-existing assets avoids the ambiguity |
 | `27` | `MediaUploadRejectedError` | Flow's upload endpoint refused the input file (`uploadImage` 4xx, issue #287) | Re-encode the image (`ffmpeg -q:v 2 -map_metadata -1`), or reference the asset by its media UUID |
 | `28` | `UiModeUnavailableError` | The Flow UI arm this command required (`--ui-mode`/`GFLOW_CLI_UI_MODE`; `-i` forces agentic for images; **labs video always requires classic** — no agentic labs video driver exists; an agent-only `flow.google.com` composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) is routed before this policy and never exits 28) couldn't be reached after a switch attempt; aborted before submitting — no credits spent (issue #299) | Retry (the cohort flaps per load); try another `--profile`; for images you can also relax `GFLOW_CLI_UI_MODE` — for video there is nothing to relax |
-| `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry |
+| `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error. Also raised on a page served labs for an image character known only by name (#723), since that picker attaches by entity id | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry. For the by-name character on labs, pass `--reference-entity <id>` |
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow did not serve the page gflow asked for. Two shapes: its error-boundary page rendered instead of the editor (a transient client-side crash), or it redirected to `flow.google.com/about` instead of the project ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | Crash: retry shortly; if it persists, Flow itself is degraded. `/about`: open the project in a browser on that host and confirm this account can reach it. A retry is **measured** not to help — 5/5 consecutive attempts during a live occurrence landed on `/about` again ([2026-09-11](superpowers/spikes/2026-09-11-about-redirect-is-stable-for-an-account.md); the [2026-09-10 run](superpowers/spikes/2026-09-10-about-redirect-stability.md) got 0/5 only because the redirect had stopped reproducing) — so gflow does not flag it retryable. The cause, and whether it ever clears, are still unmeasured |
-| `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images` |
+| `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches. On flow.google.com it is also raised for an image character (#723) when no picker option is titled exactly the name, several are, or the match is media | Reference the asset by its media UUID, pass a local file with `--ref`, or check what exists with `gflow data list images`. For a character, rename the colliding asset in Flow, or give the character a unique one-word name |
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file. Image UUID/entity/instruction/Imagen-4 forms and `image batch` remain unsupported. On an agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)): `image t2i` and `video t2v` (one 9:16 or 16:9 clip) only. Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image upscale`; and `video upscale` (served here only). Images may tag a character by name (`@Name`, or `--reference-entity` with `--reference-entity-name`, #723); image UUID references, an entity id without a name, instructions, Imagen 4 and `image batch` remain unsupported. On an agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), generation is limited to `image t2i` and `video t2v` (one 9:16 or 16:9 clip). Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |

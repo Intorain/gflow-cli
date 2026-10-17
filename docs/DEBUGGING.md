@@ -342,7 +342,8 @@ Practical guidance:
   between generations) adds to the bot-like signature. For repeated
   single-prompt runs (`t2i`, `i2i`), pass `--project` to reuse a standing
   project. Multi-prompt runs already create only **one** shared project per
-  run (never one per prompt).
+  run (never one per prompt), and `t2i` / `gflow run` take `--project` to
+  create none.
 
 ## Common failure modes
 

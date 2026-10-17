@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.data.recorder import OperationRecorder
@@ -20,8 +20,15 @@ from tests.test_batch_outcomes import FakeClient
 PROJECT = "11111111-1111-1111-1111-111111111111"
 
 
-def _run(tmp_path: Path, recorder: MagicMock, *, fail_download: set[str] | None = None):
-    client = FakeClient(fail_generate=set(), fail_download=fail_download or set())
+def _run(
+    tmp_path: Path,
+    recorder: MagicMock,
+    *,
+    fail_download: set[str] | None = None,
+    project_id: str | None = None,
+    client: FakeClient | None = None,
+):
+    client = client or FakeClient(fail_generate=set(), fail_download=fail_download or set())
     return asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
@@ -36,6 +43,7 @@ def _run(tmp_path: Path, recorder: MagicMock, *, fail_download: set[str] | None 
             _profile_name="p",
             _recorder=recorder,
             _command="run",
+            project_id=project_id,
         )
     )
 
@@ -54,6 +62,27 @@ def test_successful_rows_are_recorded(tmp_path: Path) -> None:
         assert kw["input_media_ids"] == []
         assert [i.media_name for i in kw["images"]] == [f"media-{text}"]
         assert len(kw["saved_paths"]) == 1
+
+
+def test_a_created_project_is_recorded_with_its_title(tmp_path: Path) -> None:
+    recorder = MagicMock()
+    _run(tmp_path, recorder)
+    for call in recorder.record_generated_images.call_args_list:
+        assert call.kwargs["project_created"] is True
+
+
+def test_an_existing_project_is_reused_and_its_title_left_alone(tmp_path: Path) -> None:
+    # `gflow run --project ID`: every row lands in that project, none is created, and
+    # the catalog keeps the project's real title (title=None -> COALESCE), as t2i does.
+    existing = "33333333-3333-3333-3333-333333333333"
+    client = FakeClient(fail_generate=set(), fail_download=set())
+    client.create_project = AsyncMock(side_effect=AssertionError("must not create"))
+    recorder = MagicMock()
+    outcomes = _run(tmp_path, recorder, project_id=existing, client=client)
+    assert [o.status for o in outcomes] == ["ok", "ok"]
+    calls = recorder.record_generated_images.call_args_list
+    assert [c.kwargs["project"].project_id for c in calls] == [existing, existing]
+    assert all(c.kwargs["project_created"] is False for c in calls)
 
 
 def test_a_recorder_failure_does_not_fail_the_row(tmp_path: Path) -> None:

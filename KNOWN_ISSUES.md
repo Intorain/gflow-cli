@@ -47,7 +47,7 @@ close Chrome yourself. On the measured account, `/about` was gone on the next ru
 
 ### Flow is migrating to `flow.google.com`; generation coverage is partial but includes images
 
-- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2 / 2 Lite / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. That matrix is the **classic** migrated composer's. On an **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gflow drives `image t2i` (all five aspects; count 1–4) and `video t2v` (one 9:16 or 16:9 clip) only — i2i, i2v and r2v are refused there before anything is clicked. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character create` is NOT in that list any more** — it works on the migrated host. `character list` does NOT: it reads the retired labs `projectInitialData` route and exits 7, measured 2026-09-20 both on `auto` and with `GFLOW_CLI_FLOW_HOST=flow.google.com` (#875). Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
+- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2.1 (`nano2`, which replaced Nano Banana 2 there, #958) / 2 Lite / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image prompts can tag a **character** with `@Name` / `--reference-entity` + `--reference-entity-name` since #723 (attached through the composer's `@` picker; an id without a name exits 36; video is unchanged). That matrix is the **classic** migrated composer's. On an **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gflow drives `image t2i` (all five aspects; count 1–4) and `video t2v` (one 9:16 or 16:9 clip) only — i2i, i2v, r2v and character references are refused there before anything is clicked. Image refs by UUID, video `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character create` worked on the migrated host until its labs `createEntity` route was retired:** measured 2026-10-14 on a profile served flow.google.com, it exits 7 with "Flow RPCs have been deprecated" (404). `character list` does NOT: it reads the retired labs `projectInitialData` route and exits 7, measured 2026-09-20 both on `auto` and with `GFLOW_CLI_FLOW_HOST=flow.google.com` (#875). Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 - **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in v0.71.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
@@ -106,7 +106,8 @@ UUID does: the picker exposes no media id to anchor on. Capture:
 [2026-09-05-migrated-r2v-attach-surface](docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
 
 **Images also run there (2026-09-08).** The driver selects Image mode, Nano Banana 2
-or Pro, any supported aspect and count 1–4, then observes the page's own synchronous
+(2.1 by 2026-10-08 — before v0.83.1 that made every `nano2` run exit 7, "does not carry
+requested model NARWHAL"; fixed in v0.83.1, #958) or Pro, any supported aspect and count 1–4, then observes the page's own synchronous
 `ogiZ0b` reply. Local I2I files use the existing `maseQ` upload and mention path; every
 uploaded id must appear in the submit body before the result is trusted. UUID/entity
 references, Agent instructions, and Imagen 4 remain pre-submit refusals on this host.
@@ -395,8 +396,8 @@ has not landed yet stay nameless until the next sync sweep.
 - **Status:** Open · **Severity:** Low (a re-run regenerates; nothing is lost) · **Affected:** every `gflow run --config` with `"ref"` rows (`batch:N` or a local file)
 - **Tracked:** [#913](https://github.com/ffroliva/gflow-cli/issues/913)
 
-A run with `"ref": "batch:N"` rows has no resume: a re-run creates a new project and
-regenerates every row, parents included, and one early failure skips the whole chain under
+A run with `"ref": "batch:N"` rows has no resume: a re-run creates a new project (or, with
+`--project`, reuses that one) and regenerates every row, parents included, and one early failure skips the whole chain under
 it. The handle that makes in-place referencing work (Flow's reply for the parent) exists
 only within the run that generated it. A local-file `ref` is uploaded again into the
 re-run's new project for the same reason.
@@ -414,6 +415,12 @@ re-run's new project for the same reason.
   capability capture 2026-09-03)
 
 **Workaround:** omit `--duration` and accept Flow's default clip length.
+
+**Not this issue if your Flow UI is not in English.** Before v0.83.2, a translated duration
+unit (`8 giây` in Vietnamese) also raised exit 11 on `flow.google.com`, because the radio
+was matched on its English label ([#963](https://github.com/ffroliva/gflow-cli/issues/963)).
+Upgrade first (`gflow update`). The locale refutation below applies to the Portuguese
+labs cohort it was measured on.
 
 **What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the
 Veo 3.1 models and `10` on `omni-flash` only — the CLI no longer refuses a
@@ -605,9 +612,10 @@ library (plus your locale) on that issue.
 
 `gflow image upscale <mediaId> --scale 4k` returns **exit code 22**
 (`UpscaleUnavailableError`) on accounts below the Ultra tier — Flow gates 4K
-upscaling behind Ultra (the web UI shows an "Upgrade" button instead of a 4K
-option). The account tier is reported on the wire as `userPaygateTier` but is
-enforced server-side, so gflow cannot grant 4K locally.
+upscaling behind Ultra (the web UI shows an "Upgrade" button instead of an active 4K
+option). On `flow.google.com`, gflow inspects the menu item's disabled state directly
+in the UI and fails fast before submitting; on the legacy labs REST endpoint, the
+account tier is enforced server-side. gflow cannot grant 4K locally.
 
 **Workaround:** use `--scale 2k` (available on all tiers), or upgrade the Flow
 account to Ultra. If you just upgraded, re-run `gflow auth login --profile <name>`
@@ -734,16 +742,27 @@ Google's web session cookies aren't permanent. They expire when:
 
 When this happens, the next API call returns 401/403 and `gflow-cli` raises `AuthExpiredError`.
 
-**Workaround:**
+**Workaround, stale session (the common case):**
+```bash
+gflow auth renew --profile <name>        # or: gflow auth renew --all
+gflow credits list --refresh             # renews only the expired profiles, then reads them
+```
+
+A profile that has just sat unused has a lapsed labs.google token, not a dead Google session.
+`auth renew` loads Flow and labs.google in a headless browser and waits for labs to sign in
+again on its own, with no prompt. Measured 2026-10-14: 7 of 10 stale profiles recovered.
+
+**Workaround, revoked session:**
 ```bash
 gflow auth login --profile <name>
 ```
 
 Re-running `auth login` reuses the existing profile dir (you typically just click "Continue as <you>" on the Google account chooser). No data is lost; only the cookie jar is refreshed.
 
-**Why we don't auto-refresh:** Google's session-refresh flow can include CAPTCHA / device verification that only a human can complete. A community SDK can't reliably automate that step. See [docs/AUTHENTICATION.md § Refresh / expiry](docs/AUTHENTICATION.md#refresh--expiry).
-
-**Roadmap:** not scheduled. The Phase 4 hardening pass (v0.4.0a2) added typed `AuthExpiredError` + exit code `3` so scripts can branch on auth expiry deterministically. A periodic "session liveness" check + a `gflow auth refresh` command are still candidates for a later phase, but not committed to a version yet.
+**What renewal cannot do:** complete a step only a human can, such as CAPTCHA, device
+verification, or "Confirm it's you". The 3 profiles that did not recover on 2026-10-14 were held
+at Flow's public `/about` page ([entry above](#every-command-lands-on-flowgooglecomabout-exit-31-while-gflow-auth-status-says-the-session-is-fine)),
+and `auth renew` reports them as not renewed. See [docs/AUTHENTICATION.md § Refresh / expiry](docs/AUTHENTICATION.md#refresh--expiry).
 
 ---
 

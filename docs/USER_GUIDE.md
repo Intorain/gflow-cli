@@ -211,7 +211,7 @@ What happens:
 4. Four files land at `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_1.png` through `_4.png`.
 
 **Model aliases:**
-- `nano2` → `NARWHAL` (Nano Banana 2; default, fastest)
+- `nano2` → `NARWHAL` (Nano Banana 2; default, fastest — on `flow.google.com` it selects Nano Banana 2.1, which replaced it there, #958)
 - `nano-pro` → `GEM_PIX_2` (Nano Banana Pro; higher quality)
 - `image4` → `IMAGEN_3_5` (Imagen 4; photoreal lean)
 
@@ -431,6 +431,10 @@ gflow credits user
 
 # Or inspect every saved profile while preserving partial results.
 gflow credits list
+
+# A profile unused for weeks may report an expired session; --refresh renews it
+# in a headless browser and asks again (no credits, one Chrome launch per expired profile).
+gflow credits list --refresh
 ```
 
 Both commands accept `--json` for automation. You can also inspect the balance in Flow directly:

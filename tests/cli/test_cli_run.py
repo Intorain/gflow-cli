@@ -105,6 +105,23 @@ class TestBatchConfigFromJson:
         assert cfg.prompts[0].output_filename == "first_scene"
 
 
+class TestBatchConfigProject:
+    def test_project_key_parses(self, tmp_path: Path) -> None:
+        cfg = BatchConfig.from_json_path(
+            _write_config(tmp_path, _minimal_config(project="abc-123")),
+        )
+        assert cfg.project == "abc-123"
+
+    def test_project_defaults_to_none(self, tmp_path: Path) -> None:
+        cfg = BatchConfig.from_json_path(_write_config(tmp_path, _minimal_config()))
+        assert cfg.project is None
+
+    @pytest.mark.parametrize("bad", ["", "has space", "a/b", 7])
+    def test_invalid_project_raises(self, tmp_path: Path, bad: Any) -> None:
+        with pytest.raises(ConfigurationError, match="project"):
+            BatchConfig.from_json_path(_write_config(tmp_path, _minimal_config(project=bad)))
+
+
 class TestBatchConfigValidation:
     """Schema validation — each rule from AUDIT_E1 D.1."""
 
@@ -431,3 +448,56 @@ class TestGflowRunCommand:
         assert fake_client.__aenter__.call_count == 1
         assert fake_client.__aexit__.call_count == 1
         assert fake_client.create_project.call_count == 1
+
+
+class TestGflowRunProject:
+    """`--project` / `"project"`: generate every row into an existing project."""
+
+    def _invoke(self, tmp_path: Path, payload: dict[str, Any], *args: str) -> tuple[Any, Any]:
+        cfg_path = _write_config(tmp_path, payload)
+        fake_client = _patched_client_factory()
+        with (
+            patch("gflow_cli.cli_run.FlowApiClient", return_value=fake_client),
+            patch("gflow_cli.cli_run._resolve_profile", return_value="x"),
+            patch("gflow_cli.cli_run._make_provider_dir", return_value=tmp_path / "p"),
+        ):
+            result = CliRunner().invoke(
+                cli_main,
+                ["run", "--config", str(cfg_path), "--output-dir", str(tmp_path / "out"), *args],
+                catch_exceptions=False,
+            )
+        return result, fake_client
+
+    def test_cli_project_reuses_it_and_creates_none(self, tmp_path: Path) -> None:
+        result, client = self._invoke(
+            tmp_path, {"prompts": [{"text": "p1"}, {"text": "p2"}]}, "--project", "proj-existing"
+        )
+        assert result.exit_code == 0, result.output
+        assert client.create_project.call_count == 0
+        used = [c.kwargs["project_id"] for c in client.generate_image.call_args_list]
+        assert used == ["proj-existing", "proj-existing"]
+
+    def test_config_project_is_used(self, tmp_path: Path) -> None:
+        result, client = self._invoke(
+            tmp_path, {"project": "proj-config", "prompts": [{"text": "p1"}]}
+        )
+        assert result.exit_code == 0, result.output
+        assert client.create_project.call_count == 0
+        assert client.generate_image.call_args.kwargs["project_id"] == "proj-config"
+
+    def test_cli_project_beats_config(self, tmp_path: Path) -> None:
+        result, client = self._invoke(
+            tmp_path,
+            {"project": "proj-config", "prompts": [{"text": "p1"}]},
+            "--project",
+            "proj-cli",
+        )
+        assert result.exit_code == 0, result.output
+        assert client.generate_image.call_args.kwargs["project_id"] == "proj-cli"
+
+    def test_invalid_cli_project_is_a_usage_error(self, tmp_path: Path) -> None:
+        result, client = self._invoke(
+            tmp_path, {"prompts": [{"text": "p1"}]}, "--project", "bad id"
+        )
+        assert result.exit_code == 2
+        assert client.generate_image.call_count == 0

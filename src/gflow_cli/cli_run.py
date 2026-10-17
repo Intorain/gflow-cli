@@ -23,7 +23,12 @@ import click
 from rich.console import Console
 from rich.markup import escape
 
-from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
+from gflow_cli._cli_helpers import (
+    _FLOW_ID_RE,
+    _make_provider_dir,
+    _resolve_profile,
+    _validate_project_id,
+)
 from gflow_cli.api.client import FlowApiClient, validate_image_file
 from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
 from gflow_cli.config import get_settings
@@ -46,7 +51,7 @@ console = Console()
 
 
 _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"profile", "transport", "output_dir", "prompts"},
+    {"profile", "transport", "output_dir", "project", "prompts"},
 )
 # ---------------------------------------------------------------------------
 # Dataclasses — validated config + per-prompt outcome.
@@ -88,6 +93,7 @@ class BatchConfig:
     profile: str | None = None
     transport: str | None = None
     output_dir: str | None = None
+    project: str | None = None
 
     @classmethod
     def from_json_path(cls, path: Path) -> BatchConfig:
@@ -168,12 +174,19 @@ class BatchConfig:
         if output_dir is not None and (not isinstance(output_dir, str) or not output_dir):
             msg = "'output_dir' must be a non-empty string."
             raise ConfigurationError(msg)
+        project = data.get("project")
+        if project is not None and (
+            not isinstance(project, str) or not _FLOW_ID_RE.fullmatch(project)
+        ):
+            msg = "'project' must be a Flow project id: 1-128 letters, digits, or hyphens."
+            raise ConfigurationError(msg)
 
         return cls(
             prompts=tuple(prompts),
             profile=profile,
             transport=transport,
             output_dir=output_dir,
+            project=project,
         )
 
 
@@ -218,6 +231,7 @@ async def _run_batch(
     continue_on_error: bool,
     profile_name: str | None = None,
     recorder: OperationRecorder | None = None,
+    project_id: str | None = None,
 ) -> list[BatchOutcome]:
     """Run ``prompts`` sequentially through ONE FlowApiClient session.
 
@@ -238,6 +252,7 @@ async def _run_batch(
         _profile_name=profile_name,
         _recorder=recorder,
         _command="run",
+        project_id=project_id,
     )
     return outcomes
 
@@ -268,6 +283,16 @@ async def _run_batch(
     help="Profile name (overrides default and any 'profile' in the config).",
 )
 @click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Generate every prompt into this existing Flow project id instead of a new "
+        "'gflow-cli run' project (overrides any 'project' in the config)."
+    ),
+)
+@click.option(
     "--continue-on-error/--fail-fast",
     default=True,
     show_default=True,
@@ -280,6 +305,7 @@ def run(
     config_path: Path,
     output_dir_override: Path | None,
     profile: str | None,
+    project_id: str | None,
     continue_on_error: bool,
 ) -> None:
     """Execute a JSON-described batch of image generations sequentially."""
@@ -305,6 +331,9 @@ def run(
         f"· {len(cfg.prompts)} prompt(s)",
     )
     console.print(f"  output_dir: [dim]{output_dir}[/dim]")
+    project_id = project_id or cfg.project
+    if project_id:
+        console.print(f"  project: [dim]{project_id}[/dim] [dim](existing)[/dim]")
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
 
@@ -320,6 +349,7 @@ def run(
                 continue_on_error=continue_on_error,
                 profile_name=profile_name,
                 recorder=recorder,
+                project_id=project_id,
             ),
         )
     finally:

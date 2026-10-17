@@ -57,8 +57,8 @@ prompts*, and is a different mechanism from the ±25% per-interaction jitter abo
 
 **One project per run, not one per prompt.** Repeated `project.createProject`
 calls between generations add to the bot-like signature, so multi-prompt runs
-create a single shared project, and `--project` lets repeated single-prompt runs
-reuse a standing one.
+create a single shared project, and `--project` lets repeated runs reuse a standing
+one — single-prompt `t2i`/`i2i`, multi-prompt `t2i`, and `gflow run` then create none.
 
 **Each account gets its own isolated browser profile** under `GFLOW_CLI_HOME`.
 The tool never touches your everyday Chrome profile, and profiles do not share
@@ -91,7 +91,7 @@ pacing is defensible; a stealth feature that fails silently in six months is not
 | Knob | When to reach for it |
 |---|---|
 | `--jitter 10-30` / [`GFLOW_CLI_JITTER_RANGE`](CONFIGURATION.md#gflow_cli_jitter_range) | After a 403, or before a large batch. Widens the between-submission pause. `--jitter 0` disables pacing entirely (don't) |
-| `--project <id>` | Repeated single-prompt runs — avoids project churn |
+| `--project <id>` | Repeated runs (`t2i`, `i2i`, multi-prompt `t2i`, `gflow run`) — avoids project churn |
 | [`GFLOW_CLI_BROWSER_ENGINE=patchright`](CONFIGURATION.md#gflow_cli_browser_engine) | Opt-in patched Playwright that avoids the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. Install separately (`pip install patchright`). Not a headless unlock |
 | `--profile <name>` | Spread work across profiles; a profile that has been driven hard is the "hottest" |
 

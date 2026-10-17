@@ -46,9 +46,17 @@ class IndexEntry:
 
 class AssetIndex:
     def __init__(
-        self, entities: list[Any] | None = None, media_assets: list[Any] | None = None
+        self,
+        entities: list[Any] | None = None,
+        media_assets: list[Any] | None = None,
+        *,
+        characters_unavailable: bool = False,
     ) -> None:
         self.entries: list[IndexEntry] = []
+        # True when the character catalog could not be read and the caller allowed
+        # it (#723, image path only): an unmatched mention then becomes a character
+        # named by its first word, attached through the composer's ``@`` picker.
+        self.characters_unavailable = characters_unavailable
 
         for e in entities or []:
             if hasattr(e, "entity_id") and hasattr(e, "display_name"):
@@ -84,7 +92,9 @@ class AssetIndex:
                     )
 
     @classmethod
-    async def build_for_project(cls, client: FlowApiClient, project_id: str) -> AssetIndex:
+    async def build_for_project(
+        cls, client: FlowApiClient, project_id: str, *, characters_optional: bool = False
+    ) -> AssetIndex:
         """Build the mention index from the character and media catalog sources.
 
         Only called once a prompt has been found to contain an ``@mention``
@@ -95,13 +105,25 @@ class AssetIndex:
         fail closed with ``MentionIndexUnavailableError`` (naming which source)
         instead of silently degrading to an empty index, which would make an
         outage indistinguishable from "no matching asset".
+
+        ``characters_optional`` (image path, #723) is the one exception: on an account
+        Flow serves from flow.google.com the character catalog is read through a labs
+        route that answers 401, while the composer's ``@`` picker still offers the
+        character. There the index is built without characters and marked
+        ``characters_unavailable``, so an unmatched mention is attached by name and its
+        chip kind verified in the browser instead of being refused here.
         """
+        entities: list[Any] = []
+        characters_unavailable = False
         try:
-            entities = await client.list_characters(project_id)
+            entities = list(await client.list_characters(project_id))
         except GFlowError as exc:
-            raise MentionIndexUnavailableError(
-                detail="the character source is unavailable"
-            ) from exc
+            if not characters_optional:
+                raise MentionIndexUnavailableError(
+                    detail="the character source is unavailable"
+                ) from exc
+            log.warning("mention_character_source_unavailable", error=type(exc).__name__)
+            characters_unavailable = True
 
         settings = get_settings()
         db_path = settings.resolved_db_path()
@@ -112,7 +134,11 @@ class AssetIndex:
         except DataStoreError as exc:
             raise MentionIndexUnavailableError(detail="the media source is unavailable") from exc
 
-        return cls(entities=entities, media_assets=media_assets)
+        return cls(
+            entities=entities,
+            media_assets=media_assets,
+            characters_unavailable=characters_unavailable,
+        )
 
 
 @dataclass
@@ -155,10 +181,14 @@ def resolve_mentions(
     model: str,
     prompt: str = "",
     existing_refs: list[str] | None = None,
+    existing_names: list[str] | None = None,
 ) -> ResolvedMentions:
     resolved_list: list[ResolvedMention] = []
     replacements: list[tuple[int, int, str]] = []
     existing_set: set[str] = set(existing_refs or [])
+    # Character NAMES the caller already passed (--reference-entity-name). `existing_refs`
+    # holds ids only, so a by-name mention is de-duplicated against these instead.
+    existing_name_set = {n.casefold() for n in existing_names or []}
     seen_mention_ids: set[str] = set()
 
     # Determine reference cap
@@ -238,6 +268,23 @@ def resolve_mentions(
                         )
                     )
                 matched_entry = media_matched[0]
+
+        if matched_entry is None and index.characters_unavailable and path == "image":
+            # #723: no catalog to find the name's end in, so the name is the first
+            # whitespace-delimited word. A multi-word character name needs the catalog.
+            words = cand.split(maxsplit=1)
+            if words:
+                name = words[0]
+                log.info("mention_resolved_by_name", kind="entity", name_chars=len(name))
+                key = name.casefold()
+                if key not in seen_mention_ids and key not in existing_name_set:
+                    seen_mention_ids.add(key)
+                    # No id: the picker commits the character and the browser verifies
+                    # the chip's kind. The real name is kept even when prompts are
+                    # redacted, because it is what gets typed into the picker.
+                    resolved_list.append(ResolvedMention(name=name, kind="entity", id=""))
+                replacements.append((tok.start_idx, tok.start_idx + 1 + len(name), name))
+                continue
 
         if matched_entry is None:
             m = re.match(r"^(\w[\w-]*)", cand, re.UNICODE)
@@ -378,7 +425,8 @@ async def resolve_and_apply(
             )
 
         is_image = path == "image"
-        index = await AssetIndex.build_for_project(client, project_id)
+        # Video keeps failing closed: its migrated driver does not attach by name.
+        index = await AssetIndex.build_for_project(client, project_id, characters_optional=is_image)
 
         existing_refs = list(r.reference_entities)
         current_refs: list[Any] = list(r.refs) if is_image else []
@@ -392,13 +440,16 @@ async def resolve_and_apply(
             model=_model_str(r.model),
             prompt=r.prompt,
             existing_refs=existing_refs,
+            existing_names=list(r.reference_entity_names),
         )
 
         new_entities = list(r.reference_entities)
         new_entity_names = list(r.reference_entity_names)
         for m in resolved.mentions:
             if m.kind == "entity":
-                new_entities.append(m.id)
+                if m.id:
+                    new_entities.append(m.id)
+                # A by-name character (#723) has no id: only its name rides along.
                 new_entity_names.append(m.name)
             elif m.kind == "media" and is_image:
                 from gflow_cli.api.image import ImageRef

@@ -304,32 +304,83 @@ async def test_the_prompt_is_appended_so_the_mentions_survive() -> None:
 # --- character entities (#723) ----------------------------------------------
 
 
-class FakeEntityPage(FakeComposerPage):
-    """A composer whose picker commits CHARACTER ENTITIES rather than media.
+class FakePickerKeyboard(FakeKeyboard):
+    async def type(self, text: str, **_: Any) -> None:
+        self.page.typed.append(text)
+        self.page.on_type(text)
 
-    Modelled on the 2026-09-07 capture: `@` + the character's name + Enter inserts
-    ``<span class="mention-chip" data-reference-type="entity" data-entity-id="...">``,
-    and the aborted ``MZZa6b`` submit carried that id in its own reference slot.
+    async def press(self, key: str) -> None:
+        self.page.typed.append(f"<{key}>")
+        self.page.on_press(key)
+
+
+class FakeEntityPage(FakeComposerPage):
+    """The `@` picker as measured: characters and media in ONE list, unranked.
+
+    Modelled on the 2026-09-07 capture (`@` + name + Enter inserts
+    ``<span class="mention-chip" data-reference-type="entity" data-entity-id="...">``)
+    and the 2026-10-13 one (``scripts/dev/spike_picker_entity_marker.py``): options are
+    structurally identical whatever their kind, each has an ``.asset-title`` holding the
+    asset's own name, the first is highlighted, ArrowDown moves the highlight and Enter
+    commits the highlighted one. ``options`` is ``(title, entity_id)``; an empty id is
+    media. ``committed`` records every option ever committed — a chip deleted later
+    still rides the submit, so a test must see every commit, not only the final chips.
     """
 
-    def __init__(self, *, entities: dict[str, str], **kw: Any) -> None:
-        super().__init__(assets=[f"{n}Character" for n in entities], **kw)
-        self._entities = entities
-        self._order = list(entities)
+    def __init__(
+        self,
+        *,
+        entities: dict[str, str] | None = None,
+        options: list[tuple[str, str]] | None = None,
+        late_options: list[tuple[str, str]] | None = None,
+        **kw: Any,
+    ) -> None:
+        super().__init__(**kw)
+        # The lazy list growing AFTER gflow read the titles, before it pressed Enter.
+        self.late_options = late_options
+        self.keyboard = FakePickerKeyboard(self)
+        self.options = options if options is not None else list((entities or {}).items())
+        self.query: str | None = None
+        self.highlight = 0
+        self.committed: list[str] = []
 
-    def on_enter(self) -> None:
-        self.enters += 1
-        if self.enters <= self.miss_first:
-            return
-        for _ in range(self.chips_per_enter):
-            name = self._order[len(self.chips) % len(self._order)]
-            self.chips.append(
-                {
-                    "text": name,
-                    "entity_id": self._entities[name],
-                    "reference_type": "entity",
-                }
-            )
+    def _visible(self) -> list[tuple[str, str]]:
+        q = (self.query or "").casefold()
+        return [o for o in self.options if q in o[0].casefold()]
+
+    def on_type(self, text: str) -> None:
+        if text == "@":
+            self.query, self.highlight = "", 0
+        elif self.query is not None and text != " ":
+            self.query += text
+
+    def on_press(self, key: str) -> None:
+        if key == "ArrowDown":
+            self.highlight += 1
+        elif key == "Escape":
+            self.query = None
+        elif key == "Enter" and self.query is not None:
+            self.enters += 1
+            visible = self._visible()
+            if self.enters > self.miss_first and self.highlight < len(visible):
+                title, entity_id = visible[self.highlight]
+                kind = "entity" if entity_id else "media"
+                self.chips.append({"text": title, "entity_id": entity_id, "reference_type": kind})
+                self.committed.append(title)
+            self.query = None
+
+    def locator(self, css: str) -> FakeLoc:
+        if css == "button.asset-item[role='option']":
+            return FakeLoc(self, "asset", [t for t, _ in self._visible()])
+        return super().locator(css)
+
+    async def evaluate(self, script: str, _arg: Any = None) -> Any:
+        if "asset-title" in script:  # _OPTION_TITLES_JS: each option's own name
+            titles = [t for t, _ in self._visible()]
+            if self.late_options is not None:
+                self.options, self.late_options = self.late_options, None
+            return titles
+        return self.chips
 
 
 async def test_character_mentions_land_as_entity_chips() -> None:
@@ -344,22 +395,93 @@ async def test_character_mentions_land_as_entity_chips() -> None:
     assert {c["reference_type"] for c in page.chips} == {"entity"}
 
 
-async def test_a_media_chip_where_a_character_was_asked_for_is_refused() -> None:
-    """Flow's picker lists characters and media TOGETHER and does not rank them.
-
-    Measured 2026-09-07: the same ``@Kael`` query returned ``reference_type="entity"``
-    on one gesture and ``reference_type="media"`` — a JPEG that merely shared the name —
-    on another. Committing the file would generate a clip that looks right and drifts on
-    the next cut, which is the exact failure characters exist to prevent. So a chip that
-    is not an entity is refused before any submit.
-    """
+async def test_the_option_titled_exactly_the_name_is_committed_directly() -> None:
+    """Measured 2026-10-13: images captioned "Sussy …" ranked ABOVE the character "Sussy".
+    The option whose own title IS the name is reached in one ArrowDown run and committed
+    once — no media option is ever committed, because a deleted chip still rides the
+    submit."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    page = FakeComposerPage(assets=["kael_ref.jpgImage"])  # commits MEDIA chips
-    with pytest.raises(ReferenceNotFoundError, match="media"):
+    page = FakeEntityPage(
+        options=[
+            ("Sussy cooking looking at recipe", ""),
+            ("Sussy reading potions book", ""),
+            ("Sussy", "ent-sussy"),
+            ("sussy_pasillo_v3_b.jpg", ""),
+        ]
+    )
+    committed = await MigratedComposer().attach_character_entities(
+        page, entity_ids=(), names=("Sussy",)
+    )
+    assert committed == ("ent-sussy",)
+    assert page.committed == ["Sussy"]
+    assert page.typed.count("<ArrowDown>") == 2
+    assert page.typed.count("<Enter>") == 1
+    after_mention = page.typed[page.typed.index("@") :]
+    assert "<Backspace>" not in after_mention  # nothing is committed and then deleted
+
+
+async def test_media_chips_already_on_the_prompt_are_kept() -> None:
+    """i2i: the uploaded reference's chip is legitimate and stays."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(options=[("Sussy cooking", ""), ("Sussy", "ent-sussy")])
+    page.chips = [{"text": "style.jpg", "entity_id": "", "reference_type": "media"}]
+    await MigratedComposer().attach_character_entities(
+        page, entity_ids=(), names=("Sussy",), clear=False
+    )
+    assert [c["reference_type"] for c in page.chips] == ["media", "entity"]
+
+
+async def test_no_option_titled_the_name_is_refused_without_committing() -> None:
+    """Media that merely CONTAIN the name are never tried: refuse before submit and say
+    what the picker offered."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(options=[("kael_ref.jpg", ""), ("Kael on a hill", "")])
+    with pytest.raises(ReferenceNotFoundError, match="no option is titled exactly") as exc:
         await MigratedComposer().attach_character_entities(
             page, entity_ids=("ent-kael",), names=("Kael",)
         )
+    # Titles are asset names, often prompt-like captions: counted, never echoed.
+    assert "kael_ref.jpg" not in str(exc.value)
+    assert "2 option(s)" in str(exc.value)
+    assert page.committed == []
+
+
+async def test_a_different_character_landing_under_the_highlight_is_refused() -> None:
+    """The list can grow between reading titles and pressing Enter; a by-name character
+    has no id to check, so the chip's own name is what catches the wrong person."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(
+        options=[("Sussy cooking", ""), ("Sussy", "ent-sussy")],
+        late_options=[("Sussy cooking", ""), ("Sussy Two", "ent-two"), ("Sussy", "ent-sussy")],
+    )
+    with pytest.raises(ReferenceNotFoundError, match="different names"):
+        await MigratedComposer().attach_character_entities(page, entity_ids=(), names=("Sussy",))
+    assert page.committed == ["Sussy Two"]
+
+
+async def test_several_options_titled_the_name_are_refused_without_committing() -> None:
+    """A media asset literally titled the name cannot be told apart from the character
+    before one is committed, and a trial commit would leak — so refuse instead."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(options=[("Sussy", ""), ("Sussy", "ent-sussy")])
+    with pytest.raises(ReferenceNotFoundError, match="2 options are titled exactly"):
+        await MigratedComposer().attach_character_entities(page, entity_ids=(), names=("Sussy",))
+    assert page.committed == []
+
+
+async def test_a_single_exact_title_that_commits_media_is_refused() -> None:
+    """The kind check stays as the backstop: a lone media asset titled exactly the name
+    commits a media chip, and the run is refused before submit."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(options=[("Sussy", "")])
+    with pytest.raises(ReferenceNotFoundError, match="media"):
+        await MigratedComposer().attach_character_entities(page, entity_ids=(), names=("Sussy",))
 
 
 async def test_the_wrong_entity_is_refused_even_though_a_chip_landed() -> None:
@@ -371,6 +493,18 @@ async def test_the_wrong_entity_is_refused_even_though_a_chip_landed() -> None:
         await MigratedComposer().attach_character_entities(
             page, entity_ids=("ent-kael",), names=("Kael",)
         )
+
+
+async def test_a_character_named_without_an_id_attaches_as_an_entity() -> None:
+    """#723: with no catalog to look the character up in, only its name is known; the
+    chip's KIND is what is verified."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakeEntityPage(entities={"Sussy": "ent-sussy"})
+    committed = await MigratedComposer().attach_character_entities(
+        page, entity_ids=(), names=("Sussy",)
+    )
+    assert committed == ("ent-sussy",)
 
 
 def test_character_references_are_still_refused_until_a_submit_completes() -> None:

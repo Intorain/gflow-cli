@@ -4,6 +4,109 @@
 
 ## Current release
 
+**v0.85.0 — alpha.** Images on flow.google.com can tag a character.
+
+**`@Character` on `gflow image t2i`/`i2i` (#723, #979).** On an account Flow serves from
+flow.google.com, an image prompt such as `"@Kael reading by the fire"` now attaches that
+Flow character through the composer's `@` picker. Before, it failed with exit 29 or 36.
+Characters and media sit in one picker, and an image captioned with the character's
+name can rank above the character. gflow therefore commits only the option titled
+exactly that name, never on trial, and checks the committed chip's kind and name. The
+submit must then carry exactly the requested references, or it is aborted before Flow
+acts. The MCP image tool takes the same path. A `--reference-entity` id without a name
+still exits 36. Video characters on that host are not ported yet (#723 stays open).
+Contributed by @BeckZero.
+
+**`gflow image t2i --project-name` titles a multi-prompt run's project (#975).**
+
+Full ledger: [LIVE_VERIFICATION_v0.85.0](LIVE_VERIFICATION_v0.85.0.md).
+
+<details><summary>v0.84.0 — batch image runs target an existing project</summary>
+
+**v0.84.0 — alpha.** Batch image runs can target an existing Flow project.
+
+**`gflow run --project ID` (#970).** Every run used to create a new project titled
+`gflow-cli run`. `--project` (or a top-level `"project"` key in the config; the CLI wins)
+now runs every row in that existing project and creates none, and the project keeps its
+title in the local catalog. Contributed by @BeckZero.
+
+**`gflow image t2i` takes `--project` with several prompts (#971).** A multi-prompt run
+used to reject `--project` as single-prompt only; it now runs every prompt in that project
+on the same path. `--reference-entity` stays single-prompt only.
+
+Neither command has an MCP twin for this: `gflow run` is not ported yet, and the MCP image
+tool takes one prompt. Full ledger: [LIVE_VERIFICATION_v0.84.0](LIVE_VERIFICATION_v0.84.0.md).
+
+</details>
+
+<details><summary>v0.83.2 — non-English UIs, image upscale, and auth status without Chrome</summary>
+
+**v0.83.2 — alpha.** Three fixes on flow.google.com: non-English UIs, image upscale, and
+`auth status` on hosts without Chrome.
+
+**`--duration` works in a non-English Flow UI (#963).** The duration radio was matched on
+its English label (`8s`), so a Vietnamese pane (`8 giây`) stopped every `--duration` run
+at exit 11, before any credit was spent. The radio is now matched on its number, measured
+identical across locales; AGENTS.md records this as the second text-selector exception.
+Live-checking it under a Vietnamese UI also found a **notice-only cookie bar** (no reject
+button) that blocked every run at exit 23; it is now acknowledged when it has no reject.
+
+**`gflow image upscale` no longer fails with *Element is not attached to the DOM* (#957).**
+The tile and download button are Playwright locators, re-resolved on every action.
+
+**`gflow auth status` no longer reports a migrated account as signed out on hosts without
+Google Chrome.** The probe opens the profile with the same channel generation uses.
+
+**Not verified here:** a host without Google Chrome; video upscale, which shares the fixed
+helper but whose live run hit a disabled 1080p option (#967); accounts served labs. Full ledger:
+[LIVE_VERIFICATION_v0.83.2](LIVE_VERIFICATION_v0.83.2.md).
+
+</details>
+
+<details><summary>v0.83.1 — the default image model works on flow.google.com again</summary>
+
+**v0.83.1 — alpha.** The default image model works on flow.google.com again.
+
+**`nano2` runs Nano Banana 2.1 on flow.google.com (#958).** Flow replaced "Nano Banana 2"
+with "Nano Banana 2.1" in that host's image menu, and the submit now carries `BELUGA`
+where it carried `NARWHAL`. gflow's submit guard refused every `nano2` run (the default
+model) with exit 7. `nano2` now accepts `BELUGA`; every other model still needs its own
+token. Measured on two accounts: 2.1 replaced 2 rather than appearing beside it. Found and
+first fixed by @omid-io.
+
+**Not verified here:** accounts served labs. Full ledger:
+[LIVE_VERIFICATION_v0.83.1](LIVE_VERIFICATION_v0.83.1.md).
+
+</details>
+
+<details><summary>v0.83.0 — video downloads on flow.google.com, upscaling ported</summary>
+
+**v0.83.0 — alpha.** Video runs on flow.google.com download again, and upscaling is
+ported there.
+
+**Billed video runs no longer fail on flow.google.com (#948).** Since about 2026-10-05,
+Flow sends `null` in the generation record's fourth slot, where it used to send `"CAE"`.
+gflow found the record by that marker. As a result, video submits (reported on t2v, i2v and
+r2v, reproduced on t2v) were accepted and billed, then exited 7 and never downloaded. A record is now matched by its
+three ids and its details block. A run now selects its own record from a reply that lists
+several. `gflow data download` reads only the clip route's signed `as29s` URL. If a record
+is ever missing again, the error says the run may already be billed instead of suggesting
+a retry.
+
+**Upscaling on flow.google.com (#922).** `gflow image upscale` (2K) works there, a new
+`gflow video upscale` exports 1080p, 720p or a 270p GIF, and both have MCP twins
+(`gflow_upscale_image`, `gflow_upscale_video`). A 1080p export measured 0 credits in one
+observation. The download menu items are anchored on their resolution token, measured
+identical across locales. AGENTS.md records this as the one exception to the
+text-selector rule.
+
+**Not verified here:** 4K upscale (the button is disabled on the account used); accounts
+served labs. Full ledger: [LIVE_VERIFICATION_v0.83.0](LIVE_VERIFICATION_v0.83.0.md).
+
+</details>
+
+<details><summary>v0.82.1 — a mint failure, a busy catalog and a missing workflow id stop misreporting</summary>
+
 **v0.82.1 — alpha.** Three fixes for failures that misreported what happened.
 
 **A reCAPTCHA mint failure is a typed error (#915).** It was a bare `RuntimeError`: exit 1
@@ -25,6 +128,8 @@ known media id is now a no-op instead of a crash.
 **Not verified here:** accounts served labs (labs answers 308 on the three profiles here
 that hold a live Flow session). Full ledger:
 [LIVE_VERIFICATION_v0.82.1](LIVE_VERIFICATION_v0.82.1.md).
+
+</details>
 
 <details><summary>v0.82.0 — a run config builds a series from one image</summary>
 
@@ -382,6 +487,11 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `@Character` mentions on flow.google.com images attach the Flow character by exact picker title, verified as an entity chip, with an exact-set submit guard (#723, #979); multi-prompt `t2i --project-name` titles its project (#975) | ✅ done (v0.85.0) |
+| `gflow run --project` (#970) and multi-prompt `gflow image t2i --project` (#971) generate into an existing Flow project and create none | ✅ done (v0.84.0) |
+| `--duration` binds in a non-English Flow UI (#963), a notice-only cookie bar is acknowledged, image upscale clicks through locators (#957), and `auth status` probes with the profile's own channel (#962) | ✅ done (v0.83.2) |
+| The default image model (`nano2`) runs Nano Banana 2.1 on flow.google.com — the submit guard accepts its `BELUGA` token (#958) | ✅ done (v0.83.1) |
+| Billed video runs on flow.google.com download again — the generation record is found without its `"CAE"` marker, picked by id from multi-record replies, recovered from `as29s` only (#948); image and video upscale ported to flow.google.com with MCP twins (#922) | ✅ done (v0.83.0) |
 | A reCAPTCHA mint failure, a busy catalog and a missing video workflow id stop misreporting what happened (#915, #900, #898) | ✅ done (v0.82.1) |
 | A run config row generates from an earlier row's image or a local file, referenced in place with no re-upload (#913); `gflow run` successes recorded with lineage; refs were silently dropped since v0.52.0 (fixed, record corrected) | ✅ done (v0.82.0) |
 | The generation browser opens off-screen, placeable via `GFLOW_CLI_BROWSER_WINDOW_POSITION`, measured unchanged for image and video (#923); a write-denied profile raises `ProfileAccessError` instead of posing as lock contention (#919); `urllib3` CVE lock (#920) | ✅ done (v0.81.0) |

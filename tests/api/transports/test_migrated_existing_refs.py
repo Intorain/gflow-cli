@@ -21,6 +21,7 @@ from gflow_cli.api.transports.migrated_composer import (
     _unported_image_form,
 )
 from gflow_cli.errors import ReferenceNotFoundError
+from tests.api.transports._ogiz0b import submit_body
 
 PARENT = "3f4272fd-2897-4621-b0cd-0fb9576758d3"
 
@@ -238,7 +239,9 @@ async def test_a_submit_missing_its_reference_is_aborted_before_flow_acts() -> N
 
 async def test_a_submit_carrying_its_reference_goes_through() -> None:
     route = _Route()
-    problem = await _guard_image_submit(route, _Request(f"ogiZ0b {PARENT}"), (PARENT,), None)
+    problem = await _guard_image_submit(
+        route, _Request(submit_body(media=(PARENT,))), (PARENT,), None
+    )
     assert problem is None
     assert route.continued and not route.aborted
 

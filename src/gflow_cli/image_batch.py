@@ -529,6 +529,7 @@ async def run_one_image_prompt(
     command: str = "image t2i",
     project_title: str | None = None,
     reference: ImageRef | None = None,
+    project_created: bool = True,
 ) -> BatchOutcome:
     """Generate images for one prompt and download them.
 
@@ -623,6 +624,7 @@ async def run_one_image_prompt(
                 images=list(images),
                 saved=saved,
                 operation_kind=mode.value,
+                project_created=project_created,
             )
         except MediaAttributionError as exc:
             # Same as the manifest path: the generation succeeded, so this row fails
@@ -650,6 +652,7 @@ def _record_row_success(
     images: list[GeneratedImage],
     saved: list[Path],
     operation_kind: str,
+    project_created: bool = True,
 ) -> None:
     """Record one successful row; a store failure warns and never fails the row.
 
@@ -666,6 +669,7 @@ def _record_row_success(
             cloud_storage_infos=[cloud_info_from_path(path) for path in saved],
             input_media_ids=[ref.name for ref in request.refs],
             operation_kind=operation_kind,
+            project_created=project_created,
         )
     except DataStoreError as exc:
         if isinstance(exc, DataIntegrityError):
@@ -693,16 +697,21 @@ async def run_image_batch(
     # Required (no default): a mislabeling default would silently stamp a new
     # caller's failure rows with another command's name (#341 review).
     _command: str,
+    project_id: str | None = None,
 ) -> list[BatchOutcome]:
     """Run prompts sequentially through one FlowApiClient session.
 
     Rows run in dependency order (``order_batch_rows``) but keep their own index for
     file names and results, which are returned in file order. A row whose ``batch:N``
     parent produced no image is skipped with the reason, never submitted without it.
+
+    ``project_id`` generates every row into that existing project instead of a new
+    one titled ``project_title``; its catalog title is then left as it is.
     """
     results: dict[int, BatchOutcome] = {}
     # One upload per distinct local file per run (one run, one project).
     uploads: dict[str, ImageRef] = {}
+    project_created = project_id is None
 
     async def image_worker(
         client: Any,
@@ -766,6 +775,7 @@ async def run_image_batch(
             command=_command,
             project_title=project_title,
             reference=reference,
+            project_created=project_created,
         )
         results[item.index] = outcome
         return outcome
@@ -781,6 +791,7 @@ async def run_image_batch(
         client_factory=client_factory,
         output_dir=output_dir,
         jitter_range=jitter_range,
+        project_id=project_id,
     )
     return sorted(outcomes, key=lambda outcome: outcome.index)
 
@@ -797,8 +808,11 @@ async def run_sequential_batch(
     output_dir: Path | None = None,
     client_factory: Callable[..., Any] | None = None,
     jitter_range: tuple[float, float] | None = None,
+    project_id: str | None = None,
 ) -> list[BatchOutcome]:
     """Generic sequential orchestrator for Flow API batches.
+
+    ``project_id`` runs the batch in that existing project; otherwise one is created.
 
     ``jitter_range`` paces submissions with a random ``uniform(min, max)`` sleep
     before every prompt after the first (anti-bot cadence, same contract as the
@@ -813,13 +827,17 @@ async def run_sequential_batch(
     outcomes: list[BatchOutcome] = []
     factory = client_factory or FlowApiClient
     async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
-        project = await client.create_project(title=project_title)
+        run_project_id = (
+            project_id
+            if project_id is not None
+            else (await client.create_project(title=project_title)).project_id
+        )
         for idx, item in enumerate(items):
             if idx > 0 and jitter_range and jitter_range[1] > 0:
                 delay = random.uniform(*jitter_range)  # noqa: S311 - pacing, not crypto
                 logger.info("batch_jitter_sleep", seconds=round(delay, 2), index=idx)
                 await asyncio.sleep(delay)
-            outcome = await worker(client, project.project_id, idx, item)
+            outcome = await worker(client, run_project_id, idx, item)
             outcomes.append(outcome)
             if outcome.status == "fail" and not continue_on_error:
                 for skip_idx in range(idx + 1, len(items)):

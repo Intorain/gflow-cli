@@ -24,6 +24,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,10 @@ def _config(tmp_path: Path, e2e_env: dict[str, str]) -> dict[str, Any]:
 
 @when("gflow run executes it on the live profile")
 def _run(world: dict[str, Any]) -> None:
+    _execute(world)
+
+
+def _execute(world: dict[str, Any], *extra: str) -> None:
     env = {**world["env"], "GFLOW_CLI_LOG_FORMAT": "json"}
     proc = subprocess.run(
         [
@@ -64,6 +69,7 @@ def _run(world: dict[str, Any]) -> None:
             str(world["cfg"]),
             "--output-dir",
             str(world["out"]),
+            *extra,
         ],
         env=env,
         capture_output=True,
@@ -200,3 +206,53 @@ def _uploaded_once(world: dict[str, Any]) -> None:
     assert [mode for mode, _ in rows] == ["i2i", "i2i"], rows
     for _mode, meta in rows:
         assert json.loads(meta or "{}").get("reference_media_ids") == [uploaded_id], meta
+
+
+# --- an existing project (--project) ----------------------------------------------
+
+
+@given("an existing project and a run config of two rows", target_fixture="world")
+def _project_config(tmp_path: Path, e2e_env: dict[str, str]) -> dict[str, Any]:
+    title = f"gflow-e2e-run-project-{uuid.uuid4().hex[:6]}"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, our own CLI
+        [sys.executable, "-m", "gflow_cli", "project", "create", "--title", title, "--json"],
+        env=e2e_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=600,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout[-1500:] + proc.stderr[-1500:]
+    project_id = json.loads(proc.stdout[proc.stdout.index("{") :])["project_id"]
+    rows = [
+        {"text": "a paper boat on a pond", "aspect_ratio": "16:9"},
+        {"text": "a kite above a green hill", "aspect_ratio": "16:9"},
+    ]
+    cfg = tmp_path / "run.json"
+    cfg.write_text(json.dumps({"prompts": rows}), encoding="utf-8")
+    return {
+        "cfg": cfg,
+        "env": e2e_env,
+        "out": tmp_path / "run_out",
+        "project_id": project_id,
+        "title": title,
+    }
+
+
+@when("gflow run executes it into that project on the live profile")
+def _run_into_project(world: dict[str, Any]) -> None:
+    _execute(world, "--project", world["project_id"])
+
+
+@then("every image is in that project, no project was created, and its title is kept")
+def _in_existing_project(world: dict[str, Any]) -> None:
+    assert "(existing)" in world["proc"].stdout
+    db = Path(world["env"]["GFLOW_CLI_DB_PATH"])
+    with sqlite3.connect(db) as con:
+        projects = con.execute("SELECT flow_project_id, title FROM projects").fetchall()
+        asset_projects = {
+            row[0] for row in con.execute("SELECT flow_project_id FROM assets").fetchall()
+        }
+    assert projects == [(world["project_id"], world["title"])], projects
+    assert asset_projects == {world["project_id"]}, asset_projects
