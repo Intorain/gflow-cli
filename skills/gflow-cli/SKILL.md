@@ -80,6 +80,8 @@ gflow run --config <batch.json> [--project ID]            # JSON image batch; a 
 # five aspects. Images take a character by name (@Name, or --reference-entity with
 # --reference-entity-name; #723). UUID references, an entity id without a name,
 # Imagen 4 (image4), image batch, and characters on video are refused there (exit 36).
+# `gflow video extend` runs there one segment per call (--project required); -n > 1,
+# --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: omni-flash only; without --project a project is created first, on either host (#864); 10s is omni-flash-only

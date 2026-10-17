@@ -933,9 +933,20 @@ reach for it before spending anything.
 > (`/project/<project-id>`). `--project` is required here, unlike on the other generate
 > commands, because extend has to find the workflow that owns `MEDIA_ID` before it can
 > create the scene to extend into.
-> **Runs on both Flow hosts.** On migrated accounts (`flow.google.com`), `extend` routes
-> through batchexecute RPC `fZytfe` and derives the 24fps frame window from the source clip's
-> model key automatically.
+>
+> **On flow.google.com: one segment per call.** gflow opens the clip's editor
+> (`/project/<id>/edit/<media-id>`) and drives Flow's own Extend control; the page builds
+> and signs the request itself. Before any click, Flow's project read must list
+> `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
+> is checked at the route and aborted, before Flow sees it, if it names another clip. The
+> new segment is downloaded to `-o` (default: the output directory). Not ported to
+> flow.google.com yet, each refused with exit 36 before anything is billed: more than one
+> PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
+> source clip's (leave `--aspect` off; the extension keeps the source's). Each run leaves a
+> new "Untitled Scene" in the project, and the plan shows no price because that host does
+> not report one before submitting — compare `gflow credits user` before and after. To go
+> further, extend the new clip again. "Cost and safety" and "What it produces" below
+> describe the labs.google arm.
 
 Continue an existing clip by another 8 seconds, then optionally render the whole
 thing to one file.
@@ -989,7 +1000,7 @@ server-side concat, which is credit-free. Without `-o`, render later with
 |---|---|
 | `-n`, `--segments N` | How many 8s continuations (1–30). Default: one per prompt |
 | `-o`, `--output PATH` | Render the finished scene to one mp4 (free) |
-| `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model |
+| `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model. Default 9:16 on labs.google; flow.google.com keeps the source clip's aspect |
 | `--project ID` | Required — the project owning `MEDIA_ID` |
 | `--scene ID` | Extend inside an existing scene instead of creating one |
 | `--resume-from ID` | Continue an interrupted run's scene — appends after the clips already there |
@@ -2179,7 +2190,7 @@ The CLI is a thin shell over `gflow_cli.api.client.FlowApiClient`. All public me
 Two module paths resolve to the same error classes. Use whichever feels natural for your codebase:
 
 ```python
-from gflow_cli.errors import GFlowError, AuthExpiredError  # canonical
+from gflow_cli.errors import GFlowError, AuthExpiredError   # canonical
 from gflow_cli.exceptions import GFlowError, AuthExpiredError  # standard alias
 ```
 
@@ -2194,7 +2205,6 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model, Aspect
 from gflow_cli.config import get_settings
 
-
 async def main() -> None:
     settings = get_settings()
     profile_dir = settings.profile_subdir("default")
@@ -2204,7 +2214,6 @@ async def main() -> None:
         image = await client.generate_image(req=req)
         saved = await client.download_image(image, Path("lake.png"))
         print(saved)
-
 
 asyncio.run(main())
 ```

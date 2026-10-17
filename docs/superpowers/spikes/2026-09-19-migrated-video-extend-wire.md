@@ -4,6 +4,11 @@
 **Probe:** `scripts/dev/spike_migrated_video_extend.py` (live inspection via Playwright)
 **Live proof:** `extend_live_proof_2026-09-19.json` · `wire_extend.mp4` (2 786 225 B, h264 720×1280, 7s)
 
+> **Superseded as an implementation (2026-10-17).** gflow does not replay `fZytfe`: it drives
+> Flow's own Extend control and observes this wire passively — see
+> [the UI-path spike](2026-10-17-migrated-extend-ui-path.md). The wire facts below (the
+> workflow-id slot, the frame window, the `as29s` record) still hold and informed that port.
+
 ## Question
 
 Can `gflow video extend` be driven on the migrated host (`flow.google.com`) where the legacy aisandbox REST route `batchAsyncGenerateVideoExtendVideo` returns HTTP 401?

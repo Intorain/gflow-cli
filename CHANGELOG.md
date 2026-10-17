@@ -9,11 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`gflow video extend` on the migrated host (`flow.google.com`).** Video extensions now
-  run against the migrated origin via batchexecute RPC `fZytfe`, deriving the 24fps frame
-  window from the source clip's duration (`[duration*24-24+1, duration*24]`), binding the
-  source clip's workflow id into the media ref, and polling `as29s` for the signed video URL.
-  ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+- **`gflow video extend` runs on flow.google.com, one segment at a time.** gflow opens the
+  clip's editor and drives Flow's own Extend control, so the page builds and mints the
+  `fZytfe` submit itself, the way every other flow.google.com port works. Before any click,
+  Flow's own project read must list the clip as a video in `--project` (exit 11 otherwise).
+  Every scene/extend request passes a route guard that aborts it, before Flow sees it, if
+  it names another clip. The new segment is downloaded to `--output` (or the output
+  directory). On that host `--segments > 1`, `--scene`/`--resume-from`, `--seed` and an
+  `--aspect` other than the source's exit 36 before anything is billed; `--aspect` now
+  defaults to the source's aspect there (9:16 on labs.google, as before). Each run leaves a
+  new scene in the project, and the plan shows no price, because flow.google.com does not
+  report one before submitting. Thanks to @stgmt, whose wire research in #882 (the
+  workflow-id slot, the frame window, the `as29s` record) mapped this surface.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639), [#882](https://github.com/ffroliva/gflow-cli/pull/882))
 - **`gflow auth renew` refreshes saved sessions without signing in again.** It opens each
   profile (`--profile`, or `--all`) in a headless browser and loads Flow, so Google and Flow
   rotate the saved cookies. It then verifies the session like `gflow auth status`. No credits
@@ -32,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`. The credits 401 hint
   now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
   account whose labs session issues no token at all is not helped by renewal, and says so.
+
+### Fixed
+
+- **`gflow video extend --json` prints one JSON document.** The human plan preamble no
+  longer precedes it on stdout, and the payload now carries the same `video_result` fields
+  as `t2v`/`i2v` (`status`, `succeeded`, `media_id`, `local_path`, `request.mode`). A
+  single-segment `--output` downloads the clip directly instead of a server-side join.
+  (#882, @stgmt)
 
 ## [0.85.0] — 2026-10-14
 
