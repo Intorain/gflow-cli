@@ -101,6 +101,9 @@ class Dom:
     # it appears only when Google re-prompts, which is exactly why it went unnoticed
     # until it covered the settings trigger and the submit button on 2026-09-11.
     cookie_bar_visible: bool = False
+    #: The notice-only variant (measured under `hl=vi`, 2026-10-10): `OK, got it` and
+    #: no reject button at all.
+    cookie_bar_notice_only: bool = False
     events: list[str] = field(default_factory=list)
     # --- i2v: the toolbar upload path and the Frames picker (2026-09-05 frames spike) ---
     add_button_present: bool = True  # the toolbar `+` outside flow-prompt-box
@@ -297,6 +300,14 @@ class FakeLocator:
     async def is_visible(self) -> bool:
         return bool(self.items) and self._visible_now
 
+    async def scroll_into_view_if_needed(self, **_: Any) -> None:
+        await asyncio.sleep(0)
+
+    async def bounding_box(self) -> dict[str, float] | None:
+        if not self.items:
+            return None
+        return {"x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0}
+
     async def is_enabled(self) -> bool:
         if self.kind == "submit":
             dom = self.page.dom
@@ -349,6 +360,9 @@ class FakeLocator:
         elif self.kind == "cookie_reject":
             dom.cookie_bar_visible = False
             dom.events.append("cookie_bar_rejected")
+        elif self.kind == "cookie_accept":
+            dom.cookie_bar_visible = False
+            dom.events.append("cookie_bar_accepted")
         elif self.kind == "agent_close":
             dom.agent_panel_expanded = False
         elif self.kind == "agent_toggle":
@@ -563,6 +577,15 @@ class FakePage:
     def remove_listener(self, event: str, handler: Any) -> None:
         self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
 
+    async def route(self, _url: Any, _handler: Any) -> None:
+        # The submit guard (#913) is installed here; this double fires requests through
+        # its listeners, so the observer path these tests pin still runs. The guard
+        # itself is covered in test_migrated_existing_refs.py.
+        return None
+
+    async def unroute(self, _url: Any, _handler: Any) -> None:
+        return None
+
     def listeners(self, event: str) -> list[Any]:
         return list(self._handlers[event])
 
@@ -587,6 +610,11 @@ class FakePage:
 
     def expect_file_chooser(self, **_: Any) -> FakeChooserContext:
         return FakeChooserContext(self)
+
+    async def evaluate(self, expression: str, argument: Any = None) -> Any:
+        if "elementFromPoint" in expression:
+            return {"target": True, "top": None}
+        return {}
 
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
@@ -696,7 +724,10 @@ class FakePage:
             # snapshotted here would make a working dismissal look stuck.
             return FakeLocator(self, "cookie_bar", ["bar"], visible=lambda: dom.cookie_bar_visible)
         if css == migrated_composer.COOKIE_BAR_REJECT:
-            return FakeLocator(self, "cookie_reject", ["reject"] if dom.cookie_bar_visible else [])
+            up = dom.cookie_bar_visible and not dom.cookie_bar_notice_only
+            return FakeLocator(self, "cookie_reject", ["reject"] if up else [])
+        if css == migrated_composer.COOKIE_BAR_ACCEPT:
+            return FakeLocator(self, "cookie_accept", ["accept"] if dom.cookie_bar_visible else [])
         raise AssertionError(f"composer used an unmodelled selector: {css!r}")
 
 
@@ -812,6 +843,51 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert not page.dom.pane_open  # closed afterwards
 
 
+@pytest.mark.parametrize("unit", ["s", " giây", " Sek."])
+async def test_duration_is_matched_on_its_number_not_the_english_unit(unit: str) -> None:
+    """#963: a Vietnamese pane reads `8 giây`, so `_exact("8s")` never matched and every
+    `--duration` run stopped at exit 11. The number is the locale-invariant token; a
+    sibling `4K`/`480p` radio sharing the leading digit must still not be taken for it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.groups["resolution"] = [Radio("", "4K"), Radio("", "480p", checked=True)]
+    page.dom.groups["duration"] = [
+        Radio("", f"4{unit}"),
+        Radio("", f"6{unit}"),
+        Radio("", f"8{unit}", checked=True),
+    ]
+    await MigratedComposer().apply_video_settings(page, _t2v(duration=4))
+    assert page.dom.groups["duration"][0].checked
+    assert not page.dom.groups["resolution"][0].checked  # the 4K decoy was not clicked
+
+
+async def test_apply_video_settings_selects_resolution() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    assert page.dom.groups["resolution"][1].checked  # default 720p
+
+    await MigratedComposer().apply_video_settings(page, _t2v(resolution="360p"))
+    assert page.dom.groups["resolution"][0].checked  # 360p
+    assert not page.dom.groups["resolution"][1].checked
+
+    await MigratedComposer().apply_video_settings(page, _t2v(resolution="720p"))
+    assert page.dom.groups["resolution"][1].checked
+    assert not page.dom.groups["resolution"][0].checked
+
+
+async def test_apply_video_settings_resolution_row_absent_raises() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import ConfigurationError
+
+    page = FakePage()
+    del page.dom.groups["resolution"]
+
+    with pytest.raises(ConfigurationError, match="renders no resolution control offering '360p'"):
+        await MigratedComposer().apply_video_settings(page, _t2v(resolution="360p"))
+
+
 async def test_the_consent_bar_is_cleared_on_the_video_path_too() -> None:
     """The bar covers the trigger for BOTH surfaces, so the fix belongs where they meet.
 
@@ -830,6 +906,22 @@ async def test_the_consent_bar_is_cleared_on_the_video_path_too() -> None:
     assert "cookie_bar_rejected" in page.dom.events, page.dom.events
     assert not page.dom.cookie_bar_visible
     assert not page.dom.pane_open  # opened, bound, and closed again
+
+
+async def test_a_notice_only_consent_bar_is_acknowledged_when_it_has_no_reject() -> None:
+    """Measured 2026-10-10 under `hl=vi` (found by the #963 spike): the bar offers only
+    `OK, got it` (`__accept`), so a reject-only dismissal left it over the settings
+    trigger and the run died at exit 23 before any setting was read. Reject is still
+    preferred wherever the bar offers it — see the test above."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.cookie_bar_visible = page.dom.cookie_bar_notice_only = True
+
+    await MigratedComposer().apply_video_settings(page, _t2v())
+
+    assert "cookie_bar_accepted" in page.dom.events, page.dom.events
+    assert not page.dom.cookie_bar_visible
 
 
 async def test_apply_image_settings_selects_mode_model_aspect_and_count() -> None:
@@ -1235,6 +1327,8 @@ async def test_submit_observes_submit_then_poll_then_result() -> None:
         started and started[0].media_id == MEDIA and started[0].flow_operation_id == rec.workflow_id
     )
     assert started[0].project_id == PROJ
+    # #898: record slot 0 is Flow's workflow id (wire spike 2026-09-05); carry it by name.
+    assert started[0].workflow_id == rec.workflow_id
     assert page.dom.submit_clicked == 1
 
 
@@ -2918,6 +3012,36 @@ async def test_an_image_submit_missing_its_reference_is_refused_not_reported_as_
     assert missing in str(info.value)
 
 
+@pytest.mark.parametrize(
+    ("reference_ids", "entity_ids", "guarded"),
+    [((), (), False), ((), ("ent-1",), True), (("m-1",), (), True)],
+)
+async def test_the_submit_guard_is_installed_whenever_a_reference_is_expected(
+    reference_ids: tuple[str, ...], entity_ids: tuple[str, ...], guarded: bool
+) -> None:
+    """A character-only run (#723) must be guarded too: without the route, a lost
+    character or a stray media id would reach Flow instead of aborting the submit."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+    routed: list[Any] = []
+
+    async def spy(url: Any, _handler: Any) -> None:
+        routed.append(url)
+
+    page.route = spy  # type: ignore[method-assign]
+    await MigratedComposer().submit_images_and_observe(
+        page,
+        GenerateImageRequest(prompt="a blue cup"),
+        reference_ids=reference_ids,
+        entity_ids=entity_ids,
+    )
+    assert bool(routed) is guarded
+
+
 async def test_a_non_200_image_submit_is_a_wire_format_error_carrying_the_status() -> None:
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -3100,3 +3224,20 @@ async def test_an_image_submit_that_stays_disabled_is_drift_not_a_hang(
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert page.dom.submit_clicked == 0
+
+
+async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers() -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _image_page()
+    page.dom.pane_open = True
+
+    with pytest.raises(UiSelectorDriftError, match="blocking overlay"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+    assert page.dom.submit_clicked == 0
+    assert page.listeners("request") == []
+    assert page.listeners("response") == []

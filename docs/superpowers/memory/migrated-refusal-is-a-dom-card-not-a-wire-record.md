@@ -1,50 +1,48 @@
 ---
 name: migrated-refusal-is-a-dom-card-not-a-wire-record
-description: On flow.google.com a policy refusal renders as a media-grid card; the batchexecute record is a bare status-4 or never parses, so gflow reports a retryable timeout for something that will never succeed.
+description: CORRECTED 2026-09-27 — a flow.google.com refusal IS on the wire (HTTP 200, a null-payload batchexecute envelope carrying gRPC status + ErrorInfo reason); gflow used to drop it in parse_frames. Read the wire, never the grid card.
 ---
 
-On `flow.google.com` a content/abuse refusal is delivered to the **page**, not to
-the wire. The grid renders a card —
+**The slug is historical and now wrong; it is kept because the council routing table
+and `check_council_memory.py` cite it.** Until 2026-09-27 this note said a refusal on
+`flow.google.com` reaches the page but not the wire. Measured that day
+([spike](../spikes/2026-09-27-migrated-refusal-is-on-the-wire.md), a submit with its
+reCAPTCHA token corrupted in flight), it is on the wire:
 
-> Failed · We noticed some unusual activity… · You have not been charged for this
-> generation
+```
+HTTP 200
+[["wrb.fr","ogiZ0b",null,null,null,
+  [7,null,[["type.googleapis.com/google.rpc.ErrorInfo",["PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]]],
+  "generic"], …]
+```
 
-— while the batchexecute side gives gflow one of three useless shapes: silence
-(the submit reply never parses), a bare `status 4` record with no reason field, or
-a parsed-but-empty reply.
+A null payload, the gRPC status in slot 5, Google's `ErrorInfo` reason inside it.
+`batchexecute.parse_frames` kept only frames whose payload is a string, so it silently
+discarded this one — the "silence / never parses" shape the old note recorded was **our
+parser**, not Flow. That is why the video path waited out a retryable 60 s
+`TransportTimeoutError` and the image path raised `WireFormatError("no ogiZ0b frame")`
+while the grid showed *"We noticed some unusual activity… You have not been charged"*.
 
-So the driver names it wrong, in a way that matters:
+**The fix reads the wire:** `batchexecute.rpc_errors` returns the envelopes
+`parse_frames` skips, and `migrated_composer._submit_refusal` maps a REASON to a class —
+`PUBLIC_ERROR_UNUSUAL_ACTIVITY` → `WafRejectionError` (the labs path's class for the same
+reason), `CONTENT_SAFETY_REASONS` → `ContentPolicyError`. A bare status with no reason is
+not a refusal: the #723 entity submit Flow queued and ran replies `[5]`.
 
-| What Flow means | What gflow says today | Consequence |
-|---|---|---|
-| refused, never retry | `TransportTimeoutError` (exit 9, **retryable**) | the CLI, MCP and worker envelopes all invite a retry of a refusal |
-| refused, rewrite the prompt | `migrated host reported status 4` | true and unactionable |
-| refused | `WireFormatError` (exit 7) | the remediation string tells the user to file a frontend bug |
+**Why the grid card is the wrong source, measured the same day:** a submit aborted in
+the browser (`route.abort()`, no reply, `net::ERR_FAILED`) renders the identical
+`<flow-error-tile>` — same `warning`/`refresh`/`undo`/`delete_forever` ligatures, only the
+copy differs. Structure cannot tell a refusal from an abort; the wire can (a reply with a
+reason vs. no reply at all). This is the finding that blocked PR #873 and PR #907, both of
+which scraped the tile — see [[content-policy-text-scan-false-positives-on-page-chrome]].
 
-`ContentPolicyError` (exit 5, remediation *"rewrite and retry"*) exists and is
-wired through `--json`, MCP and the worker — but its raise sites are all on the
-**old REST path** (`errors.py`, docstring: "two known raise sites"). On the
-migrated host a policy refusal is therefore **unreportable**, and `retryable` is
-`true` when it should be `false` (`ContentPolicyError` is absent from
-`RETRYABLE_ERRORS`).
+**"Unusual activity" is not a content verdict.** It is reCAPTCHA Enterprise scoring the
+browser profile. Never route it to `ContentPolicyError`'s "rewrite the prompt"
+remediation. #906 reported it on every automated submit on one account; the stealth
+spike (PR #908, `2026-09-27-stealth-fingerprint-delta.md`) found
+`playwright-stealth` changes no automation tell on gflow's context, so do not add a
+stealth dependency on the strength of #906.
 
-**Why it is worth knowing even before it is fixed:** a refusal presenting as a
-transport fault is what sends a session spiking selectors and filing frontend bugs
-for Google simply saying no. Recognise the shape first — see
-[[feedback-intermediate-signal-is-not-terminal]]: a null or unparsed submit reply
-is an intermediate signal, and the outcome lives in the project, not in the
-initiating call.
-
-**How to apply:** reading the card is the right instinct; how it is read decides
-whether the fix is an improvement or a regression. Anchor on the failed tile's
-**structure** and read `inner_text()` of the node you already matched — never
-scan the page body for English phrases, and never treat `"not been charged"` as
-refusal evidence (it is the credit-free abort signature). The full set of traps,
-with the live incident behind each, is
-[[content-policy-text-scan-false-positives-on-page-chrome]].
-
-Before implementing, spike the failed-card DOM: as of 2026-09-18 nothing in
-`docs/superpowers/spikes/` describes it, so any structural anchor is currently a
-guess — see [[migrated-host-driver-wire-lessons]] for what *is* measured on this
-host. Diagnosed by an external contributor in PR #873; the diagnosis is sound and
-the PR was blocked on its detection mechanism, not on its premise.
+Diagnosed by an external contributor (stgmt) in #873 and #906; the diagnosis was right
+from the start. See [[migrated-host-driver-wire-lessons]] for the rest of this host's
+wire.

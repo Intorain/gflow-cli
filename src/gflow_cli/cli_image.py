@@ -148,9 +148,12 @@ def _project_and_entity_options(*, single_prompt: bool) -> Callable[[_CmdFn], _C
     """Shared `--project` / `--reference-entity` / `--reference-entity-name` options.
 
     Applied to both `t2i` and `i2i` so the (identical) option definitions live in one
-    place. ``single_prompt`` appends the single-prompt-only note to t2i's help.
+    place. ``single_prompt`` marks t2i, which takes several prompts: its
+    ``--reference-entity`` help gets the single-prompt-only note and its ``--project``
+    help says a multi-prompt run uses that project.
     """
     note = " Single-prompt only." if single_prompt else ""
+    project_note = " With several prompts, every prompt runs in it." if single_prompt else ""
 
     def decorator(func: _CmdFn) -> _CmdFn:
         func = click.option(
@@ -184,7 +187,7 @@ def _project_and_entity_options(*, single_prompt: bool) -> Callable[[_CmdFn], _C
             help=(
                 "Generate in this existing Flow project id instead of creating a scratch "
                 "project. Required to reference locked entities/assets that live in a "
-                "specific project." + note
+                "specific project." + project_note
             ),
         )(func)
 
@@ -204,6 +207,10 @@ def _warn_persistence_failed_after_success(
     logger.warning(
         "data.persistence_failed_after_success",
         error_class=type(exc).__name__,
+        # Since #900 every sqlite fault in a catalog write arrives as DataStoreError, a
+        # real bug as well as a lock; the class alone no longer tells them apart.
+        detail=getattr(exc, "detail", None) or str(exc),
+        route=getattr(exc, "route", None),
         flow_media_id=flow_media_id,
         local_path=str(local_path) if local_path is not None else None,
     )
@@ -694,6 +701,11 @@ def _lookup_project_in_catalog(media_id: str, profile_name: str) -> str | None:
     return None
 
 
+def lookup_project_in_catalog(media_id: str, profile_name: str) -> str | None:
+    """Public wrapper around _lookup_project_in_catalog for external callers."""
+    return _lookup_project_in_catalog(media_id, profile_name)
+
+
 def _resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_name: str) -> str:
     """Resolve the owning project: explicit --project wins, else the catalog.
 
@@ -716,6 +728,13 @@ def _resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_
         f"editor URL (…/project/<id>/…) or via `gflow data list images`."
     )
     raise click.UsageError(msg)
+
+
+def resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_name: str) -> str:
+    """Public wrapper around _resolve_upscale_project_id for external callers."""
+    return _resolve_upscale_project_id(
+        media_id=media_id, explicit=explicit, profile_name=profile_name
+    )
 
 
 async def _run_upscale(
@@ -941,12 +960,10 @@ def t2i(  # NOSONAR
         msg = "--instruction is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
-    if is_multi_prompt and (project_id is not None or reference_entities):
-        # The multi-prompt/batch path creates one shared project internally; a
-        # single explicit --project / --reference-entity across many prompts isn't
-        # wired. Loop t2i one prompt at a time if you need every frame in the same
-        # project with the same characters.
-        msg = "--project / --reference-entity are single-prompt only; remove the extra prompts."
+    if is_multi_prompt and reference_entities:
+        # The batch runner does not attach entities. Loop t2i one prompt at a time
+        # (with --project) if every frame needs the same characters.
+        msg = "--reference-entity is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
     if is_multi_prompt and as_json:
@@ -1026,7 +1043,15 @@ def t2i(  # NOSONAR
     if tool_specs:
         batch_prompts = _apply_tools_to_batch_prompts(batch_prompts, tool_specs)
     _execute_t2i_batch(
-        batch_prompts, count, continue_on_error, profile, out, transport, jitter_spec
+        batch_prompts,
+        count,
+        continue_on_error,
+        profile,
+        out,
+        transport,
+        jitter_spec,
+        project_id,
+        project_name,
     )
 
 
@@ -1100,8 +1125,14 @@ def _execute_t2i_batch(
     out: Path | None,
     transport: str | None,
     jitter_spec: str | None = None,
+    project_id: str | None = None,
+    project_name: str | None = None,
 ) -> None:
-    """Run a multi-prompt t2i batch and print the summary table."""
+    """Run a multi-prompt t2i batch and print the summary table.
+
+    ``project_id`` runs every prompt in that existing project instead of a new one;
+    otherwise the new project is titled ``project_name`` (default ``gflow-cli t2i``).
+    """
     jitter_range = resolve_jitter_range(jitter_spec)
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
@@ -1128,11 +1159,12 @@ def _execute_t2i_batch(
                 prompts=batch_prompts,
                 output_dir=output_dir,
                 continue_on_error=continue_on_error,
-                project_title=_T2I_PROJECT_TITLE,
+                project_title=project_name or _T2I_PROJECT_TITLE,
                 jitter_range=jitter_range,
                 _profile_name=profile_name,
                 _recorder=recorder,
                 _command="image t2i",
+                project_id=project_id,
             ),
         )
     finally:
@@ -1507,6 +1539,14 @@ def batch(
         )
     except ConfigurationError as exc:
         raise _as_usage_error(exc) from exc
+    for row in prompts:
+        if row.ref is not None:
+            # The stay-mounted batch path cannot reference an earlier row (#913).
+            msg = (
+                f"prompts[{row.index}].ref: manifest references (an earlier row or a "
+                "local file) work with `gflow run --config`, not `gflow image batch`."
+            )
+            raise click.UsageError(msg)
 
     # Apply --tool to each manifest row before submission (≤5 prompts, sequential,
     # never-fatal per row; unknown tool/style fails fast pre-network).

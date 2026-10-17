@@ -1409,16 +1409,52 @@ class TestImageIdValidation:
 
 
 class TestT2iEntityGuards:
-    """t2i restricts --project / --reference-entity to single-prompt mode."""
+    """t2i restricts --reference-entity to single-prompt mode; --project batches."""
 
-    def test_multiprompt_with_project_errors(self, runner: CliRunner) -> None:
+    def test_multiprompt_with_project_runs_the_batch_in_it(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
         from gflow_cli.cli import main
 
-        result = runner.invoke(
-            main, ["image", "t2i", "a", "b", "--project", "P"], catch_exceptions=False
-        )
-        assert result.exit_code == 2, result.output
-        assert "single-prompt only" in result.output
+        async def _fake_run_batch(**_kwargs: object) -> list[object]:
+            return []
+
+        with (
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "p"),
+            patch("gflow_cli.cli_image.run_image_batch", side_effect=_fake_run_batch) as run,
+            patch("gflow_cli.cli_image.render_image_batch_summary", return_value=0),
+        ):
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a", "b", "--project", "P", "--out", str(tmp_path / "o")],
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert run.call_args.kwargs["project_id"] == "P"
+
+    def test_multiprompt_project_name_titles_the_batch_project(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        # #975: --project-name was accepted on a multi-prompt run and then dropped.
+        from gflow_cli.cli import main
+
+        async def _fake_run_batch(**_kwargs: object) -> list[object]:
+            return []
+
+        with (
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "p"),
+            patch("gflow_cli.cli_image.run_image_batch", side_effect=_fake_run_batch) as run,
+            patch("gflow_cli.cli_image.render_image_batch_summary", return_value=0),
+        ):
+            result = runner.invoke(
+                main,
+                ["image", "t2i", "a", "b", "--project-name", "My shoot", "--out", str(tmp_path)],
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 0, result.output
+        assert run.call_args.kwargs["project_title"] == "My shoot"
 
     def test_multiprompt_with_entity_errors(self, runner: CliRunner) -> None:
         from gflow_cli.cli import main

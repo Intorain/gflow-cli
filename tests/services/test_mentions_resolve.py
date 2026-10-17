@@ -294,3 +294,145 @@ async def test_build_for_project_empty_sources_are_not_unavailable() -> None:
     # means no characters/media exist yet for this project.
     index = await AssetIndex.build_for_project(_EmptyCharacterClient(), "proj-1")
     assert index.entries == []
+
+
+# ---------- #723: character catalog unreadable → by-name character (image path) ----------
+
+
+async def test_build_for_project_tolerates_a_character_outage_when_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On an account served flow.google.com the catalog is read through a labs route
+    # that answers 401 while the composer's `@` picker still offers the character.
+    monkeypatch.setattr("gflow_cli.data.queries.list_project_media_assets", lambda **_: [])
+    index = await AssetIndex.build_for_project(
+        _FailingCharacterClient(), "proj-1", characters_optional=True
+    )
+    assert index.characters_unavailable is True
+    assert index.entries == []
+
+
+def test_unmatched_mention_becomes_a_character_by_its_first_word() -> None:
+    index = AssetIndex(characters_unavailable=True)
+    prompt = "@Sussy cocinando mientras mira una receta"
+    res = resolve_mentions(
+        parse_mentions(prompt), index, path="image", model="nano2", prompt=prompt
+    )
+    assert [(m.name, m.kind, m.id) for m in res.mentions] == [("Sussy", "entity", "")]
+    # The name stays as plain text: the chip goes before the prompt, and a mention in
+    # mid-sentence still reads correctly.
+    assert res.de_tagged_prompt == "Sussy cocinando mientras mira una receta"
+
+
+def test_a_repeated_by_name_character_is_attached_once() -> None:
+    index = AssetIndex(characters_unavailable=True)
+    prompt = "@Sussy y @sussy otra vez"
+    res = resolve_mentions(
+        parse_mentions(prompt), index, path="image", model="nano2", prompt=prompt
+    )
+    assert [m.name for m in res.mentions] == ["Sussy"]
+    assert res.de_tagged_prompt == "Sussy y sussy otra vez"
+
+
+def test_a_by_name_character_the_caller_already_passed_is_not_added_again() -> None:
+    """Review of #979: `--reference-entity <id> --reference-entity-name Sussy` plus
+    `@Sussy` must not attach Sussy twice. `existing_refs` holds ids, so the comparison
+    is against the caller's names, case-insensitively."""
+    index = AssetIndex(characters_unavailable=True)
+    prompt = "@sussy cocinando"
+    res = resolve_mentions(
+        parse_mentions(prompt),
+        index,
+        path="image",
+        model="nano2",
+        prompt=prompt,
+        existing_refs=["ent-sussy"],
+        existing_names=["Sussy"],
+    )
+    assert res.mentions == []
+    assert res.de_tagged_prompt == "sussy cocinando"
+
+
+def test_media_still_resolves_when_only_characters_are_unavailable() -> None:
+    index = AssetIndex(
+        media_assets=[{"media_id": "m1-uuid-12345678901234567890123456", "display_name": "logo"}],
+        characters_unavailable=True,
+    )
+    prompt = "Hello @logo on tee"
+    res = resolve_mentions(
+        parse_mentions(prompt), index, path="image", model="nano2", prompt=prompt
+    )
+    assert [(m.kind, m.id) for m in res.mentions] == [
+        ("media", "m1-uuid-12345678901234567890123456")
+    ]
+
+
+def test_video_never_resolves_a_character_by_name() -> None:
+    # The migrated VIDEO driver does not attach by name: an id-less entity there would
+    # be dropped from a billed generation, so the fallback is image-only.
+    index = AssetIndex(characters_unavailable=True)
+    with pytest.raises(ConfigurationError, match="Unknown mention"):
+        resolve_mentions(
+            parse_mentions("@Sussy runs"), index, path="video", model="", prompt="@Sussy runs"
+        )
+
+
+async def test_resolve_and_apply_names_the_character_without_an_id_on_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.services.mentions import resolve_and_apply
+
+    monkeypatch.setattr("gflow_cli.data.queries.list_project_media_assets", lambda **_: [])
+    req = GenerateImageRequest(prompt="@Sussy cocinando")
+    out = await resolve_and_apply(
+        _FailingCharacterClient(),  # type: ignore[arg-type]
+        req,
+        path="image",
+        project_id="proj-1",
+        tool_specs=(),
+    )
+    assert out.reference_entities == ()
+    assert out.reference_entity_names == ("Sussy",)
+    assert out.prompt == "Sussy cocinando"
+
+
+async def test_resolve_and_apply_still_fails_closed_on_video(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.video import GenerateVideoRequest
+    from gflow_cli.services.mentions import resolve_and_apply
+
+    monkeypatch.setattr("gflow_cli.data.queries.list_project_media_assets", lambda **_: [])
+    req = GenerateVideoRequest(prompt="@Sussy runs")
+    with pytest.raises(MentionIndexUnavailableError, match="character"):
+        await resolve_and_apply(
+            _FailingCharacterClient(),  # type: ignore[arg-type]
+            req,
+            path="video",
+            project_id="proj-1",
+            tool_specs=(),
+        )
+
+
+async def test_resolve_and_apply_keeps_a_passed_character_single(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.services.mentions import resolve_and_apply
+
+    monkeypatch.setattr("gflow_cli.data.queries.list_project_media_assets", lambda **_: [])
+    req = GenerateImageRequest(
+        prompt="@Sussy cocinando",
+        reference_entities=("ent-sussy",),
+        reference_entity_names=("Sussy",),
+    )
+    out = await resolve_and_apply(
+        _FailingCharacterClient(),  # type: ignore[arg-type]
+        req,
+        path="image",
+        project_id="proj-1",
+        tool_specs=(),
+    )
+    assert out.reference_entities == ("ent-sussy",)
+    assert out.reference_entity_names == ("Sussy",)

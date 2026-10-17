@@ -133,6 +133,7 @@ def test_data_list_videos_json(seeded_db: Path) -> None:
     assert result.exit_code == 0
     rows = [json.loads(ln) for ln in result.output.splitlines() if ln.strip()]
     assert len(rows) == 2
+    assert all(row["status"] == "ready" for row in rows)  # #896/#898: status is visible
 
 
 def test_data_list_videos_filter_no_match(seeded_db: Path) -> None:

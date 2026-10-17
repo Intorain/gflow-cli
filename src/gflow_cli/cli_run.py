@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,8 +23,13 @@ import click
 from rich.console import Console
 from rich.markup import escape
 
-from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile
-from gflow_cli.api.client import FlowApiClient
+from gflow_cli._cli_helpers import (
+    _FLOW_ID_RE,
+    _make_provider_dir,
+    _resolve_profile,
+    _validate_project_id,
+)
+from gflow_cli.api.client import FlowApiClient, validate_image_file
 from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
@@ -34,6 +39,7 @@ from gflow_cli.image_batch import (
     MIN_PROMPTS,
     BatchOutcome,
     BatchPromptItem,
+    order_batch_rows,
     parse_batch_item_dict,
     render_image_batch_summary,
     resolve_exit_code,
@@ -45,11 +51,38 @@ console = Console()
 
 
 _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"profile", "transport", "output_dir", "prompts"},
+    {"profile", "transport", "output_dir", "project", "prompts"},
 )
 # ---------------------------------------------------------------------------
 # Dataclasses — validated config + per-prompt outcome.
 # ---------------------------------------------------------------------------
+
+
+def _resolve_file_ref(item: BatchPromptItem, base_dir: Path) -> BatchPromptItem:
+    """Resolve a row's local-file ``ref`` and check it is an image, or refuse (exit 11).
+
+    Relative paths resolve against the config file's folder. Symlinks are resolved
+    strictly, and the image check (size, magic bytes) is the one every upload applies:
+    a manifest must not be a way to send ``~/.ssh/id_rsa`` to Google.
+    """
+    if item.ref is None or item.ref.startswith("batch:"):
+        return item
+    raw = Path(item.ref).expanduser()
+    target = raw if raw.is_absolute() else base_dir / raw
+    try:
+        resolved = target.resolve(strict=True)
+    except OSError:
+        msg = f"prompts[{item.index}].ref {item.ref!r} does not exist (relative to {base_dir})."
+        raise ConfigurationError(msg) from None
+    if not resolved.is_file():
+        msg = f"prompts[{item.index}].ref {item.ref!r} is not a file."
+        raise ConfigurationError(msg)
+    try:
+        asyncio.run(validate_image_file(resolved))
+    except (ValueError, OSError) as exc:
+        msg = f"prompts[{item.index}].ref {item.ref!r}: {exc}"
+        raise ConfigurationError(msg) from None
+    return replace(item, ref=str(resolved))
 
 
 @dataclass(frozen=True)
@@ -60,6 +93,7 @@ class BatchConfig:
     profile: str | None = None
     transport: str | None = None
     output_dir: str | None = None
+    project: str | None = None
 
     @classmethod
     def from_json_path(cls, path: Path) -> BatchConfig:
@@ -88,10 +122,10 @@ class BatchConfig:
             raise ConfigurationError(
                 msg,
             )
-        return cls._from_dict(cast("dict[str, Any]", data))
+        return cls._from_dict(cast("dict[str, Any]", data), base_dir=path.parent)
 
     @classmethod
-    def _from_dict(cls, data: dict[str, Any]) -> BatchConfig:
+    def _from_dict(cls, data: dict[str, Any], *, base_dir: Path | None = None) -> BatchConfig:
         unknown = set(data) - _ALLOWED_TOP_LEVEL_KEYS
         if unknown:
             msg = (
@@ -121,6 +155,12 @@ class BatchConfig:
                 msg = f"prompts[{idx}] must be a JSON object."
                 raise ConfigurationError(msg)
             prompts.append(parse_batch_item_dict(cast("dict[str, Any]", p), idx))
+        # Local-file refs resolve against the config's folder, so a config is portable,
+        # and must be a real image before any browser work (#913).
+        prompts = [_resolve_file_ref(p, base_dir or Path.cwd()) for p in prompts]
+        # Validate `batch:N` references (range, self, cycle, multi-image parent) here, so
+        # a bad config exits 11 before any browser work (#913).
+        order_batch_rows(prompts)
 
         profile = data.get("profile")
         if profile is not None and (not isinstance(profile, str) or not profile):
@@ -134,12 +174,19 @@ class BatchConfig:
         if output_dir is not None and (not isinstance(output_dir, str) or not output_dir):
             msg = "'output_dir' must be a non-empty string."
             raise ConfigurationError(msg)
+        project = data.get("project")
+        if project is not None and (
+            not isinstance(project, str) or not _FLOW_ID_RE.fullmatch(project)
+        ):
+            msg = "'project' must be a Flow project id: 1-128 letters, digits, or hyphens."
+            raise ConfigurationError(msg)
 
         return cls(
             prompts=tuple(prompts),
             profile=profile,
             transport=transport,
             output_dir=output_dir,
+            project=project,
         )
 
 
@@ -184,13 +231,14 @@ async def _run_batch(
     continue_on_error: bool,
     profile_name: str | None = None,
     recorder: OperationRecorder | None = None,
+    project_id: str | None = None,
 ) -> list[BatchOutcome]:
     """Run ``prompts`` sequentially through ONE FlowApiClient session.
 
     Per AUDIT_E1 D.2: a single ``async with FlowApiClient(...)`` block
     wraps the whole loop so the browser/page/project context persists
-    across iterations. reCAPTCHA tokens mint fresh on each
-    ``generate_image`` call.
+    across iterations. On the UI transport Flow's page mints its own reCAPTCHA
+    token per submit (#891).
     """
     outcomes = await run_image_batch(
         profile_dir=profile_dir,
@@ -204,6 +252,7 @@ async def _run_batch(
         _profile_name=profile_name,
         _recorder=recorder,
         _command="run",
+        project_id=project_id,
     )
     return outcomes
 
@@ -219,7 +268,7 @@ async def _run_batch(
     "config_path",
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Path to a JSON batch config (see AUDIT_E1 § D for the schema).",
+    help="Path to a JSON batch config (schema: docs/USAGE.md, gflow run).",
 )
 @click.option(
     "--output-dir",
@@ -234,6 +283,16 @@ async def _run_batch(
     help="Profile name (overrides default and any 'profile' in the config).",
 )
 @click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Generate every prompt into this existing Flow project id instead of a new "
+        "'gflow-cli run' project (overrides any 'project' in the config)."
+    ),
+)
+@click.option(
     "--continue-on-error/--fail-fast",
     default=True,
     show_default=True,
@@ -246,6 +305,7 @@ def run(
     config_path: Path,
     output_dir_override: Path | None,
     profile: str | None,
+    project_id: str | None,
     continue_on_error: bool,
 ) -> None:
     """Execute a JSON-described batch of image generations sequentially."""
@@ -271,6 +331,9 @@ def run(
         f"· {len(cfg.prompts)} prompt(s)",
     )
     console.print(f"  output_dir: [dim]{output_dir}[/dim]")
+    project_id = project_id or cfg.project
+    if project_id:
+        console.print(f"  project: [dim]{project_id}[/dim] [dim](existing)[/dim]")
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
 
@@ -286,6 +349,7 @@ def run(
                 continue_on_error=continue_on_error,
                 profile_name=profile_name,
                 recorder=recorder,
+                project_id=project_id,
             ),
         )
     finally:

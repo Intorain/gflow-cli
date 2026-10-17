@@ -168,6 +168,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
         "MODEL",
         "DURATION",
         "CREATED",
+        "STATUS",
         "COPIES",
         "LOCAL_PATH",
     ):
@@ -182,6 +183,7 @@ def _emit_videos_table(rows: list[VideoRow]) -> None:
             r.model,
             f"{r.duration:g}s" if r.duration is not None else "",
             r.created_at.strftime("%Y-%m-%d %H:%M"),
+            escape(r.status or ""),
             str(r.copy_count),
             r.local_path or "",
         )

@@ -14,14 +14,46 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ## Open
 
+### Every command lands on `flow.google.com/about` (exit 31) while `gflow auth status` says the session is fine
+
+- **Status:** Open · **Severity:** High for the affected account (nothing runs) · **Affected:** measured on one account (`my-profile`, 2026-09-23). Other `/about` occurrences are not yet shown to share the cause.
+- **Tracked:** [#902](https://github.com/ffroliva/gflow-cli/issues/902) (`auth login` cannot clear it) · [#888](https://github.com/ffroliva/gflow-cli/issues/888) · [#756](https://github.com/ffroliva/gflow-cli/issues/756)
+- **Evidence:** [spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-23-about-cta-leads-to-google-reauth.md)
+
+Flow sends every visit to its public landing page `/about`, while every Google and Flow cookie
+gflow checks is present and unexpired. On the measured account, the page's "Create with Google
+Flow" button led to Google's **"Confirm it's you — sign in again to continue"** page: Google was
+waiting for the account to re-verify its identity.
+
+**Through v0.79.1, `gflow auth login` does not fix it.** It sees the valid cookies, reports
+`Flow session verified` in about half a second, and closes Chrome before Google can ask (#902).
+From the next release, the login watches where the page lands. If Flow sends it to `/about`, the
+login keeps Chrome open and asks you to press the page's main button and finish "Confirm it's
+you". If you close the window or the time limit runs out first, it exits 12
+(`IdentityRecheckPendingError`) instead of reporting success. The failing state could not be
+reproduced live for this fix, because the one measured account was already cleared by hand. The
+detection is tested offline only.
+
+**Workaround (needs the account password):** with no gflow command running, open real Chrome on
+the profile directory yourself:
+
+```bash
+"<chrome.exe>" --user-data-dir="<GFLOW_CLI_HOME profile dir, e.g. …/profile_<name>>" --password-store=basic https://flow.google.com/
+```
+
+Click the landing page's main button, complete "Confirm it's you", wait for the Flow editor, then
+close Chrome yourself. On the measured account, `/about` was gone on the next run and
+`gflow project create` succeeded.
+
 ### Flow is migrating to `flow.google.com`; generation coverage is partial but includes images
 
-- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, local-file `gflow image i2i`, and `gflow video extend` now run on the migrated host. Image mode supports Nano Banana 2 / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, instructions and tools are not ported yet and fail before submit. **`character` is NOT in that list any more** — `character create` and `character list` work on the migrated host. Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
+- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, local-file `gflow image i2i`, and `gflow video extend` now run on the migrated host. Image mode supports Nano Banana 2.1 (`nano2`, which replaced Nano Banana 2 there, #958) / 2 Lite / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image prompts can tag a **character** with `@Name` / `--reference-entity` + `--reference-entity-name` since #723 (attached through the composer's `@` picker; an id without a name exits 36; video is unchanged). Image refs by UUID, video `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, instructions and tools are not ported yet and fail before submit. **`character create` worked on the migrated host until its labs `createEntity` route was retired:** measured 2026-10-14 on a profile served flow.google.com, it exits 7 with "Flow RPCs have been deprecated" (404). `character list` does NOT: it reads the retired labs `projectInitialData` route and exits 7, measured 2026-09-20 both on `auto` and with `GFLOW_CLI_FLOW_HOST=flow.google.com` (#875). Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 - **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in v0.71.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
 - **The migrated composer image path is now driven** ([#692](https://github.com/ffroliva/gflow-cli/issues/692)): the first probe established a hit-testable Image mode; the 2026-09-08 follow-up captured real T2I and local-file I2I submissions on `ogiZ0b`, including page-owned reCAPTCHA, upload ids, response records and signed JPEG downloads. See [the submit-wire spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md).
-- **Image commands on a moved account** ([#673](https://github.com/ffroliva/gflow-cli/issues/673), fixed in v0.69.0): through v0.68.0 `image t2i` / `i2i` (and `upscale`, `extend`) died with exit 1 `RecaptchaError` within seconds, before any submit, instead of the exit 36 above, because the labs client minted the reCAPTCHA token on the `flow.google.com` project grid before any migration guard ran. The guard now runs at the mint. If you still see a `RecaptchaError` on a moved account right after `auth login`, that is the labs logged-out landing page from the [#644](https://github.com/ffroliva/gflow-cli/issues/644) cookie harvest, not this.
+- **Image commands on a moved account** ([#673](https://github.com/ffroliva/gflow-cli/issues/673), fixed in v0.69.0): through v0.68.0 `image t2i` / `i2i` (and `upscale`, `extend`) died with exit 1 `RecaptchaError` within seconds, before any submit, instead of the exit 36 above, because the labs client minted the reCAPTCHA token on the `flow.google.com` project grid before any migration guard ran. The guard now runs at the mint; since v0.80.0 the browser transport no longer mints for images at all, and the flow.google.com composer itself refuses unported forms (#891). If you still see a `RecaptchaError` on a moved account right after `auth login`, that is the labs logged-out landing page from the [#644](https://github.com/ffroliva/gflow-cli/issues/644) cookie harvest, not this.
+- **A second image request on one client hit the same `RecaptchaError`** ([#891](https://github.com/ffroliva/gflow-cli/issues/891), fixed in v0.80.0): after a successful image on an account served flow.google.com, the page is parked on `about:blank`, and the client's pre-mint ran there, so an unported form (e.g. `--model imagen4`) failed with "the Flow editor page may have failed to load" instead of exit 36. The browser transport never used that token, so it no longer mints; the composer refuses the form by name. Reachable from `gflow run --config` with a per-prompt `"model": "imagen4"` after a successful prompt, where it also crashed the whole run (exit 1, results table lost); it now reports that prompt as exit 36 and the run completes.
 
 Google is moving Flow off Labs onto its own origin. On a migrated page load,
 `https://labs.google/fx/tools/flow/project/<id>` redirects to
@@ -74,7 +106,8 @@ UUID does: the picker exposes no media id to anchor on. Capture:
 [2026-09-05-migrated-r2v-attach-surface](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md).
 
 **Images also run there (2026-09-08).** The driver selects Image mode, Nano Banana 2
-or Pro, any supported aspect and count 1–4, then observes the page's own synchronous
+(2.1 by 2026-10-08 — before v0.83.1 that made every `nano2` run exit 7, "does not carry
+requested model NARWHAL"; fixed in v0.83.1, #958) or Pro, any supported aspect and count 1–4, then observes the page's own synchronous
 `ogiZ0b` reply. Local I2I files use the existing `maseQ` upload and mention path; every
 uploaded id must appear in the submit body before the result is trusted. UUID/entity
 references, Agent instructions, and Imagen 4 remain pre-submit refusals on this host.
@@ -358,6 +391,17 @@ listing endpoint (privacy-gated to `store` history mode), and `gflow doctor`
 (#542) surfaces the affected-row count. Freshly generated rows whose caption
 has not landed yet stay nameless until the next sync sweep.
 
+### `gflow run --config` references cannot resume (#913)
+
+- **Status:** Open · **Severity:** Low (a re-run regenerates; nothing is lost) · **Affected:** every `gflow run --config` with `"ref"` rows (`batch:N` or a local file)
+- **Tracked:** [#913](https://github.com/ffroliva/gflow-cli/issues/913)
+
+A run with `"ref": "batch:N"` rows has no resume: a re-run creates a new project (or, with
+`--project`, reuses that one) and regenerates every row, parents included, and one early failure skips the whole chain under
+it. The handle that makes in-place referencing work (Flow's reply for the parent) exists
+only within the run that generated it. A local-file `ref` is uploaded again into the
+re-run's new project for the same reason.
+
 ### Video duration control is absent on some account cohorts
 
 - **Status:** Mitigated — fail-fast shipped in
@@ -371,6 +415,12 @@ has not landed yet stay nameless until the next sync sweep.
   capability capture 2026-09-03)
 
 **Workaround:** omit `--duration` and accept Flow's default clip length.
+
+**Not this issue if your Flow UI is not in English.** Before v0.83.2, a translated duration
+unit (`8 giây` in Vietnamese) also raised exit 11 on `flow.google.com`, because the radio
+was matched on its English label ([#963](https://github.com/ffroliva/gflow-cli/issues/963)).
+Upgrade first (`gflow update`). The locale refutation below applies to the Portuguese
+labs cohort it was measured on.
 
 **What actually happens today.** gflow accepts `--duration 4`, `6` or `8` on the
 Veo 3.1 models and `10` on `omni-flash` only — the CLI no longer refuses a
@@ -562,9 +612,10 @@ library (plus your locale) on that issue.
 
 `gflow image upscale <mediaId> --scale 4k` returns **exit code 22**
 (`UpscaleUnavailableError`) on accounts below the Ultra tier — Flow gates 4K
-upscaling behind Ultra (the web UI shows an "Upgrade" button instead of a 4K
-option). The account tier is reported on the wire as `userPaygateTier` but is
-enforced server-side, so gflow cannot grant 4K locally.
+upscaling behind Ultra (the web UI shows an "Upgrade" button instead of an active 4K
+option). On `flow.google.com`, gflow inspects the menu item's disabled state directly
+in the UI and fails fast before submitting; on the legacy labs REST endpoint, the
+account tier is enforced server-side. gflow cannot grant 4K locally.
 
 **Workaround:** use `--scale 2k` (available on all tiers), or upgrade the Flow
 account to Ultra. If you just upgraded, re-run `gflow auth login --profile <name>`
@@ -691,16 +742,27 @@ Google's web session cookies aren't permanent. They expire when:
 
 When this happens, the next API call returns 401/403 and `gflow-cli` raises `AuthExpiredError`.
 
-**Workaround:**
+**Workaround, stale session (the common case):**
+```bash
+gflow auth renew --profile <name>        # or: gflow auth renew --all
+gflow credits list --refresh             # renews only the expired profiles, then reads them
+```
+
+A profile that has just sat unused has a lapsed labs.google token, not a dead Google session.
+`auth renew` loads Flow and labs.google in a headless browser and waits for labs to sign in
+again on its own, with no prompt. Measured 2026-10-14: 7 of 10 stale profiles recovered.
+
+**Workaround, revoked session:**
 ```bash
 gflow auth login --profile <name>
 ```
 
 Re-running `auth login` reuses the existing profile dir (you typically just click "Continue as <you>" on the Google account chooser). No data is lost; only the cookie jar is refreshed.
 
-**Why we don't auto-refresh:** Google's session-refresh flow can include CAPTCHA / device verification that only a human can complete. A community SDK can't reliably automate that step. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh--expiry).
-
-**Roadmap:** not scheduled. The Phase 4 hardening pass (v0.4.0a2) added typed `AuthExpiredError` + exit code `3` so scripts can branch on auth expiry deterministically. A periodic "session liveness" check + a `gflow auth refresh` command are still candidates for a later phase, but not committed to a version yet.
+**What renewal cannot do:** complete a step only a human can, such as CAPTCHA, device
+verification, or "Confirm it's you". The 3 profiles that did not recover on 2026-10-14 were held
+at Flow's public `/about` page ([entry above](#every-command-lands-on-flowgooglecomabout-exit-31-while-gflow-auth-status-says-the-session-is-fine)),
+and `auth renew` reports them as not renewed. See [docs/AUTHENTICATION.md § Refresh / expiry](AUTHENTICATION.md#refresh--expiry).
 
 ---
 
@@ -935,6 +997,11 @@ find "$HOME/Downloads/gflow-cli" -type f -mtime +30 -delete
 - **Status:** Open · **Severity:** High (blocks affected profile until WAF score decays or profile is replaced)
 - **First observed:** 2026-05-23 on profile `my-profile` during `gflow image batch` runs
 - **Surfaces as:** `gflow_cli.errors.WafRejectionError: WAF rejection (HTTP 403): batchGenerateImages HTTP 403 — reCAPTCHA score too low or WAF fingerprint mismatch`
+- **On flow.google.com** (measured 2026-09-27): the same reason arrives as HTTP 200 with a
+  `batchexecute` error envelope (`[7,null,[["type.googleapis.com/google.rpc.ErrorInfo",["PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]]]`)
+  and surfaces as `WafRejectionError: … Flow refused the submit: PUBLIC_ERROR_UNUSUAL_ACTIVITY`.
+  Flow's grid shows *"We noticed some unusual activity… You have not been charged"*
+  ([spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-09-27-migrated-refusal-is-on-the-wire.md)).
 - **structlog signature:** `ui_automation.batch_response_seen` with `status=403` followed by `ui_automation.batch_403_body` containing `'message': 'reCAPTCHA evaluation failed', 'status': 'PERMISSION_DENIED', 'reason': 'PUBLIC_ERROR_UNUSUAL_ACTIVITY'`
 
 Distinct from the historical `aisandbox-pa` 401 (resolved in v0.7.0). The 403
@@ -1414,7 +1481,10 @@ failed assert left the profile unusable — it is usable, just possibly as the w
 
 Two further items on the same issue are unfixed and worth knowing about: a second chooser
 hop (chooser → consent → chooser) is not handled and degrades into the landing timeout, and
-that timeout is still an unmeasured number.
+that timeout is still an unmeasured number. To clear such a screen by hand, run
+`gflow auth login --profile <name>`: its window is always visible and waits for you. The
+generation browser opens off-screen since v0.81.0, and making it visible is not a remedy
+here, because the run gives up within 30 s (see [CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_window_position)).
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
@@ -1447,6 +1517,8 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 - **Status:** Mitigated (crash → typed fail-fast rejection) · **Severity:** Low · **Affects:** all versions
 
 Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock). Since #864 an MCP server waits 180 s by default, and queues its own calls on one profile rather than rejecting the second.
+
+**Not every `ProcessSingleton` failure is contention.** On Windows, a `ProcessSingleton` error carrying access-denied code `(0x5)` means Chrome cannot write the profile directory; at the generation client's launch gflow reports it as `ProfileAccessError` — see [CONFIGURATION § Profile-directory permissions at browser launch](CONFIGURATION.md#profile-directory-permissions-at-browser-launch).
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
 

@@ -83,6 +83,16 @@ _reference_entity_name_option = click.option(
     multiple=True,
     help="Display name paired with --reference-entity.",
 )
+_resolution_option = click.option(
+    "--resolution",
+    default=None,
+    type=click.Choice(["360p", "720p"], case_sensitive=False),
+    help=(
+        "Video resolution ('360p' or '720p'). Omit for Flow's default. Only models whose "
+        "settings show a resolution row offer it (omni-flash); on any other model, or on "
+        "the labs editor, the run stops before submit (exit 11), with no credits spent."
+    ),
+)
 
 
 def _warn_persistence_failed_after_success(
@@ -94,6 +104,10 @@ def _warn_persistence_failed_after_success(
     logger.warning(
         "data.persistence_failed_after_success",
         error_class=type(exc).__name__,
+        # Since #900 every sqlite fault in a catalog write arrives as DataStoreError, a
+        # real bug as well as a lock; the class alone no longer tells them apart.
+        detail=getattr(exc, "detail", None) or str(exc),
+        route=getattr(exc, "route", None),
         flow_media_id=flow_media_id,
         local_path=str(local_path) if local_path is not None else None,
     )
@@ -400,6 +414,7 @@ async def _run_t2v(
     output_file: Path | None = None,
     model: str | None = None,
     duration: int | None = None,
+    resolution: str | None = None,
     count: int = 1,
     as_json: bool = False,
     reference_entities: tuple[str, ...] = (),
@@ -420,6 +435,7 @@ async def _run_t2v(
         aspect=Aspect.from_cli(aspect),
         model=VideoModel.from_cli(model),
         duration=duration,
+        resolution=resolution,
         count=count,
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
@@ -461,6 +477,7 @@ class _I2VParams:
     end_frame_ref_id: str | None = None  # in-project asset media UUID (#287)
     model: str | None = None
     duration: int | None = None
+    resolution: str | None = None
     original_prompt: str | None = None
     tool: AppliedTool | None = None
     # Picker project-menu display-name override (#287): the media picker's
@@ -556,6 +573,7 @@ async def _run_i2v(
         aspect=Aspect.from_cli(params.aspect),
         model=resolved_model,
         duration=params.duration,
+        resolution=params.resolution,
         count=count,
         start_image=Path(params.image) if params.image else None,
         start_image_ref_id=params.image_ref_id,
@@ -597,6 +615,7 @@ async def _run_r2v(
     out_dir: Path | None,
     model: str | None = None,
     duration: int | None = None,
+    resolution: str | None = None,
     count: int = 1,
     output_file: Path | None = None,
     as_json: bool = False,
@@ -617,6 +636,7 @@ async def _run_r2v(
         aspect=Aspect.from_cli(aspect),
         model=VideoModel.from_cli(model),
         duration=duration,
+        resolution=resolution,
         count=count,
         reference_images=tuple(Path(r) for r in refs),
         reference_entities=reference_entities,
@@ -1158,6 +1178,7 @@ def video() -> None:
         "account's cohort renders no duration control for the model."
     ),
 )
+@_resolution_option
 @click.option(
     "--count",
     default=1,
@@ -1176,6 +1197,7 @@ def t2v(
     aspect: str,
     model: str | None,
     duration: str | None,
+    resolution: str | None,
     count: int,
     ui_mode: str | None,
     profile: str | None,
@@ -1203,6 +1225,7 @@ def t2v(
             output_file=output_file,
             model=model,
             duration=int(duration) if duration is not None else None,
+            resolution=resolution,
             count=count,
             as_json=as_json,
             reference_entities=tuple(reference_entities),
@@ -1338,6 +1361,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
         "account's cohort renders no duration control for the model."
     ),
 )
+@_resolution_option
 @click.option(
     "--count",
     default=1,
@@ -1356,6 +1380,7 @@ def i2v(  # NOSONAR
     aspect: str,
     model: str | None,
     duration: str | None,
+    resolution: str | None,
     count: int,
     ui_mode: str | None,
     profile: str | None,
@@ -1405,6 +1430,7 @@ def i2v(  # NOSONAR
         end_frame_ref_id=end_ref_id,
         model=model,
         duration=int(duration) if duration is not None else None,
+        resolution=resolution,
         original_prompt=original_prompt,
         tool=applied_tool,
         project_name=project_name,
@@ -1483,6 +1509,7 @@ def i2v(  # NOSONAR
         "account's cohort renders no duration control for the model."
     ),
 )
+@_resolution_option
 @click.option(
     "--count",
     default=1,
@@ -1523,6 +1550,7 @@ def r2v(
     aspect: str,
     model: str | None,
     duration: str | None,
+    resolution: str | None,
     count: int,
     profile: str | None,
     tool_specs: tuple[str, ...],
@@ -1568,6 +1596,7 @@ def r2v(
             aspect=aspect,
             model=model,
             duration=int(duration) if duration is not None else None,
+            resolution=resolution,
             count=count,
             out_dir=out_dir,
             output_file=output_file,
@@ -2187,3 +2216,114 @@ def extend(  # noqa: PLR0913
         cli_command="video extend",
         as_json=as_json,
     )
+
+
+@video.command(
+    "upscale",
+    short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",
+    help=(
+        "Upscale a Flow-generated video to 1080p Full HD, download the original 720p, "
+        "or export as a 270p animated GIF and save it locally.\n\n"
+        "MEDIA_ID is the UUID of a platform video — find one with `gflow data list videos`.\n\n"
+        "\b\n"
+        "Examples:\n"
+        "  gflow video upscale <mediaId> --scale 1080p\n"
+        "  gflow video upscale <mediaId> --scale 720p\n"
+        "  gflow video upscale <mediaId> --scale 270p\n"
+        "  gflow video upscale <mediaId> --scale 1080p --out ~/Downloads\n"
+    ),
+)
+@click.argument("media_id")
+@click.option(
+    "--scale",
+    type=click.Choice(["1080p", "720p", "270p"], case_sensitive=False),
+    default="1080p",
+    show_default=True,
+    help=(
+        "Target quality: 1080p (enhanced Full HD), 720p (original download), "
+        "or 270p (animated GIF export)."
+    ),
+)
+@click.option(
+    "-o",
+    "--out",
+    "out_dir",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=None,
+    help="Output directory (defaults to the configured gflow output dir).",
+)
+@click.option(
+    "--project",
+    "project_id",
+    default=None,
+    callback=_validate_project_id,
+    help=(
+        "Project that owns the video. Resolved from the local catalog when "
+        "omitted; pass it explicitly for videos gflow didn't record."
+    ),
+)
+@click.option("--profile", default=None, help="Profile name (overrides default).")
+def upscale(
+    media_id: str,
+    scale: str,
+    out_dir: Path | None,
+    project_id: str | None,
+    profile: str | None,
+) -> None:
+    """Upscale or export MEDIA_ID to the requested --scale and save it locally."""
+    if not is_media_uuid(media_id):
+        raise click.BadParameter(
+            "MEDIA_ID must be a bare UUID (8-4-4-4-12 hex).", param_hint="MEDIA_ID"
+        )
+    profile_name = _resolve_profile(profile)
+    from gflow_cli.cli_image import resolve_upscale_project_id
+
+    resolved_project = resolve_upscale_project_id(
+        media_id=media_id, explicit=project_id, profile_name=profile_name
+    )
+    provider_dir = _make_provider_dir(profile_name)
+    settings = get_settings()
+    run_with_handlers(
+        lambda: _run_video_upscale(
+            profile_dir=provider_dir,
+            headless=settings.headless,
+            media_id=media_id,
+            project_id=resolved_project,
+            scale=scale.lower(),
+            out_dir=out_dir,
+        ),
+        cli_command="video upscale",
+    )
+
+
+async def _run_video_upscale(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    media_id: str,
+    project_id: str,
+    scale: str,
+    out_dir: Path | None,
+) -> None:
+    from datetime import date
+
+    from gflow_cli._cli_helpers import safe_path_text
+
+    settings = get_settings()
+    output_root = out_dir if out_dir is not None else settings.output_dir
+    ext = "gif" if scale == "270p" else "mp4"
+    out_path = output_root / "videos" / date.today().isoformat() / f"{media_id}_{scale}.{ext}"
+
+    async with FlowApiClient(
+        profile_dir=profile_dir,
+        headless=headless,
+        out_dir=output_root,
+    ) as client:
+        console.print(f"Upscaling video [bold]{media_id}[/bold] to {scale}...")
+        target = await client.upsample_video(
+            media_id=media_id,
+            project_id=project_id,
+            scale=scale,
+            out_path=out_path,
+        )
+        console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")

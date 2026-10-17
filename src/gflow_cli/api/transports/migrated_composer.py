@@ -31,9 +31,11 @@ matched with a Python-side ``filter(has_text=re.compile(...))`` instead.
 from __future__ import annotations
 
 import asyncio
+import json
 import mimetypes
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -45,10 +47,14 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.dto import GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
+from gflow_cli.api.image import ImageRef
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports._common import (
+    expired_link_hint,
     extract_project_id,
+    get_signed_media,
     raise_if_known_landing,
+    recoverable_clip_hint,
     safe_page_url,
 )
 from gflow_cli.api.transports.batchexecute import (
@@ -56,6 +62,7 @@ from gflow_cli.api.transports.batchexecute import (
     generation_record,
     image_records,
     parse_frames,
+    rpc_errors,
 )
 from gflow_cli.api.video import (
     I2V_DEFAULT_MODEL,
@@ -67,7 +74,9 @@ from gflow_cli.api.video import (
     VideoStatus,
 )
 from gflow_cli.errors import (
+    CONTENT_SAFETY_REASONS,
     ConfigurationError,
+    ContentPolicyError,
     FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
@@ -75,6 +84,7 @@ from gflow_cli.errors import (
     ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
+    WafRejectionError,
     WireFormatError,
 )
 from gflow_cli.redaction import redact_sensitive_text
@@ -82,7 +92,7 @@ from gflow_cli.redaction import redact_sensitive_text
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from playwright.async_api import Page
+    from playwright.async_api import Locator, Page
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
@@ -103,6 +113,9 @@ RADIOGROUP = "[role='radiogroup']"
 RADIO = "[role='radio']"
 MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
+#: Named contract for the migrated Angular settings surface. Diagnostics include this
+#: value so a future Flow DOM variant gets a new contract instead of a fuzzy fallback.
+MIGRATED_SETTINGS_CONTRACT = "migrated-angular-settings-v1"
 #: Flow's agent-mode chip. Pressed, `.settings-trigger-button` stays in the DOM but gains
 #: a bare `hidden` (display:none, 0x0, not hit-testable) — which is why every gate on it
 #: waits for VISIBILITY and never `count()` (#749).
@@ -164,6 +177,10 @@ COOKIE_BAR = "#glue-cookie-notification-bar-1, .glue-cookie-notification-bar"
 #: structural (glue's own BEM modifier), so this stays locale-invariant where matching
 #: "No thanks" would not.
 COOKIE_BAR_REJECT = "button.glue-cookie-notification-bar__reject"
+#: The notice-only bar has no reject at all — just ``OK, got it`` (measured under
+#: ``hl=vi``, 2026-10-10, found by the #963 spike). Acknowledging a notice answers no
+#: consent question, so this is the fallback only when :data:`COOKIE_BAR_REJECT` is absent.
+COOKIE_BAR_ACCEPT = "button.glue-cookie-notification-bar__accept"
 
 #: ``YhhmEf`` is the text-to-video submit; ``eb1hJf`` the image-to-video one (a bound
 #: Start chip switches the app between them — 2026-09-05 frames spike).
@@ -174,7 +191,7 @@ SUBMIT_RPCS = ("YhhmEf", "eb1hJf", "MZZa6b", "nprQif")
 #: The start+end (interpolation) submit. Same composer, different contract: the model
 #: key is ``veo_3_1_interpolation_lite``, the body carries BOTH frame ids, and the rpc
 #: name travels in the ``f.req`` body — the URL carries no ``rpcids`` query param
-#: (captured 2026-09-16, issue #639). The reply embeds the standard ``CAE`` record,
+#: (captured 2026-09-16, issue #639). The reply embeds the standard generation record,
 #: so status/terminal/download are shared with the other submit rpcs.
 INTERPOLATION_SUBMIT_RPC = "nprQif"
 IMAGE_SUBMIT_RPC = "ogiZ0b"
@@ -202,6 +219,64 @@ BOUND_CHIP = "flow-prompt-box button.chip-container:has(img)"
 PICKER = "flow-add-menu-popover-content"
 PICKER_SEARCH = "input[type='text']"
 PICKER_OPTION = "button.asset-item[role='option']"
+#: The `/asb/<token>` of the grid tile whose `data-media-id` is the argument (#913).
+#: The id is passed as an argument and compared in JS, never formatted into a selector.
+_GRID_TOKEN_JS = (
+    "(id) => { for (const e of document.querySelectorAll('img[data-media-id]')) {"
+    " if (e.getAttribute('data-media-id') === id) {"
+    " const m = (e.getAttribute('src') || '').match(/\\/asb\\/([A-Za-z0-9_-]+)/);"
+    " return m ? m[1] : ''; } } return ''; }"
+)
+#: The `/asb/<token>` of each picker option, in display order.
+_OPTION_TOKENS_JS = (
+    "(sel) => [...document.querySelectorAll(sel)].map(o => {"
+    " const img = o.querySelector('img');"
+    " const m = ((img && img.getAttribute('src')) || '').match(/\\/asb\\/([A-Za-z0-9_-]+)/);"
+    " return m ? m[1] : ''; })"
+)
+#: Each picker option's own title (the asset's name — user data, not a UI label).
+_OPTION_TITLES_JS = (
+    "(sel) => [...document.querySelectorAll(sel)].map(o => {"
+    " const t = o.querySelector('.asset-title');"
+    " return ((t && t.textContent) || '').trim(); })"
+)
+#: Budget for a just-generated image to become mentionable, across editor reloads
+#: (#913). Checked after each attempt, so a row can overrun it by one attempt.
+EXISTING_REF_WAIT_S = 90.0
+#: Pause before each editor reload while waiting for it.
+EXISTING_REF_RELOAD_PAUSE_S = 5.0
+#: ArrowDown loads the highlighted asset's detail (`UpteDb`); an Enter sent before it
+#: settles fails (measured, scripts/dev/capture_migrated_attach_rpcs.py).
+ARROW_SETTLE_MS = 3500
+#: Pause between ArrowDowns on the way to a character option; only the last one settles.
+ARROW_STEP_MS = 150
+#: Flow writes captions with its own model; they reach the composer by typing.
+_CAPTION_MAX = 120
+
+
+def _picker_query(ref: ImageRef) -> str:
+    """The search text for an existing image: its Flow caption, only if safe to type.
+
+    A newline would press Enter mid-query and ``@`` opens a nested mention. Rather than
+    search a string other than the caption, refuse (SCENARIO #18, #19).
+    """
+    caption = ref.display_name
+    if (
+        not caption.strip()
+        or "@" in caption
+        # Control, format (zero-width, direction marks) and line/paragraph separators.
+        or any(unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} for ch in caption)
+        or len(caption) > _CAPTION_MAX
+    ):
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: image {ref.name} has no caption that can be searched "
+                f"safely ({len(caption)} chars), so it cannot be referenced in place"
+            ),
+        )
+    return caption.strip()
+
+
 #: The Ingredients sub-mode holds references; Frames holds the i2v chips.
 INGREDIENTS_LIGATURE = "chrome_extension"
 #: The only duration at which this host offers reference-to-video. Measured 2026-09-06 at
@@ -394,6 +469,17 @@ IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
     # depending on the decorative banana glyph that precedes both live labels.
     ImageModel.NARWHAL: ModelMenuMatcher("Nano Banana 2", excludes=("Lite",)),
     ImageModel.GEM_PIX_2: ModelMenuMatcher("Nano Banana Pro"),
+    ImageModel.HARBOR_SEAL: ModelMenuMatcher("Nano Banana 2 Lite"),
+}
+
+#: Wire tokens an ``ogiZ0b`` body may carry for a model, where not just its own name.
+#: "Nano Banana 2.1" REPLACED "Nano Banana 2" in the menu and sends ``BELUGA``; Flow's
+#: catalogue no longer lists ``NARWHAL`` at all (#958, measured on two accounts 2026-10-08,
+#: ``scripts/dev/spike_nano_banana_21_wire.py``). Accepting BELUGA is only safe while the
+#: two are never offered side by side: the "already selected" shortcut in
+#: ``_select_image_model`` would then let a ``nano2`` request run 2.1 unnoticed.
+IMAGE_MODEL_WIRE_TOKENS: dict[ImageModel, tuple[str, ...]] = {
+    ImageModel.NARWHAL: ("NARWHAL", "BELUGA"),
 }
 
 
@@ -512,10 +598,20 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
 
 
 def _unported_image_form(request: GenerateImageRequest) -> str | None:
-    if request.refs:
+    if request.refs and request.ref_paths:
+        return "existing-image references mixed with local files"
+    if any(not ref.in_project for ref in request.refs):
+        # Only an image this run generated in this project is referenced in place (#913);
+        # a UUID ref from the catalog or MCP is not ported here.
         return "a reference given by Flow media UUID"
-    if request.reference_entities:
-        return "character references"
+    if any(not ref.display_name for ref in request.refs):
+        # Found by its Flow caption, then matched by thumbnail; Flow returned none.
+        return "a reference to an image Flow returned without a caption"
+    # Character references are attached by name through the `@` picker and verified as
+    # entity chips before submit (#723). An id with no name has nothing to type, and
+    # `run_images` attaches only named characters, so it is refused rather than dropped.
+    if len(request.reference_entities) > len(request.reference_entity_names):
+        return "a character given by entity id without a name"
     if request.instructions:
         return "Agent instructions"
     if request.model not in IMAGE_MODEL_MENU_MATCHERS:
@@ -528,8 +624,61 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
     return None
 
 
+def migrated_images_prefer(
+    request: GenerateImageRequest, *, page_url: str | None = None, project_id: str | None = None
+) -> bool:
+    """Whether an image request should prefer the migrated composer on ``auto``.
+
+    Three independently necessary answers, so a miss in any one of them keeps
+    the labs driver instead of stranding the run on the wrong host:
+
+    - the migrated composer serves this request at all
+      (:func:`_unported_image_form` names anything it does not);
+    - a project is named or the page already sits in one — the labs driver
+      auto-creates a project, the migrated composer needs ``--project``;
+    - the page is not already inside an editor — there the served host rules.
+
+    Pure predicate over the request and the URL: no browser, no spend. Routing
+    only: the client no longer consults it for a reCAPTCHA mint (#891).
+    """
+    if _unported_image_form(request) is not None:
+        return False
+    if request.reference_entities or request.reference_entity_names:
+        # Characters are driven on flow.google.com only when Flow SERVED it (#723); a
+        # page served labs keeps the labs driver, which attaches them by entity id.
+        return False
+    editor_pid: str | None = None
+    if isinstance(page_url, str):
+        editor_pid = extract_project_id(page_url)
+        if editor_pid is not None:
+            # Already inside an editor: the served host rules.
+            return False
+    elif page_url is not None:
+        # Test doubles and malformed URLs take the served host: preferring
+        # migrated on an unreadable URL would route mocked labs-driver tests
+        # (and any real page we failed to read) at the migrated composer.
+        # Same totality discipline as :func:`flow_host_kind`.
+        return False
+    if project_id is None and editor_pid is None:
+        return False
+    return True
+
+
 def _exact(label: str) -> re.Pattern[str]:
     return re.compile(r"^\s*" + re.escape(label) + r"\s*$")
+
+
+def _duration(label: str) -> re.Pattern[str]:
+    """A duration radio by its number — ``8s`` also matches ``8 giây`` (#963).
+
+    The unit is a translated word, the number is not: the same exception, and the same
+    bar, as ``migrated_upscale.menu_token_pattern``. Siblings in the pane share the
+    leading digit: ``480p`` is refused because a digit follows, ``4K`` because a resolution
+    suffix does. A miss still raises exit 11 from :meth:`MigratedComposer._select` rather
+    than clicking a wrong radio.
+    """
+    number = label.removesuffix("s")
+    return re.compile(r"^\s*" + re.escape(number) + r"(?!\d)(?!\s*[pPkK]\b)\D*$")
 
 
 def _unique_display_name(image_path: Path) -> str:
@@ -561,6 +710,53 @@ def _picker_pane(page: Any) -> Any:
 def _ligature(page: Any, name: str) -> Any:
     """A ``mat-icon`` whose ligature text is exactly ``name`` — for ``filter(has=…)``."""
     return page.locator("mat-icon").filter(has_text=_exact(name))
+
+
+#: Google's ErrorInfo reason on a submit reCAPTCHA Enterprise scored as a bot. The labs
+#: REST path has always raised WafRejectionError for it (KNOWN_ISSUES, HTTP 403).
+UNUSUAL_ACTIVITY_REASON = "PUBLIC_ERROR_UNUSUAL_ACTIVITY"
+
+
+def _submit_refusal(
+    text: str, rpcids: tuple[str, ...]
+) -> WafRejectionError | ContentPolicyError | None:
+    """The typed refusal a submit reply states on the wire, or ``None``.
+
+    flow.google.com refuses a submit with HTTP 200 and an error envelope whose payload
+    is null, so ``parse_frames`` sees nothing and the run used to end as a video
+    timeout or an image "no frame" wire fault, while the grid showed "We noticed some
+    unusual activity". Measured 2026-09-27 (spike
+    2026-09-27-migrated-refusal-is-on-the-wire). Only REASONS decide: a bare status
+    is not a refusal, since the #723 entity submit Flow queued and ran replies ``[5]``.
+    """
+    for err in rpc_errors(text):
+        if err.rpcid not in rpcids:
+            continue
+        route = f"batchexecute:{err.rpcid}"
+        if err.reasons:
+            log.info("migrated.submit_refused", rpc=err.rpcid, code=err.code, reasons=err.reasons)
+        if UNUSUAL_ACTIVITY_REASON in err.reasons:
+            # Same class as the labs raise sites for the same reason, with no per-site
+            # override, so retryability is the class default there and here: a
+            # per-profile WAF score that decays (KNOWN_ISSUES).
+            return WafRejectionError(
+                detail=f"Flow refused the submit: {UNUSUAL_ACTIVITY_REASON} (gRPC {err.code})",
+                route=route,
+                remediation_hint=(
+                    "Flow's bot check scored this browser profile as unusual activity; "
+                    "the prompt is not the cause and nothing was charged. Wait a few "
+                    "hours before retrying on this profile, or use another profile. "
+                    "See KNOWN_ISSUES: PUBLIC_ERROR_UNUSUAL_ACTIVITY."
+                ),
+            )
+        # Same reason set the REST path maps to ContentPolicyError. Not yet observed on
+        # this host; the class default (exit 5, not retryable) is the REST path's answer.
+        safety = next((r for r in err.reasons if r in CONTENT_SAFETY_REASONS), None)
+        if safety is not None:
+            return ContentPolicyError(
+                detail=f"Flow refused the submit: {safety} (gRPC {err.code})", route=route
+            )
+    return None
 
 
 async def _raise_if_out_of_credits(page: Any) -> None:
@@ -758,10 +954,48 @@ def _r2v_body_problem(body: str, rpcid: str, media_ids: tuple[str, ...]) -> str 
     return None
 
 
+def _image_body_references(body: str) -> tuple[set[str], set[str]] | None:
+    """The media and character ids an ``ogiZ0b`` body carries, or ``None`` if unreadable.
+
+    Measured 2026-10-13 (``scripts/dev/spike_image_submit_references.py``, submit aborted
+    in the browser): each request entry of the decoded ``f.req`` payload carries its MEDIA
+    references at index 2 (``[[<media id>, null, null, null, 1], …]``) and its CHARACTER
+    references at index 10 (``[[<entity id>], …]``). A media chip deleted from the prompt
+    with Backspace still rode slot 2 — the prompt and the request state are not the same
+    thing — so the guard reads the slots, not the prompt.
+    """
+    start = body.find("f.req=")
+    if start < 0:
+        return None
+    try:
+        outer, _ = json.JSONDecoder().raw_decode(body, start + len("f.req="))
+        frames = [
+            frame
+            for batch in _as_list_any(outer)
+            for frame in _as_list_any(batch)
+            if _as_list_any(frame)[:1] == [IMAGE_SUBMIT_RPC]
+        ]
+        media: set[str] = set()
+        entities: set[str] = set()
+        for frame in frames:
+            inner = _as_list_any(json.loads(str(_as_list_any(frame)[1])))
+            for entry in _as_list_any(inner[1]):
+                fields = _as_list_any(entry)
+                for slot, into in ((2, media), (10, entities)):
+                    for ref in _as_list_any(fields[slot] if len(fields) > slot else None):
+                        ids = _as_list_any(ref)
+                        if ids and isinstance(ids[0], str):
+                            into.add(ids[0])
+    except (ValueError, IndexError, TypeError):
+        return None
+    return (media, entities) if frames else None
+
+
 def _image_body_problem(
     body: str,
     reference_ids: tuple[str, ...],
     model: ImageModel | None = None,
+    entity_ids: tuple[str, ...] = (),
 ) -> str | None:
     """Why an ``ogiZ0b`` request is not the image run the caller asked for."""
     if not body:
@@ -769,7 +1003,9 @@ def _image_body_problem(
             "migrated host: the image submit body could not be read, so the request "
             "could not be confirmed before Flow acted on it"
         )
-    if model is not None and model.value not in body:
+    if model is not None and not any(
+        token in body for token in IMAGE_MODEL_WIRE_TOKENS.get(model, (model.value,))
+    ):
         return (
             f"migrated host: the image submit body does not carry requested model "
             f"{model.value} — refusing to report a generation made with persisted settings"
@@ -780,11 +1016,174 @@ def _image_body_problem(
             "migrated host: the image submit body is missing uploaded reference(s) "
             f"{', '.join(missing[:4])} — refusing to report a text-only generation as i2i"
         )
+    found = _image_body_references(body)
+    if found is None:
+        if reference_ids or entity_ids:
+            return (
+                "migrated host: the image submit body's reference slots could not be read, "
+                "so it cannot be confirmed to carry exactly the requested references"
+            )
+        return None
+    media, entities = found
+    extra = sorted((media - set(reference_ids)) | (entities - set(entity_ids)))
+    # Judged on the parsed slots, not the substring check above: an uploaded reference is
+    # also named in the prompt document, so it can be "in the body" with slot 2 empty.
+    lost = sorted((set(reference_ids) - media) | (set(entity_ids) - entities))
+    if extra or lost:
+        return (
+            "migrated host: the image submit does not carry exactly the references asked "
+            f"for (unexpected: {', '.join(extra[:4]) or 'none'}; missing: "
+            f"{', '.join(lost[:4]) or 'none'}) — refusing to let Flow generate with them"
+        )
     return None
+
+
+async def _guard_image_submit(
+    route: Any,
+    request: Any,
+    reference_ids: tuple[str, ...],
+    model: ImageModel | None,
+    entity_ids: tuple[str, ...] = (),
+) -> str | None:
+    """Abort an ``ogiZ0b`` submit that does not carry its references, before Flow acts.
+
+    The observer path (``_image_body_problem`` in ``on_request``) only refuses to *report*
+    such a run: by then Flow has generated it, spent quota and added an image (#913,
+    SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
+    """
+    problem = _image_body_problem(_post_data(request), reference_ids, model, entity_ids)
+    if problem is not None:
+        await route.abort()
+        return problem
+    await route.continue_()
+    return None
+
+
+def _redacted_page_url(page: Any) -> str:
+    """Return a diagnostic URL without query parameters or fragments."""
+    try:
+        parsed = urlsplit(str(getattr(page, "url", "") or ""))
+    except (TypeError, ValueError):
+        return "<unavailable>"
+    if not parsed.scheme or not parsed.netloc:
+        return "<unavailable>"
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
+
+    def __init__(self, *, out_dir: Path | None = None) -> None:
+        self._out_dir = out_dir
+
+    async def _capture_ui_failure(
+        self,
+        page: Page,
+        *,
+        phase: str,
+        selector: str,
+        error: BaseException | str,
+    ) -> tuple[Path, ...]:
+        """Persist a bounded screenshot + structural DOM snapshot for UI failures.
+
+        The snapshot deliberately excludes page text and prompt contents. The viewport
+        screenshot can still contain the authenticated account indicator, so it follows
+        the existing debug-screenshot PII warning policy. Capture is best-effort and can
+        never replace the typed selector error that triggered it.
+        """
+        if self._out_dir is None:
+            return ()
+        safe_phase = re.sub(r"[^A-Za-z0-9_.-]+", "_", phase).strip("_") or "ui"
+        stem = f"{time.time_ns()}-{safe_phase}"
+        diagnostics_dir = self._out_dir / "ui-failures"
+        screenshot_path = diagnostics_dir / f"{stem}.png"
+        snapshot_path = diagnostics_dir / f"{stem}.json"
+        try:
+            diagnostics_dir.mkdir(parents=True, exist_ok=True)
+            snapshot = await page.evaluate(
+                """() => {
+                    const visible = (selector) => Array.from(document.querySelectorAll(selector))
+                        .filter((el) => {
+                            const rect = el.getBoundingClientRect();
+                            const style = getComputedStyle(el);
+                            return rect.width > 0 && rect.height > 0 &&
+                                style.display !== "none" && style.visibility !== "hidden";
+                        })
+                        .slice(0, 20)
+                        .map((el) => ({
+                            tag: el.tagName,
+                            id: el.id || null,
+                            role: el.getAttribute("role"),
+                            className: String(el.className || "").slice(0, 160),
+                        }));
+                    return {
+                        title: String(document.title || "").slice(0, 120),
+                        activeElement: document.activeElement?.tagName || null,
+                        cookieBars: visible(
+                            "#glue-cookie-notification-bar-1, .glue-cookie-notification-bar"
+                        ),
+                        overlays: visible(".cdk-overlay-pane"),
+                        radiogroups: visible("[role='radiogroup']"),
+                        menuitems: visible("[role='menuitem']"),
+                        composers: visible("[contenteditable='true']"),
+                    };
+                }"""
+            )
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "contract": MIGRATED_SETTINGS_CONTRACT,
+                        "phase": phase,
+                        "selector": selector,
+                        "error": str(error)[:500],
+                        "url": _redacted_page_url(page),
+                        "snapshot": snapshot,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            await page.screenshot(path=str(screenshot_path), full_page=False)
+        except Exception as capture_error:  # noqa: BLE001 - diagnostics are non-authoritative
+            log.warning(
+                "migrated.ui_failure_artifacts_unavailable",
+                phase=phase,
+                error=str(capture_error)[:200],
+            )
+            for partial in (snapshot_path, screenshot_path):
+                try:
+                    partial.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return ()
+        log.warning(
+            "migrated.ui_failure_artifacts",
+            phase=phase,
+            screenshot=str(screenshot_path),
+            snapshot=str(snapshot_path),
+        )
+        return screenshot_path, snapshot_path
+
+    async def _ui_failure_detail(
+        self,
+        page: Page,
+        *,
+        phase: str,
+        selector: str,
+        detail: str,
+        error: BaseException | str,
+    ) -> str:
+        artifacts = await self._capture_ui_failure(
+            page,
+            phase=phase,
+            selector=selector,
+            error=error,
+        )
+        suffix = f" [contract={MIGRATED_SETTINGS_CONTRACT}"
+        if artifacts:
+            suffix += "; diagnostics=" + ",".join(str(path) for path in artifacts)
+        return detail + suffix + "]"
 
     # --- readiness ------------------------------------------------------------
 
@@ -797,6 +1196,9 @@ class MigratedComposer:
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_dialog(page)
+        # The glue cookie banner intercepts pointer events over the composer
+        # (2026-09-09 incident 8dc6c020); clear it before anything clicks.
+        await self._dismiss_cookie_bar(page)
         trigger = page.locator(READY_ANCHOR).first
         try:
             await trigger.wait_for(state="visible", timeout=int(timeout_s * 1000))
@@ -1179,11 +1581,14 @@ class MigratedComposer:
                 await self._select(page, pane, axis="duration", text=f"{request.duration}s")
             elif request.mode is Mode.R2V:
                 await self._pin_r2v_duration(page, pane)
+            if request.resolution is not None:
+                await self._select_resolution(page, pane, request.resolution)
             await self._select(page, pane, axis="count", text=f"x{request.count}")
             log.info(
                 "migrated.settings_applied",
                 aspect=request.aspect.value,
                 duration=request.duration,
+                resolution=request.resolution,
                 count=request.count,
                 # The EFFECTIVE model — `request.model` is None on an i2v run that
                 # took the #125 default, and logging that read as "no model bound".
@@ -1240,7 +1645,9 @@ class MigratedComposer:
         try:
             if not await bar.is_visible():
                 return
-            await bar.locator(COOKIE_BAR_REJECT).first.click(timeout=3000)
+            reject = bar.locator(COOKIE_BAR_REJECT)
+            button = reject if await reject.count() else bar.locator(COOKIE_BAR_ACCEPT)
+            await button.first.click(timeout=3000)
             await bar.wait_for(state="hidden", timeout=3000)
         except Exception as e:  # noqa: BLE001 - the click post-mortem reports what is left
             log.warning("migrated.cookie_bar_not_dismissed", error=str(e)[:120])
@@ -1248,6 +1655,7 @@ class MigratedComposer:
         log.info("migrated.cookie_bar_dismissed")
 
     async def _open_pane(self, page: Page) -> Any:
+
         await self._dismiss_cookie_bar(page)
         # And again here, not only in `ensure_editor` (#859). That probe runs one frame
         # after `domcontentloaded`, before Angular has rendered anything, so the promo
@@ -1270,12 +1678,17 @@ class MigratedComposer:
                 if await self._agent_chip_pressed(page)
                 else ""
             )
-            raise UiSelectorDriftError(
+            detail = await self._ui_failure_detail(
+                page,
+                phase="wait_settings_trigger",
+                selector=READY_ANCHOR,
                 detail=(
                     f"migrated host: the settings trigger ({READY_ANCHOR}) is not visible"
                     f"{why} (host=migrated)"
                 ),
-            ) from e
+                error=e,
+            )
+            raise UiSelectorDriftError(detail=detail) from e
         # The other half of #752 finding #7: the guard above became a visibility wait,
         # this click stayed bare, and the comment above describes what it went on doing.
         await self._click(page, trigger, named=READY_ANCHOR, timeout=5000)
@@ -1287,12 +1700,17 @@ class MigratedComposer:
         try:
             await pane.locator(RADIOGROUP).first.wait_for(state="visible", timeout=8000)
         except Exception as e:
-            raise UiSelectorDriftError(
+            detail = await self._ui_failure_detail(
+                page,
+                phase="discover_settings_pane",
+                selector=f"{OVERLAY} -> {RADIOGROUP}",
                 detail=(
                     "migrated host: the settings pane opened but rendered no option "
                     "groups ([role='radiogroup']) (host=migrated)"
                 ),
-            ) from e
+                error=e,
+            )
+            raise UiSelectorDriftError(detail=detail) from e
         return pane
 
     def _blocking_overlays(self, page: Page) -> Any:
@@ -1353,13 +1771,18 @@ class MigratedComposer:
         log.warning("migrated.pane_still_open", visible_overlays=remaining, strict=strict)
         if not strict:
             return
-        raise UiSelectorDriftError(
+        detail = await self._ui_failure_detail(
+            page,
+            phase="close_settings_pane",
+            selector=VISIBLE_OVERLAY,
             detail=(
                 f"migrated host: {remaining} overlay(s) still visible after "
                 f"{PANE_CLOSE_ESCAPES} Escape presses — the settings pane would cover the "
                 f"composer and the prompt could not be typed (host=migrated)"
             ),
+            error=f"{remaining} visible overlay(s)",
         )
+        raise UiSelectorDriftError(detail=detail)
 
     async def _pin_r2v_duration(self, page: Page, pane: Any) -> None:
         """Bind the base duration for a references run, when this pane offers durations.
@@ -1375,7 +1798,7 @@ class MigratedComposer:
         this cannot go through :meth:`_select`, whose duration branch raises exit 11.
         """
         wanted = f"{R2V_DURATION_S}s"
-        if not await pane.locator(RADIO).filter(has_text=_exact(wanted)).count():
+        if not await pane.locator(RADIO).filter(has_text=_duration(wanted)).count():
             log.info("migrated.r2v_duration_row_absent", wanted=wanted)
             return
         await self._select(page, pane, axis="duration", text=wanted)
@@ -1396,7 +1819,7 @@ class MigratedComposer:
         matches = (
             radios.filter(has=_ligature(page, lig))
             if lig
-            else radios.filter(has_text=_exact(wanted))
+            else radios.filter(has_text=_duration(wanted) if axis == "duration" else _exact(wanted))
         )
         target = matches.first
         if not await target.count():
@@ -1434,6 +1857,38 @@ class MigratedComposer:
             ),
         )
 
+    async def _select_resolution(self, page: Page, pane: Any, resolution: str) -> None:
+        """Select 360p or 720p on models that offer a resolution control (Omni Flash)."""
+        radios = pane.locator(RADIO)
+        matches = radios.filter(has_text=re.compile(re.escape(resolution)))
+        target = matches.first
+        if not await target.count():
+            groups = await pane.locator(RADIOGROUP).count()
+            raise ConfigurationError(
+                detail=(
+                    f"the migrated Flow host renders no resolution control offering {resolution!r} "
+                    f"for this account and model ({groups} option groups shown)"
+                ),
+                remediation_hint=(
+                    "Drop --resolution to accept Flow's default, or use a model whose "
+                    "settings pane shows a resolution row (Omni 1.1 Flash)."
+                ),
+            )
+        if await target.get_attribute("aria-checked") == "true":
+            log.info("migrated.resolution_already_selected", resolution=resolution)
+            return
+        await target.click(timeout=4000)
+        await asyncio.sleep(0.2)
+        if await matches.first.get_attribute("aria-checked") == "true":
+            log.info("migrated.resolution_selected", resolution=resolution)
+            return
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the resolution radio {resolution!r} did not become aria-checked "
+                f"after the click (host=migrated)"
+            ),
+        )
+
     async def _select_model(self, page: Page, pane: Any, model: VideoModel) -> None:
         matcher = VIDEO_MODEL_MENU_MATCHERS.get(model)
         if matcher is None:
@@ -1446,13 +1901,16 @@ class MigratedComposer:
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
         button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
-        if not await button.count():
-            raise UiSelectorDriftError(
-                detail=(
-                    "migrated host: model picker button (arrow_drop_down) not found in the "
-                    "settings pane (host=migrated)"
-                ),
-            )
+        try:
+            await button.wait_for(state="visible", timeout=4000)
+        except Exception:
+            if not await button.count():
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: model picker button (arrow_drop_down) not found in the "
+                        "settings pane (host=migrated)"
+                    ),
+                ) from None
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
             # Logged, because otherwise this path is invisible: a run that short-circuits
@@ -1514,10 +1972,13 @@ class MigratedComposer:
                 ),
             )
         button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
-        if not await button.count():
-            raise UiSelectorDriftError(
-                detail="migrated host: image model picker is missing (host=migrated)"
-            )
+        try:
+            await button.wait_for(state="visible", timeout=4000)
+        except Exception:
+            if not await button.count():
+                raise UiSelectorDriftError(
+                    detail="migrated host: image model picker is missing (host=migrated)"
+                ) from None
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
             log.info("migrated.image_model_already_selected", model=current, requested=model.value)
@@ -1574,6 +2035,14 @@ class MigratedComposer:
             page, display_name, media_id, chip_label="End", expect_bound_chips=2
         )
         return media_id
+
+    async def upload(self, page: Page, project_id: str, image_path: Path) -> tuple[str, str]:
+        """Upload ``image_path`` into the project; ``(media_id, run-unique caption)``.
+
+        The public face of :meth:`_upload_via_toolbar`, for a reference that will be
+        mentioned in place on later rows instead of uploaded again (#913).
+        """
+        return await self._upload_via_toolbar(page, project_id, image_path)
 
     async def _upload_via_toolbar(
         self, page: Page, project_id: str, image_path: Path
@@ -1767,6 +2236,120 @@ class MigratedComposer:
             page.remove_listener("response", on_response)
             page.remove_listener("request", on_request)
 
+    async def reference_existing(
+        self, page: Page, project_id: str, request: GenerateImageRequest
+    ) -> tuple[str, ...]:
+        """Apply the image settings and mention ``request.refs`` in place, reloading on a miss.
+
+        A just-generated image can be missing from this page load's grid or picker
+        search and present after a reload (measured twice, live e2e 2026-10-01). A reload
+        resets the settings and the composer, so each attempt redoes all three steps.
+        """
+        for ref in request.refs:
+            _picker_query(ref)  # an unusable caption is refused before any reload
+        deadline = time.monotonic() + EXISTING_REF_WAIT_S
+        while True:
+            try:
+                tokens = await self.await_existing_references(page, request.refs)
+                await self.apply_image_settings(page, request)
+                return await self.attach_existing_references(page, request.refs, tokens)
+            except ReferenceNotFoundError:
+                if time.monotonic() >= deadline:
+                    raise
+            log.info("migrated.existing_reference_reload")
+            await page.wait_for_timeout(EXISTING_REF_RELOAD_PAUSE_S * 1000)
+            await page.reload(wait_until="domcontentloaded", timeout=45_000)
+            await self.ensure_editor(page, project_id)
+
+    async def await_existing_references(
+        self, page: Page, refs: tuple[ImageRef, ...]
+    ) -> dict[str, str]:
+        """Each reference's grid thumbnail token in this page load; a missing one raises.
+
+        Measured (live e2e, 2026-10-01): the project grid is the asset list fetched when
+        the editor loads, and it is not updated in place. A row that opened the editor a
+        second after its parent was generated polled for 30 s without the tile; the next
+        row, after a reload, found it at once. :meth:`reference_existing` reloads.
+        """
+        tokens = {
+            ref.name: str(await page.evaluate(_GRID_TOKEN_JS, ref.name) or "") for ref in refs
+        }
+        missing = [media_id for media_id, token in tokens.items() if not token]
+        if missing:
+            log.info("migrated.existing_reference_not_listed", missing=len(missing))
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: image {missing[0]} is not in this project's grid, so "
+                    "it cannot be referenced in place"
+                ),
+            )
+        return tokens
+
+    async def attach_existing_references(
+        self, page: Page, refs: tuple[ImageRef, ...], tokens: dict[str, str]
+    ) -> tuple[str, ...]:
+        """Mention images already in the project, chosen by identity; upload nothing.
+
+        Measured (docs/superpowers/spikes/2026-10-01-batch-ref-dropped.md, Gate): the
+        ``@`` picker is project-scoped and lists matches by Flow's caption, but captions
+        collide and the older match comes first. Each option's thumbnail is
+        ``/asb/<token>``; the project grid tile ``img[data-media-id=<uuid>]`` carries the
+        same token. So: search by caption, select the option whose token is the
+        reference's, and confirm a chip landed. ``_image_body_problem`` still checks the
+        submit carries the ids.
+        """
+        for count, ref in enumerate(refs, start=1):
+            query = _picker_query(ref)
+            await self._mention_by_token(
+                page, query, tokens[ref.name], ref.name, expect_chips=count
+            )
+        media_ids = tuple(ref.name for ref in refs)
+        # Distinct from `migrated.references_attached` (the upload path): this one means
+        # nothing was uploaded.
+        log.info("migrated.existing_references_attached", count=len(refs), media_ids=media_ids)
+        return media_ids
+
+    async def _mention_by_token(
+        self, page: Page, query: str, token: str, media_id: str, *, expect_chips: int
+    ) -> None:
+        """One search in this page load; a miss closes the picker and raises.
+
+        Measured (live e2e, 2026-10-01): when the picker does not offer a just-generated
+        image, searching again in the same page load does not help (0 options three times
+        over 30 s), while a fresh editor load offers it at once. So retrying belongs to
+        :meth:`reference_existing`, which reloads.
+        """
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.keyboard.type("@", delay=120)
+        await page.wait_for_timeout(2200)
+        await page.keyboard.type(query, delay=100)
+        await page.wait_for_timeout(2500)
+        tokens = [str(t) for t in await page.evaluate(_OPTION_TOKENS_JS, PICKER_OPTION)]
+        if token in tokens:
+            # The option's position: >0 means another image shares the caption (#21).
+            log.info("migrated.existing_reference_option", option_index=tokens.index(token))
+            for _ in range(tokens.index(token)):
+                await page.keyboard.press("ArrowDown")
+                await page.wait_for_timeout(ARROW_SETTLE_MS)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(2500)
+            chips = await self.read_chips(page)
+            # A query can also match a character; only a media chip is this image.
+            if len(chips) == expect_chips and chips[-1].get("reference_type") == "media":
+                await page.keyboard.type(" ", delay=80)
+                return
+        else:
+            log.info("migrated.mention_miss", offered=len(tokens), by="token")
+            # The picker is a dialog over the composer (measured, gate #39): close it.
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(800)
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: image {media_id} did not attach as a reference "
+                f"({len(tokens)} picker option(s) offered for its caption, none of them it)"
+            ),
+        )
+
     async def attach_references(
         self, page: Page, project_id: str, paths: tuple[Path, ...]
     ) -> tuple[str, ...]:
@@ -1802,12 +2385,13 @@ class MigratedComposer:
         entity_ids: tuple[str, ...],
         names: tuple[str, ...],
         clear: bool = True,
-    ) -> None:
+    ) -> tuple[str, ...]:
         """Mention each character by name, then prove the chip is that ENTITY (#723).
 
-        The gesture is the same one references use — ``@``, the name, **Enter** — because
-        the migrated composer has one picker for everything. What differs is the
-        verification, and it is not optional:
+        The gesture is ``@``, the name, then the option TITLED exactly the name
+        (:meth:`_mention_character`) — never the first option, and never a trial commit:
+        a chip deleted from the prompt still rides the submit. Then the verification,
+        which is not optional:
 
         **Flow lists characters and media in that one picker and does not rank them.**
         Measured 2026-09-07: the same ``@Kael`` query committed
@@ -1818,6 +2402,10 @@ class MigratedComposer:
         chip is read back and checked for BOTH its kind and its id before anything is
         submitted, exactly as the labs path asserts ``referenceEntities`` on the wire
         (``ui_automation_video.py`` ``_assert_entities_attached``).
+
+        ``names`` drive the gesture and may outnumber ``entity_ids``: a character
+        mentioned by name with no catalog to look it up in (#723) has no id to check, so
+        only its chip kind is verified. Returns the entity ids the committed chips carry.
         """
         if clear:
             await self.clear_composer(page)
@@ -1826,7 +2414,7 @@ class MigratedComposer:
         # them would silently drop references the caller asked for.
         base = len(await self.read_chips(page))
         for i, name in enumerate(names):
-            await self._mention_by_name(page, name, expect_chips=base + i + 1)
+            await self._mention_character(page, name, expect_chips=base + i + 1)
 
         chips = (await self.read_chips(page))[base:]
         not_entities = [c for c in chips if c.get("reference_type") != "entity"]
@@ -1841,6 +2429,16 @@ class MigratedComposer:
                     f"reference"
                 ),
             )
+        # A by-name character has no id to check, so its chip's text (the character's
+        # name, measured 2026-09-07) is what proves the picker committed the right one.
+        got_names = sorted(str(c.get("text", "")).casefold() for c in chips)
+        if got_names != sorted(n.casefold() for n in names):
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: asked for {len(names)} character(s) by name but the "
+                    "committed chips carry different names. Refusing to submit"
+                ),
+            )
         attached = {c.get("entity_id", "") for c in chips}
         missing = [e for e in entity_ids if e not in attached]
         if missing:
@@ -1851,7 +2449,95 @@ class MigratedComposer:
                     f"the right character. Refusing to submit"
                 ),
             )
-        log.info("migrated.character_entities_attached", count=len(entity_ids), names=list(names))
+        committed = tuple(c.get("entity_id", "") for c in chips)
+        log.info(
+            "migrated.character_entities_attached",
+            count=len(chips),
+            names=list(names),
+            entity_ids=list(committed),
+        )
+        return committed
+
+    async def _mention_character(self, page: Page, name: str, *, expect_chips: int) -> None:
+        """Commit the picker option TITLED exactly *name* — one gesture, nothing on trial.
+
+        Measured 2026-10-13 (``scripts/dev/spike_picker_entity_marker.py``, and see
+        ``docs/superpowers/spikes/2026-10-13-migrated-image-character-mention.md``): character and
+        media options are structurally identical and differ only by a translated subtitle,
+        and an image captioned "Sussy cooking…" ranked above the character "Sussy". Trying
+        options and deleting the media chips is NOT an option: a deleted chip leaves the
+        prompt but its reference stays in the composer's request state and rides the
+        submit (live, 2026-10-13: five references on a run whose prompt showed one; chip
+        removal measured by ``spike_picker_chip_removal.py``, the leak reproduced by
+        ``spike_image_submit_references.py --trial-media``).
+
+        ``.asset-title`` holds the asset's own name — user data, not a translated label —
+        so the option whose trimmed title equals the name (case-insensitive) is the
+        character, reached with one ArrowDown run and committed with Enter. Several exact
+        matches (a media asset literally titled the name) are refused before anything is
+        committed, as is no match; a single match that commits a media chip is refused
+        too (the caller aborts the run before submit, so that chip never reaches Flow).
+        """
+        titles: list[str] = []
+        for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
+            await page.locator(COMPOSER).first.click(timeout=5000)
+            # Real keystrokes: see `_mention_by_name`.
+            await page.keyboard.type("@", delay=120)
+            await page.wait_for_timeout(2200)
+            await page.keyboard.type(name, delay=100)
+            await page.wait_for_timeout(2500)
+            titles = [str(t) for t in await page.evaluate(_OPTION_TITLES_JS, PICKER_OPTION)]
+            if titles or attempt == FRAME_SEARCH_ATTEMPTS:
+                break
+            # The search had not settled: clear the typed `@name` and ask again.
+            log.info("migrated.mention_miss", name_chars=len(name), attempt=attempt, offered=0)
+            for _ in range(len(name) + 1):
+                await page.keyboard.press("Backspace")
+            await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
+        exact = [i for i, t in enumerate(titles) if t.strip().casefold() == name.casefold()]
+        # Titles are asset names, often prompt-like captions: report counts, not text,
+        # so an error detail (stderr, MCP, the catalog) never carries them.
+        offered = f"{len(titles)} option(s)"
+        if len(exact) != 1:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(800)
+            why = (
+                "no option is titled exactly that"
+                if not exact
+                else f"{len(exact)} options are titled exactly that, and a character and a "
+                "media asset cannot be told apart before one is committed"
+            )
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: asked for character {name!r} but {why}; the picker "
+                    f"offered {offered}. Refusing before submit — rename the colliding "
+                    "asset in Flow, or give the character a one-word name that is its full "
+                    "name"
+                ),
+            )
+        index = exact[0]
+        # A click on the option commits nothing (measured 2026-10-13); the keyboard does.
+        # Only the FINAL highlight has to settle before Enter (`ARROW_SETTLE_MS`), so the
+        # arrows go in quickly and the settle is paid once, not per step.
+        for _ in range(index):
+            await page.keyboard.press("ArrowDown")
+            await page.wait_for_timeout(ARROW_STEP_MS)
+        if index:
+            await page.wait_for_timeout(ARROW_SETTLE_MS)
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(2500)
+        chips = await self.read_chips(page)
+        log.info("migrated.character_option", option_index=index, offered=len(titles))
+        if len(chips) != expect_chips:
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: committing the option titled {name!r} committed no chip "
+                    f"({len(chips)} chip(s), expected {expect_chips}); the picker offered "
+                    f"{offered}"
+                ),
+            )
+        # The kind check lives in `attach_character_entities`: a media chip here is
+        # refused there, before any submit.
 
     async def clear_composer(self, page: Page) -> None:
         await page.locator(COMPOSER).first.click(timeout=5000)
@@ -2211,6 +2897,12 @@ class MigratedComposer:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
                 return
+            refusal = _submit_refusal(text, SUBMIT_RPCS)
+            # An envelope arriving after an accepted submit is ignored: that run's outcome
+            # is already decided, and it now belongs to the terminal wait.
+            if refusal is not None and not submitted.done():
+                submitted.set_exception(refusal)
+                return
             for rid, payload in parse_frames(text):
                 # Record the id the FRAME names, not just the URL's. The interpolation
                 # reply arrives on a bare `batchexecute` with no `rpcids` param, so a
@@ -2235,10 +2927,8 @@ class MigratedComposer:
                     _settle(rec)
                 elif rid in STATUS_RPCS and workflow:
                     try:
-                        rec = generation_record(rid, payload)
+                        rec = generation_record(rid, payload, workflow_id=workflow["id"])
                     except WireFormatError:
-                        continue
-                    if rec.workflow_id != workflow["id"]:
                         continue
                     log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
                     _settle(rec)
@@ -2306,6 +2996,7 @@ class MigratedComposer:
                 media_id=first.media_id,
                 project_id=project_id or first.project_id,
                 flow_operation_id=first.workflow_id,
+                workflow_id=first.workflow_id,
             )
             if on_started is not None:
                 maybe = on_started(started)
@@ -2331,14 +3022,132 @@ class MigratedComposer:
             page.remove_listener("response", on_response)
             page.remove_listener("request", on_request)
 
+    async def _verify_submit_target(self, page: Page, submit: Locator) -> None:
+        """Prove the submit button is visible and receives pointer events."""
+        try:
+            if not await submit.is_visible():
+                raise RuntimeError("image submit button is not visible")
+            # The JS hit-test reads viewport coordinates; a below-the-fold submit
+            # would fail it even though Playwright's click auto-scrolls. Bring the
+            # button into the viewport the gate is about to measure.
+            await submit.scroll_into_view_if_needed()
+            box = await submit.bounding_box()
+            if not isinstance(box, dict) or not all(
+                isinstance(box.get(key), (int, float)) for key in ("x", "y", "width", "height")
+            ):
+                raise RuntimeError("image submit button has no usable bounding box")
+            state: Any = await page.evaluate(
+                """
+                ({x, y}) => {
+                    const describe = (element) => element ? {
+                        tag: element.tagName,
+                        id: element.id || null,
+                        role: element.getAttribute('role'),
+                        className: String(element.className || '').slice(0, 160),
+                    } : null;
+                    const submit = [...document.querySelectorAll('button')].find((button) =>
+                        [...button.querySelectorAll('mat-icon')].some((icon) =>
+                            (icon.textContent || '').trim() === 'arrow_forward'));
+                    const top = document.elementFromPoint(x, y);
+                    const topButton = top?.closest?.('button');
+                    const target = Boolean(
+                        submit &&
+                        (top === submit || submit.contains(top) || topButton === submit)
+                    );
+                    return {
+                        target,
+                        top: describe(top),
+                    };
+                }
+                """,
+                {
+                    "x": float(box["x"]) + float(box["width"]) / 2,
+                    "y": float(box["y"]) + float(box["height"]) / 2,
+                },
+            )
+        except UiSelectorDriftError:
+            raise
+        except Exception as error:
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_button_gate",
+                selector="button -> arrow_forward",
+                detail=(
+                    "migrated host: image submit button failed the visibility or pointer "
+                    "target check (host=migrated)"
+                ),
+                error=error,
+            )
+            raise UiSelectorDriftError(detail=detail) from error
+        state_dict: dict[str, Any] = cast(dict[str, Any], state) if isinstance(state, dict) else {}
+        if not state_dict.get("target"):
+            blocker = state_dict.get("top")
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_button_gate",
+                selector="button -> arrow_forward",
+                detail=(
+                    "migrated host: an unexpected element receives pointer events at the "
+                    f"image submit target (blocker={blocker!r}) (host=migrated)"
+                ),
+                error="submit target is covered",
+            )
+            raise UiSelectorDriftError(detail=detail)
+
+    async def _pre_submit_gate(self, page: Page) -> Any:
+        """Prove the composer is clear and submit is present and hit-testable.
+
+        Runs before any network observer arms. Enablement is waited on
+
+        downstream by the submit path itself (with the out-of-credits
+        interrogation); this gate refuses missing/covered targets first.
+        """
+        await self._dismiss_cookie_bar(page)
+        blockers = self._blocking_overlays(page)
+        remaining = await blockers.count()
+        if remaining:
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_overlay_gate",
+                selector=VISIBLE_OVERLAY,
+                detail=(
+                    f"migrated host: {remaining} blocking overlay(s) remain before image "
+                    "Generate (host=migrated)"
+                ),
+                error=f"{remaining} blocking overlay(s)",
+            )
+            raise UiSelectorDriftError(detail=detail)
+        submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+        if not await submit.count():
+            await _raise_if_out_of_credits(page)
+            detail = await self._ui_failure_detail(
+                page,
+                phase="pre_submit_button_gate",
+                selector="button -> arrow_forward",
+                detail="migrated host: image submit button is missing (host=migrated)",
+                error="submit button missing",
+            )
+            raise UiSelectorDriftError(detail=detail)
+        await self._verify_submit_target(page, submit)
+        return submit
+
     async def submit_images_and_observe(
         self,
         page: Page,
         request: GenerateImageRequest,
         *,
         reference_ids: tuple[str, ...] = (),
+        entity_ids: tuple[str, ...] = (),
     ) -> list[GeneratedImage]:
-        """Submit Image mode and decode the completed ``ogiZ0b`` reply."""
+        """Submit Image mode and decode the completed ``ogiZ0b`` reply.
+
+        ``reference_ids`` (media) and ``entity_ids`` (characters) are the EXACT reference
+        set the submit may carry: missing or extra ids abort it before Flow acts (#723).
+        """
+        # Complete all UI gates before registering network observers or clicking
+        # Generate. A deterministic DOM failure therefore cannot spend a request or
+        # enter the transport retry loop.
+        submit = await self._pre_submit_gate(page)
         loop = asyncio.get_running_loop()
         result: asyncio.Future[list[GeneratedImage]] = loop.create_future()
         route_error: asyncio.Future[WireFormatError] = loop.create_future()
@@ -2347,7 +3156,9 @@ class MigratedComposer:
             url = str(getattr(raw_request, "url", ""))
             if _rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
                 return
-            problem = _image_body_problem(_post_data(raw_request), reference_ids, request.model)
+            problem = _image_body_problem(
+                _post_data(raw_request), reference_ids, request.model, entity_ids
+            )
             if problem is not None:
                 route_error.set_result(
                     WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
@@ -2369,13 +3180,24 @@ class MigratedComposer:
                 return
             try:
                 text = await response.text()
+                refusal = _submit_refusal(text, (IMAGE_SUBMIT_RPC,))
+                if refusal is not None:
+                    raise refusal
+                parsed = parse_frames(text)
                 records = [
                     record
-                    for rpcid, payload in parse_frames(text)
+                    for rpcid, payload in parsed
                     if rpcid == IMAGE_SUBMIT_RPC
                     for record in image_records(rpcid, payload)
                 ]
                 if not records:
+                    log.warning(
+                        "migrated.image_submit_unparsed_reply",
+                        rpcid=IMAGE_SUBMIT_RPC,
+                        text_len=len(text),
+                        parsed_count=len(parsed),
+                        parsed_rpcids=[p[0] for p in parsed],
+                    )
                     raise WireFormatError(
                         detail="migrated image submit returned no ogiZ0b frame",
                         route=f"batchexecute:{IMAGE_SUBMIT_RPC}",
@@ -2405,15 +3227,33 @@ class MigratedComposer:
                 return
             result.set_result(images)
 
+        def is_image_submit(url: str) -> bool:
+            return _rpcid(url) == IMAGE_SUBMIT_RPC
+
+        async def guard(route: Any, raw_request: Any) -> None:
+            problem = await _guard_image_submit(
+                route, raw_request, reference_ids, request.model, entity_ids
+            )
+            found = _image_body_references(_post_data(raw_request))
+            log.info(
+                "migrated.image_submit_guarded",
+                outcome="aborted" if problem else "passed",
+                references=len(reference_ids),
+                characters=len(entity_ids),
+                # What the body actually carried, per slot (#723: extras rode slot 2).
+                body_media=None if found is None else len(found[0]),
+                body_characters=None if found is None else len(found[1]),
+            )
+            if problem is not None and not route_error.done():
+                route_error.set_result(
+                    WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
+                )
+
         page.on("request", on_request)
         page.on("response", on_response)
         try:
-            submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
-            if not await submit.count():
-                await _raise_if_out_of_credits(page)
-                raise UiSelectorDriftError(
-                    detail="migrated host: image submit button is missing (host=migrated)"
-                )
+            if reference_ids or entity_ids:
+                await page.route(is_image_submit, guard)
             enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
             while not await submit.is_enabled():
                 if time.monotonic() >= enable_deadline:
@@ -2447,6 +3287,11 @@ class MigratedComposer:
                 result.exception()
             page.remove_listener("request", on_request)
             page.remove_listener("response", on_response)
+            if reference_ids or entity_ids:
+                try:
+                    await page.unroute(is_image_submit, guard)
+                except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
+                    log.debug("migrated.image_submit_unroute_failed", error=type(exc).__name__)
 
     @staticmethod
     async def _await_terminal(
@@ -2503,12 +3348,20 @@ class MigratedComposer:
                 )
             # No redirects: an open redirect on the CDN must not rebound the
             # request elsewhere (same posture as the labs image download).
-            resp = await page.request.get(url, timeout=180_000, max_redirects=0)
+            resp = await get_signed_media(
+                page,
+                url,
+                media_id=record.media_id,
+                route="flow-content.google",
+                max_redirects=0,
+                remediation=recoverable_clip_hint(record.media_id),
+            )
             if resp.status >= 300:
                 raise WireFormatError(
                     detail=f"migrated host: signed media URL returned HTTP {resp.status}",
                     status=resp.status,
                     route="flow-content.google",
+                    remediation_hint=expired_link_hint(record.media_id),
                 )
             body = await resp.body()
             if body[4:8] == b"ftyp":
@@ -2579,7 +3432,7 @@ async def run_video(
     if unported is not None:
         raise FlowHostMigratedError(
             detail=(
-                f"this account's Flow lives on flow.google.com, where gflow drives "
+                f"Flow served flow.google.com, where gflow drives "
                 f"text-to-video, image-to-video from local start (and end) frames, and "
                 f"reference-to-video from local files; {unported} is not ported yet "
                 f"(#639) — pass --initial-frame / --ref as local files"
@@ -2657,6 +3510,7 @@ async def run_video(
         local_path=Path(local_path) if local_path is not None else None,
         project_id=pid,
         flow_operation_id=record.workflow_id,
+        workflow_id=record.workflow_id,
     )
 
 
@@ -2665,13 +3519,14 @@ async def run_images(
     request: GenerateImageRequest,
     *,
     project_id: str | None,
+    out_dir: Path | None = None,
 ) -> list[GeneratedImage]:
     """Drive supported image requests through the migrated project composer."""
     unported = _unported_image_form(request)
     if unported is not None:
         raise FlowHostMigratedError(
             detail=(
-                "this account's Flow lives on flow.google.com, where gflow drives t2i "
+                "Flow served flow.google.com, where gflow drives t2i "
                 f"and i2i from local files; {unported} is not ported yet (#639)"
             )
         )
@@ -2682,10 +3537,15 @@ async def run_images(
                 "image generation on flow.google.com needs an existing project; pass --project <id>"
             )
         )
-    composer = MigratedComposer()
+    composer = MigratedComposer(out_dir=out_dir)
     await composer.ensure_editor(page, pid)
-    await composer.apply_image_settings(page, request)
     reference_ids: tuple[str, ...] = ()
+    if request.refs:
+        # Images already in this project (a manifest's `batch:N`, #913): referenced in
+        # place, never re-uploaded. Finding them may reload, so settings are applied there.
+        reference_ids = await composer.reference_existing(page, pid, request)
+    else:
+        await composer.apply_image_settings(page, request)
     if request.ref_paths:
         reference_ids = await composer.attach_references(page, pid, request.ref_paths)
         chips = await composer.read_chips(page)
@@ -2696,11 +3556,25 @@ async def run_images(
                     f"{len(chips)} mention chip(s) were bound before submit"
                 )
             )
-    await composer.send_prompt(page, request.prompt, append=bool(reference_ids))
+    entity_ids: tuple[str, ...] = ()
+    if request.reference_entity_names:
+        # #723: characters go through the same `@` picker, after any uploads (whose file
+        # chooser steals focus) and without clearing the mentions those placed. Each
+        # chip is verified to be an ENTITY before anything is submitted.
+        entity_ids = await composer.attach_character_entities(
+            page,
+            entity_ids=tuple(request.reference_entities),
+            names=tuple(request.reference_entity_names),
+            clear=not reference_ids,
+        )
+    await composer.send_prompt(page, request.prompt, append=bool(reference_ids) or bool(entity_ids))
+    # The submit guard holds the body to EXACTLY these references: a lost character, or
+    # any reference that is not on this list, aborts the run before Flow generates it.
     return await composer.submit_images_and_observe(
         page,
         request,
         reference_ids=reference_ids,
+        entity_ids=tuple(e for e in entity_ids if e),
     )
 
 

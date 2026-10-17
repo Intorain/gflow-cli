@@ -29,7 +29,7 @@ _MEDIA = {"media_id": "m1-uuid-12345678901234567890123456", "display_name": "log
 def patch_index(monkeypatch: pytest.MonkeyPatch) -> None:
     index = AssetIndex(entities=[_ENTITY], media_assets=[_MEDIA])
 
-    async def _fake_build(cls: Any, client: Any, project_id: str) -> AssetIndex:
+    async def _fake_build(cls: Any, client: Any, project_id: str, **_: Any) -> AssetIndex:
         return index
 
     monkeypatch.setattr(

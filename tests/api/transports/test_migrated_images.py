@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
@@ -18,6 +19,7 @@ from gflow_cli.api.image import (
     Model,
 )
 from gflow_cli.errors import WireFormatError
+from tests.api.transports._ogiz0b import submit_body
 
 MEDIA = "11111111-1111-4111-8111-111111111111"
 WORKFLOW = "22222222-2222-4222-8222-222222222222"
@@ -111,11 +113,18 @@ def test_unported_image_forms_are_named_and_refused_pre_submit() -> None:
     assert _unported_image_form(_request(refs=(ImageRef(REFERENCE),))) == (
         "a reference given by Flow media UUID"
     )
+    # #723: characters attach through the `@` picker and are verified as entity chips.
     assert (
         _unported_image_form(
             _request(reference_entities=("entity-1",), reference_entity_names=("Hero",)),
         )
-        == "character references"
+        is None
+    )
+    assert _unported_image_form(_request(reference_entity_names=("Hero",))) is None
+    # The picker finds a character by name: an id with no name has nothing to type, and
+    # must be refused rather than skip the attach and drop the character (#979 review).
+    assert _unported_image_form(_request(reference_entities=("entity-1",))) == (
+        "a character given by entity id without a name"
     )
     assert (
         _unported_image_form(_request(instructions=(AgentInstruction(text="keep it blue"),)))
@@ -146,11 +155,43 @@ def test_every_image_aspect_flow_renders_is_offered() -> None:
 def test_image_submit_body_requires_every_uploaded_reference() -> None:
     from gflow_cli.api.transports.migrated_composer import _image_body_problem
 
-    body = f'[["ogiZ0b", "GEM_PIX_2 {REFERENCE}"]]'
+    body = submit_body(media=(REFERENCE,), model="GEM_PIX_2")
     assert _image_body_problem(body, (REFERENCE,)) is None
     problem = _image_body_problem(body, (REFERENCE, MEDIA))
     assert problem is not None
     assert MEDIA in problem
+
+
+def test_nano2_submit_accepts_the_beluga_token_nano_banana_2_1_sends() -> None:
+    """2.1 replaced 2 in the menu and sends BELUGA (#958, spike 2026-10-08).
+
+    Before this, the default model aborted every image run on those accounts.
+    """
+    from gflow_cli.api.transports.migrated_composer import _image_body_problem
+
+    for token in ("NARWHAL", "BELUGA"):
+        body = submit_body(media=(REFERENCE,), model=token)
+        assert _image_body_problem(body, (REFERENCE,), model=Model.NARWHAL) is None, token
+
+    problem = _image_body_problem(
+        submit_body(media=(REFERENCE,), model="GEM_PIX_2"), (REFERENCE,), model=Model.NARWHAL
+    )
+    assert problem is not None
+    assert "NARWHAL" in problem
+
+    # BELUGA is nano2's alias only: every other model still needs its own name.
+    for other in (Model.GEM_PIX_2, Model.HARBOR_SEAL):
+        body = submit_body(media=(REFERENCE,))
+        assert _image_body_problem(body, (REFERENCE,), model=other) is not None, other
+
+
+def test_nano2_matches_exactly_one_entry_of_the_live_2_1_menu() -> None:
+    from gflow_cli.api.transports.migrated_composer import IMAGE_MODEL_MENU_MATCHERS
+
+    # Measured on denon82 and ffroliva, 2026-10-08 (spike_nano_banana_21_wire.py).
+    offered = ["🍌 Nano Banana Pro", "🍌 Nano Banana 2 Lite", "🍌 Nano Banana 2.1"]
+    matcher = IMAGE_MODEL_MENU_MATCHERS[Model.NARWHAL]
+    assert [label for label in offered if matcher.matches(label)] == ["🍌 Nano Banana 2.1"]
 
 
 def test_nano_banana_2_does_not_match_the_lite_sibling() -> None:
@@ -160,14 +201,18 @@ def test_nano_banana_2_does_not_match_the_lite_sibling() -> None:
     assert matcher.matches("🍌 Nano Banana 2")
     assert not matcher.matches("🍌 Nano Banana 2 Lite")
 
+    lite_matcher = IMAGE_MODEL_MENU_MATCHERS[Model.HARBOR_SEAL]
+    assert lite_matcher.matches("🍌 Nano Banana 2 Lite")
+    assert not lite_matcher.matches("🍌 Nano Banana 2")
+    assert not lite_matcher.matches("🍌 Nano Banana Pro")
 
-class _PageOwnedImageTransport:
-    def __init__(self, owned: bool) -> None:
-        self.owned = owned
+
+class _HttpImageTransport:
+    """An image transport that sends the client's token itself (bearer, evaluate_fetch):
+    it does not declare ``uses_page_owned_image_recaptcha``."""
+
+    def __init__(self) -> None:
         self.request: GenerateImageRequest | None = None
-
-    def uses_page_owned_image_recaptcha(self) -> bool:
-        return self.owned
 
     async def generate_images(self, **kwargs: Any) -> list[GeneratedImage]:
         self.request = kwargs["request"]
@@ -185,10 +230,15 @@ class _PageOwnedImageTransport:
         ]
 
 
+class _PageOwnedImageTransport(_HttpImageTransport):
+    def uses_page_owned_image_recaptcha(self) -> bool:
+        return True
+
+
 async def test_client_skips_legacy_mint_when_the_page_owns_image_submission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    transport = _PageOwnedImageTransport(owned=True)
+    transport = _PageOwnedImageTransport()
     client = FlowApiClient.__new__(FlowApiClient)
     client.transport = transport  # type: ignore[assignment]
     mint = AsyncMock(side_effect=AssertionError("legacy mint must not run"))
@@ -209,7 +259,7 @@ async def test_client_skips_legacy_mint_when_the_page_owns_image_submission(
 async def test_client_keeps_legacy_mint_for_other_image_transports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    transport = _PageOwnedImageTransport(owned=False)
+    transport = _HttpImageTransport()
     client = FlowApiClient.__new__(FlowApiClient)
     client.transport = transport  # type: ignore[assignment]
     mint = AsyncMock(return_value="minted")
@@ -266,74 +316,44 @@ async def test_migrated_image_route_dispatches_before_the_labs_driver(
     assert page.url == "about:blank"
 
 
-def test_page_owned_recaptcha_is_only_selected_for_the_migrated_route(
+def test_ui_transport_owns_its_image_recaptcha_on_about_blank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """#891: the answer no longer depends on the page. The URL-derived version read the
+    parked ``about:blank`` as a labs account, and the client minted there -- turning
+    exit 36 into a RecaptchaError. The UI transport never reads a client token."""
     from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-    from gflow_cli.config import reset_settings
 
-    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
-    reset_settings()
     transport = UiAutomationTransport()
     page = MagicMock()
-    transport._page = page  # noqa: SLF001
-
-    page.url = f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"
-    assert not transport.uses_page_owned_image_recaptcha()
-    page.url = f"https://flow.google.com/project/{PROJECT}"
-    assert transport.uses_page_owned_image_recaptcha()
-
-
-def test_page_owned_recaptcha_survives_the_post_run_page_park(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The SECOND image in one client session must still skip the labs mint.
-
-    Every migrated image run ends by parking the page on ``about:blank``
-    (``_generate_images_locked``), which routes as ``labs``. Deriving the
-    capability from ``page.url`` alone therefore answered ``False`` on the next
-    call, sending it back to ``_mint_recaptcha_token`` on the pooled bootstrap
-    page — the exact ``RecaptchaError`` of #673 that the page-owned mint exists
-    to prevent. Reachable from ``gflow image batch``, which runs every prompt
-    through one ``FlowApiClient`` (``image_batch.py::_run_sequential``), so no
-    single-image test could see it.
-    """
-    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-    from gflow_cli.config import reset_settings
-
-    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
-    reset_settings()
-    transport = UiAutomationTransport()
-    page = MagicMock()
-    transport._page = page  # noqa: SLF001
-
-    page.url = f"https://flow.google.com/project/{PROJECT}"
-    assert transport.uses_page_owned_image_recaptcha()
-
     page.url = "about:blank"
-    assert transport.uses_page_owned_image_recaptcha(), (
-        "the parked page must not read as a labs account on the next generation"
-    )
+    transport._page = page  # noqa: SLF001
+
+    assert transport.uses_page_owned_image_recaptcha()
 
 
-def test_a_never_migrated_transport_does_not_latch_into_the_page_owned_path(
+async def test_image_kill_switch_refuses_a_migrated_page_with_exit_36(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The latch is one-way, but it must never arm without evidence — otherwise a
-    labs account would stop minting the token it genuinely needs.
-    """
+    """#891: with the client mint gone for the UI transport, this route guard is the only
+    thing that keeps `GFLOW_CLI_FLOW_HOST=labs.google` an exit 36 for images."""
     from gflow_cli.api.transports.ui_automation import UiAutomationTransport
     from gflow_cli.config import reset_settings
+    from gflow_cli.errors import FlowHostMigratedError
 
-    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "labs.google")
     reset_settings()
     transport = UiAutomationTransport()
     page = MagicMock()
+    page.url = f"https://flow.google.com/project/{PROJECT}"
     transport._page = page  # noqa: SLF001
+    transport._setup_done = True  # noqa: SLF001
 
-    for url in ("about:blank", f"https://labs.google/fx/en/tools/flow/project/{PROJECT}"):
-        page.url = url
-        assert not transport.uses_page_owned_image_recaptcha(), url
+    with structlog.testing.capture_logs() as logs, pytest.raises(FlowHostMigratedError):
+        await transport.generate_images(project_id=PROJECT, request=_request())
+    assert {"at": "image_flow_host_kill_switch"}.items() <= next(
+        e for e in logs if e.get("event") == "ui_driver.migrated_host_bail"
+    ).items()
 
 
 async def test_image_batch_is_refused_on_the_migrated_host_before_any_submit(
@@ -432,3 +452,84 @@ async def test_a_cancelled_migrated_image_run_still_parks_inline(
 
     assert page.url == "about:blank"
     assert transport._deferred_park_pending is True  # noqa: SLF001
+
+
+def test_a_character_image_request_keeps_the_labs_driver_on_a_labs_page() -> None:
+    """Characters are driven on flow.google.com only when Flow SERVED it (#723): a page
+    served labs keeps the labs driver, which attaches them by entity id."""
+    from gflow_cli.api.transports.migrated_composer import migrated_images_prefer
+
+    assert migrated_images_prefer(_request(), page_url="about:blank", project_id=PROJECT)
+    assert not migrated_images_prefer(
+        _request(reference_entities=("entity-1",)), page_url="about:blank", project_id=PROJECT
+    )
+    assert not migrated_images_prefer(
+        _request(reference_entity_names=("Hero",)), page_url="about:blank", project_id=PROJECT
+    )
+
+
+async def test_run_images_attaches_characters_then_appends_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#723: settings, then the character chips, then the prompt AFTER them; the
+    committed entity id is handed to the submit guard as the exact character set."""
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    calls: list[str] = []
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock(side_effect=lambda *a, **k: calls.append("editor"))
+    composer.apply_image_settings = AsyncMock(side_effect=lambda *a, **k: calls.append("settings"))
+
+    async def attach(*_: Any, **kw: Any) -> tuple[str, ...]:
+        calls.append(f"attach:{kw['names']}:{kw['clear']}")
+        return ("ent-sussy",)
+
+    composer.attach_character_entities = attach
+    composer.send_prompt = AsyncMock(side_effect=lambda *a, **k: calls.append("prompt"))
+    composer.submit_images_and_observe = AsyncMock(return_value=[])
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+
+    request = _request(prompt="Sussy cooking", reference_entity_names=("Sussy",))
+    await mc.run_images(MagicMock(url="about:blank"), request, project_id=PROJECT)
+
+    assert calls == ["editor", "settings", "attach:('Sussy',):True", "prompt"]
+    assert composer.send_prompt.await_args.kwargs["append"] is True
+    kwargs = composer.submit_images_and_observe.await_args.kwargs
+    assert kwargs["reference_ids"] == ()
+    assert kwargs["entity_ids"] == ("ent-sussy",)
+
+
+def test_a_submit_carrying_a_reference_nobody_asked_for_is_refused() -> None:
+    """#723, measured live: a media chip deleted from the prompt with Backspace still rode
+    the submit's media slot, and the old guard — which only checked that the expected ids
+    were present — let five references through on a run that asked for one."""
+    from gflow_cli.api.transports.migrated_composer import _image_body_problem
+
+    leaked = submit_body(media=(MEDIA,), entities=("ent-sussy",))
+    problem = _image_body_problem(leaked, (), None, ("ent-sussy",))
+    assert problem is not None and MEDIA in problem
+
+    exact = submit_body(media=(REFERENCE,), entities=("ent-sussy",))
+    assert _image_body_problem(exact, (REFERENCE,), None, ("ent-sussy",)) is None
+    # A lost character is refused too, and so is an extra one.
+    assert _image_body_problem(submit_body(media=(REFERENCE,)), (REFERENCE,), None, ("e",))
+    assert _image_body_problem(submit_body(entities=("e", "x")), (), None, ("e",))
+
+
+def test_a_reference_named_only_in_the_prompt_is_missing_from_the_submit() -> None:
+    """Review of #979: the substring check passes an uploaded id that survives only in the
+    prompt document; the parsed media slot is what decides, and the id is named."""
+    from gflow_cli.api.transports.migrated_composer import _image_body_problem
+
+    body = submit_body(mentioned=(REFERENCE,), entities=("ent-sussy",))
+    assert REFERENCE in body
+    problem = _image_body_problem(body, (REFERENCE,), None, ("ent-sussy",))
+    assert problem is not None and f"missing: {REFERENCE}" in problem
+
+
+def test_an_unreadable_body_is_refused_only_when_references_are_expected() -> None:
+    from gflow_cli.api.transports.migrated_composer import _image_body_problem
+
+    assert _image_body_problem("ogiZ0b something else", ()) is None
+    problem = _image_body_problem(f"ogiZ0b {REFERENCE}", (REFERENCE,))
+    assert problem is not None and "could not be read" in problem

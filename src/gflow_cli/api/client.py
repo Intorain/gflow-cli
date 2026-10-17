@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import json
 import os
 import re
@@ -67,6 +68,7 @@ from gflow_cli.api.transports import (
 from gflow_cli.api.transports._common import (
     await_url_settled,
     flow_host_kind,
+    migrated_route,
     raise_if_migrated,
     safe_page_url,
 )
@@ -84,7 +86,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
-from gflow_cli.browser_manager import channel_for_profile
+from gflow_cli.browser_manager import channel_for_profile, window_position_args
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
 from gflow_cli.errors import (
@@ -99,6 +101,7 @@ from gflow_cli.errors import (
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     FlowHostMigratedError,
     NetworkError,
+    ProfileAccessError,
     ProfileLockedError,
     RateLimitError,
     SceneConcatError,
@@ -126,7 +129,7 @@ if TYPE_CHECKING:
 
     from _typeshed import DataclassInstance
 
-    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ProjectBrief
+    from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -164,6 +167,17 @@ _TARGET_CLOSED_MARKERS = (
     "Target page, context or browser has been closed",
     "Target closed",
 )
+
+
+def _is_profile_access_denied(exc: BaseException) -> bool:
+    """True when Chrome's ProcessSingleton failed because the profile is read-only.
+
+    Matches the Win32 code (ERROR_ACCESS_DENIED = 5), never the message text: Chrome
+    embeds the OS's *localized* description (``拒绝访问。 (0x5)``, ``Acesso negado.
+    (0x5)``), so only the code is the same on every Windows display language.
+    """
+    message = str(exc)
+    return "ProcessSingleton" in message and ("(0x5)" in message or "Error code: 5" in message)
 
 
 def _is_target_closed(exc: BaseException) -> bool:
@@ -520,6 +534,7 @@ class FlowApiClient:
                 "--password-store=basic",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
+                *window_position_args(self.settings.browser_window_position),
             ],
         }
         if self.settings.har_path is not None:
@@ -1109,11 +1124,20 @@ class FlowApiClient:
         return after
 
     async def _launch_persistent_context(self, kwargs: JsonObject) -> BrowserContext:
-        """Launch the persistent context; translate a launch-time crash into ProfileLockedError."""
+        """Launch the context and classify profile access versus contention failures."""
         assert self._pw is not None
         try:
             return await self._pw.chromium.launch_persistent_context(**kwargs)
         except Exception as exc:
+            # Before _is_target_closed: an access denial can arrive as a
+            # TargetClosedError too, and must not be reported as contention.
+            if _is_profile_access_denied(exc):
+                raise ProfileAccessError(
+                    detail=(
+                        f"Chrome cannot create runtime files under {self.profile_dir}; "
+                        "the directory is not writable by this process"
+                    ),
+                ) from exc
             if _is_target_closed(exc):
                 # A TargetClosedError at LAUNCH usually means the profile dir
                 # is held by another Chrome — most commonly a stale browser
@@ -2031,6 +2055,29 @@ class FlowApiClient:
         data = await self._post_json(routes.UPLOAD_IMAGE, body)
         return AssetInfo.from_upload_response(data)
 
+    async def upload_reference(self, project_id: str, path: Path) -> ImageRef:
+        """Upload a local image into ``project_id`` once, as a reference to use in place.
+
+        Returns an ``ImageRef`` for an image now in the project (``in_project=True``),
+        so every later use is a mention, never another upload (#913). The transport
+        uploads it when it drives the host Flow served (flow.google.com: the composer
+        toolbar, which names the media id and a run-unique caption); otherwise the REST
+        upload. The file is checked first either way (size, image magic bytes).
+        """
+        from gflow_cli.api.image import ImageRef  # noqa: PLC0415 - typing-only at module level
+
+        await validate_image_file(path)
+        uploader = cast(
+            "Callable[..., Awaitable[ImageRef | None]] | None",
+            getattr(self.transport, "upload_reference", None),
+        )
+        if uploader is not None:
+            ref = await uploader(project_id=project_id, path=path)
+            if ref is not None:
+                return ref
+        asset = await self.upload_image(project_id, path)
+        return ImageRef(name=asset.name, display_name=asset.display_name, in_project=True)
+
     async def download(self, name_or_url: str, out_path: Path) -> Path:
         """Download an asset (image or video) to `out_path`. Returns out_path.
 
@@ -2809,15 +2856,25 @@ class FlowApiClient:
         logger.info("scene.concat_completed", bytes=len(video_bytes))
 
         # Write via the same storage_uri-aware path as download_image.
+        target = self._write_target(out_path)
+        await write_asset_async(target, video_bytes)
+        return target
+
+    def _upscale_route(self, *, prefer_migrated: bool) -> str:
+        return migrated_route(
+            getattr(self._page, "url", None),
+            self.settings.flow_host,
+            prefer_migrated=prefer_migrated,
+        )
+
+    def _write_target(self, out_path: Path) -> AnyPath:
+        """``out_path``, or its key under the configured cloud ``storage_uri``."""
         storage_uri = self.settings.storage_uri
         if storage_uri:
             key = _storage_key_from_path(out_path, self.settings.output_dir)
-            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
-        else:
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            target = out_path
-        await write_asset_async(target, video_bytes)
-        return target
+            return storage_path(storage_uri, self.settings.output_dir, key)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        return out_path
 
     async def upsample_image(
         self,
@@ -2883,7 +2940,26 @@ class FlowApiClient:
             media_id=media_id,
             resolution=target_resolution.name,
         )
-        token = await self._mint_recaptcha_token(recaptcha_action)
+
+        migrated = functools.partial(
+            self._drive_migrated_image_upscale,
+            project_id=project_id,
+            media_id=media_id,
+            target_resolution=target_resolution,
+            out_path=out_path,
+        )
+        route = self._upscale_route(prefer_migrated=False)
+        if route == "blocked":
+            raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
+        if route == "migrated":
+            return await migrated()
+
+        try:
+            token = await self._mint_recaptcha_token(recaptcha_action)
+        except FlowHostMigratedError:
+            if self._upscale_route(prefer_migrated=True) != "migrated":
+                raise
+            return await migrated()
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
         session_id = f";{int(time.time() * 1000)}"
         try:
@@ -2899,44 +2975,15 @@ class FlowApiClient:
             # (a retry only inflates per-profile WAF heat and never succeeds).
             if target_resolution is TargetResolution.RES_4K:
                 raise UpscaleUnavailableError(
-                    detail="4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription",
+                    detail=("4K upscale rejected (HTTP 403) — requires a Flow Ultra subscription"),
                     status=403,
                     instance=_make_instance(),
                     route="upsampleImage",
                 ) from exc
             raise
 
-        resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
-        encoded = str(resp_obj.get("encodedImage") or "")
-        if not encoded:
-            raise WireFormatError(
-                detail="upsampleImage response missing encodedImage",
-                instance=_make_instance(),
-                route="upsampleImage",
-                discovery={"keys": sorted(resp_obj)},
-            )
-        if len(encoded) > MAX_UPSAMPLE_B64_LEN:
-            # Reject before decode — never log the body (mitigation: no MBs in logs).
-            raise WireFormatError(
-                detail=(
-                    f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB "
-                    "size cap"
-                ),
-                route="upsampleImage",
-            )
-        try:
-            image_bytes = base64.b64decode(encoded)
-        except ValueError as exc:  # binascii.Error subclasses ValueError
-            raise WireFormatError(
-                detail="upsampleImage returned undecodable image data",
-                route="upsampleImage",
-            ) from exc
-        del encoded, resp  # drop the multi-MB payload promptly
-        if not _is_png_or_jpeg(image_bytes):
-            raise WireFormatError(
-                detail="upscaled output is not a valid PNG/JPEG",
-                route="upsampleImage",
-            )
+        image_bytes = _decode_upsample_response(resp)
+        del resp  # drop the multi-MB payload promptly
         logger.info(
             "image.upscale_completed",
             media_id=media_id,
@@ -2944,16 +2991,102 @@ class FlowApiClient:
             bytes=len(image_bytes),
         )
 
-        storage_uri = self.settings.storage_uri
-        if storage_uri:
-            key = _storage_key_from_path(out_path, self.settings.output_dir)
-            target: AnyPath = storage_path(storage_uri, self.settings.output_dir, key)
-        else:
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            target = out_path
+        target = self._write_target(out_path)
         target = adjust_key_extension(target, image_bytes)
         await write_asset_async(target, image_bytes)
         return target
+
+    async def _drive_migrated_image_upscale(
+        self,
+        *,
+        project_id: str,
+        media_id: str,
+        target_resolution: TargetResolution,
+        out_path: Path,
+    ) -> AnyPath:
+        from gflow_cli.api.transports.migrated_upscale import upscale_image_migrated
+
+        page = await self._checkout_page()
+        try:
+            image_bytes = await upscale_image_migrated(
+                page,
+                project_id=project_id,
+                media_id=media_id,
+                target_resolution=target_resolution,
+            )
+            target = self._write_target(out_path)
+            target = adjust_key_extension(target, image_bytes)
+            await write_asset_async(target, image_bytes)
+            logger.info(
+                "image.upscale_completed",
+                media_id=media_id,
+                resolution=target_resolution.name,
+                bytes=len(image_bytes),
+            )
+            return target
+        finally:
+            self._checkin_page(page)
+
+    async def upsample_video(
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        scale: str = "1080p",
+        out_path: Path,
+    ) -> AnyPath:
+        """Upscale or export a platform-generated video to 1080p, 720p, or 270p GIF.
+
+        Drives the migrated Flow editor to export an upsampled 1080p Full HD video or
+        animated GIF. There is no labs.google route for this, so
+        ``GFLOW_CLI_FLOW_HOST=labs.google`` (the kill switch) refuses it with exit 36.
+        """
+        from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
+
+        if self._upscale_route(prefer_migrated=True) != "migrated":
+            raise FlowHostMigratedError(
+                detail=(
+                    "video upscale is driven only on flow.google.com (there is no "
+                    "labs.google route for it), and GFLOW_CLI_FLOW_HOST=labs.google "
+                    "switched that host off"
+                ),
+                remediation_hint=(
+                    "Unset GFLOW_CLI_FLOW_HOST (or set it to auto / flow.google.com) "
+                    "to export the video through flow.google.com."
+                ),
+            )
+
+        logger.info(
+            "video.upscale_started",
+            media_id=media_id,
+            scale=scale,
+        )
+        try:
+            page = await self._checkout_page()
+            try:
+                video_bytes = await upscale_video_migrated(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    scale=scale,
+                )
+                ext = ".gif" if scale.strip().lower() == "270p" else ".mp4"
+                if out_path.suffix.lower() != ext:
+                    out_path = out_path.with_suffix(ext)
+
+                target = self._write_target(out_path)
+                await write_asset_async(target, video_bytes)
+                logger.info(
+                    "video.upscale_completed",
+                    media_id=media_id,
+                    scale=scale,
+                    bytes=len(video_bytes),
+                )
+                return target
+            finally:
+                self._checkin_page(page)
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="video_upscale")
 
     async def _mint_recaptcha_token(self, action: str, *, page: Page | None = None) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
@@ -2989,18 +3122,16 @@ class FlowApiClient:
             # root grid, which is where the client-side handoff leaves the pooled
             # bootstrap page, has no script at all.
             #
-            # The migrated image path now bypasses this method through the
-            # ``uses_page_owned_image_recaptcha`` transport capability. Keep this
-            # host guard for the narrow race where a labs page hands off while a
-            # caller is already minting; the project page owns the token and the
-            # migrated composer submits ``ogiZ0b`` itself.
-            # #673: the root grid has no enterprise.js, but /project/<id> does —
-            # measured 2026-09-06 (spike_migrated_recaptcha_mint.py) and verified
-            # again 2026-09-18 for the extend lane. The guard fires only when the
-            # page is NOT on a project path, where minting is impossible.
-            if flow_host_kind(getattr(page, "url", "")) == "migrated" and "/project/" not in str(
-                getattr(page, "url", "")
-            ):
+            # Image generation no longer reaches this method on the UI transport
+            # (#891: it never read the token). The guard stays for the callers that
+            # genuinely send one -- the experimental HTTP image transports, upscale
+            # and extend -- where a labs page can hand off mid-mint.
+            # #639: the root grid has no enterprise.js, but /project/<id> does --
+            # verified again 2026-09-18 for the migrated extend lane, whose caller
+            # passes its own project page. Bail only off a project path.
+            # One url read on labs: a dead page must fail in the mint, not here (#692).
+            url = str(getattr(page, "url", ""))
+            if flow_host_kind(url) == "migrated" and "/project/" not in url:
                 raise_if_migrated(page, at="mint_recaptcha_token")
             # Patchright evaluates in an isolated world by default, where the
             # page's main-world ``grecaptcha`` global is undefined; the resolver
@@ -3008,15 +3139,12 @@ class FlowApiClient:
             minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
             try:
                 return await minter.mint(action)
-            # Deliberately broad. `TokenMinter.mint` guards only its SECOND
-            # evaluate: `site_key()` -> `discover_site_key` runs an unguarded
-            # `page.evaluate`, and the minter is rebuilt per call so `_site_key`
-            # is always None and that unguarded call runs every time. A hop
-            # mid-mint destroys the execution context, so the likeliest shape of
-            # this failure is a RAW Playwright error, not RecaptchaError —
-            # catching only the latter would miss the very race this exists for.
-            # Nothing is swallowed: the original propagates untouched unless the
-            # page turns out to be migrated.
+            # Deliberately broad. Both of `TokenMinter`'s evaluates now raise
+            # `RecaptchaError` (#915; the site-key read was unguarded until then and
+            # surfaced a RAW Playwright error), but the minter is not the only code in
+            # this block, and the re-classification below must see any failure a hop
+            # mid-mint can cause. Nothing is swallowed: the original propagates
+            # untouched unless the page turns out to be migrated.
             except Exception:
                 # #692: the guard above is a point-in-time read, and the handoff
                 # to flow.google.com is a CLIENT-SIDE navigation that can land
@@ -3081,12 +3209,14 @@ class FlowApiClient:
         on_checkpoint: GenerationCheckpointObserver | None = None,
         name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
-        """Mint a token, call the transport once, and return all images.
+        """Call the transport once and return all images, minting first only for a
+        transport that sends the token itself.
 
         ``req.count`` controls how many images Flow generates (1–4). The UI
         transport clicks the matching x{N} tab so one submission produces N
         images; other transports may fan-out internally, but that is their
-        concern. This method is the single place reCAPTCHA minting happens.
+        concern. The UI transport never reads ``recaptcha_token`` (#891), so it
+        gets no client mint; the HTTP image transports do.
 
         ``on_checkpoint`` (Task C1) receives a ``submit_attempted`` observation
         immediately before the credit-spending transport call, then a
@@ -3100,10 +3230,12 @@ class FlowApiClient:
             )
         page_owned = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
         if callable(page_owned) and page_owned():
-            # The migrated Angular page mints and submits its own token on ogiZ0b.
-            # Minting here first is not only redundant: the pooled bootstrap page is
-            # flow.google.com/ (no enterprise.js), while /project/<id> is the page that
-            # owns the script. Let the transport navigate before Flow spends a token.
+            # #891: a transport that drives Flow's own page never reads
+            # `recaptcha_token` -- the page mints its own on click -- so a client
+            # mint here is dead weight at best. At worst it runs on whatever page the
+            # pool hands out, which after a successful migrated run is about:blank,
+            # and turns the transport's precise exit 36 into a misleading
+            # RecaptchaError. Unported forms are refused by the transport's router.
             req_with_token = req
         else:
             token = await self._mint_recaptcha_token(recaptcha_action)
@@ -4176,6 +4308,41 @@ def _build_wire_format_discovery(resp: Any, body_text: str, route: str) -> JsonO
     }
 
 
+def _decode_upsample_response(resp: object) -> bytes:
+    """The PNG/JPEG bytes in an ``upsampleImage`` reply; the base64 is never logged."""
+    resp_obj: JsonObject = cast("JsonObject", resp) if isinstance(resp, dict) else {}
+    encoded = str(resp_obj.get("encodedImage") or "")
+    if not encoded:
+        raise WireFormatError(
+            detail="upsampleImage response missing encodedImage",
+            instance=_make_instance(),
+            route="upsampleImage",
+            discovery={"keys": sorted(resp_obj)},
+        )
+    if len(encoded) > MAX_UPSAMPLE_B64_LEN:
+        # Reject before decode — never log the body (mitigation: no MBs in logs).
+        raise WireFormatError(
+            detail=(
+                f"upscaled image exceeds the {MAX_UPSAMPLE_B64_LEN // (1024 * 1024)} MB size cap"
+            ),
+            route="upsampleImage",
+        )
+    try:
+        image_bytes = base64.b64decode(encoded)
+    except ValueError as exc:  # binascii.Error subclasses ValueError
+        raise WireFormatError(
+            detail="upsampleImage returned undecodable image data",
+            route="upsampleImage",
+        ) from exc
+    del encoded  # drop the multi-MB payload promptly
+    if not _is_png_or_jpeg(image_bytes):
+        raise WireFormatError(
+            detail="upscaled output is not a valid PNG/JPEG",
+            route="upsampleImage",
+        )
+    return image_bytes
+
+
 def _is_png_or_jpeg(data: bytes) -> bool:
     """True if *data* begins with a PNG or JPEG magic-byte signature.
 
@@ -4222,6 +4389,41 @@ def _extract_provider_error_message(body_text: str) -> str | None:
         return detail.strip()
 
     return None
+
+
+#: Flow's own words when a labs tRPC route is retired. Measured 2026-09-20 on
+#: ``projectInitialData`` (profile denon82, healthy session, 57 context cookies):
+#: HTTP 404, body ``{"error":{"json":{"message":"Flow RPCs have been deprecated and
+#: disabled. Flow has migrated to https://flow.google.com.","code":-32004,...``
+#: Keyed on THAT MESSAGE — never on which host an account is served, and never on a
+#: route allowlist, so a route we have not observed yet is covered the day Flow
+#: retires it (#875, AGENTS.md "Host-Membership Discipline").
+_LABS_RPC_RETIRED_MARKER = "flow rpcs have been deprecated"
+
+
+def _labs_rpc_retired_hint(body_text: str, *, route: str) -> str | None:
+    """Remediation for a labs tRPC route Flow has retired, or ``None``.
+
+    ``WireFormatError``'s class default tells the user to check the payload, retry
+    with a simpler prompt and file a bug. On this response all three are wrong in
+    the same way #803 and #789 were wrong — gflow asserting something nothing
+    measured. The route is gone, ``gflow character list`` has no prompt to simplify,
+    and Flow documents the condition in the very body we are classifying.
+    """
+    if _LABS_RPC_RETIRED_MARKER not in body_text.lower():
+        return None
+    # Deliberately suggests no setting. GFLOW_CLI_FLOW_HOST=flow.google.com was
+    # MEASURED not to help (2026-09-20, denon82, `character list`): the same 404
+    # comes back, because this read has no migrated arm to route to. Naming it
+    # here would repeat the mistake this hint exists to fix — advice nothing
+    # measured, on the field a user checks to find out what to do next.
+    return (
+        f"Flow has retired this labs route ({route}) — the request payload is fine, "
+        f"there is no prompt to simplify, and there is no bug to file. Flow has moved "
+        f"to flow.google.com, and gflow has not ported this read to that frontend yet, "
+        f"so the command has no working path today. Track "
+        f"https://github.com/ffroliva/gflow-cli/issues/639 for the port."
+    )
 
 
 def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
@@ -4295,6 +4497,8 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             status=resp.status,
             instance=instance,
             route=route,
+            # None keeps the class default for every other 4xx (#875).
+            remediation_hint=_labs_rpc_retired_hint(body_text, route=route),
             discovery=_build_wire_format_discovery(resp, body_text, route),
         )
 

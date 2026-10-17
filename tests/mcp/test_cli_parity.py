@@ -60,6 +60,8 @@ CLI_TO_MCP: dict[str, str] = {
     # recover an asset the user already paid for. An agent whose generation died at the
     # download is stranded exactly as a CLI user is, so this one is NOT exempt (#865).
     "data download": "gflow_download_media",
+    "image upscale": "gflow_upscale_image",
+    "video upscale": "gflow_upscale_video",
     "project list": "gflow_list_projects",
     "instructions list": "gflow_instructions_list",
     "instructions add": "gflow_instructions_add",
@@ -94,6 +96,11 @@ _MCP_EXEMPT: dict[str, str] = {
     "auth list": "interactive session management",
     "auth login": "interactive session management",
     "auth logout": "interactive session management",
+    # Not interactive, but an agent reaches the renewal where it pays off: an expired
+    # session surfaces as a credits failure, and gflow_get_credits(refresh=true) renews
+    # it with the same `auth/renew.py`. Revisit if an agent needs to renew without a
+    # credits read (e.g. a scheduled keep-alive over MCP).
+    "auth renew": "reached over MCP as gflow_get_credits(refresh=true)",
     "auth use": "interactive session management",
     "mcp run": "the MCP server bootstrap itself",
     "mcp setup": "client-config generator for the MCP server itself",
@@ -105,7 +112,7 @@ _MCP_EXEMPT: dict[str, str] = {
         "would be harmless and is the upgrade path if agents ever need it"
     ),
     "models": "informational; models are enumerated in the generate tools' descriptions",
-    "run": "chain-manifest runner — not yet ported",
+    "run": "image-batch config runner (rows, batch:N and local-file refs) — not yet ported",
     "character create": (
         "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
         "gflow_generate_image spends the same per-model image quota over MCP. "
@@ -143,7 +150,6 @@ _MCP_EXEMPT: dict[str, str] = {
     "doctor": "interactive diagnostic; MCP tool deferred (#542)",
     "image batch": "batch pipelines — not yet ported",
     "image upload": "asset upload — covered indirectly by reference_images paths",
-    "image upscale": "not yet ported",
     "video chain": "chain pipeline — not yet ported",
     "movie run": "movie pipeline — not yet ported (skills-audit Task 7 backlog)",
     "movie template": "movie pipeline — not yet ported (skills-audit Task 7 backlog)",

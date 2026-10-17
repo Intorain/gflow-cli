@@ -36,8 +36,10 @@ from gflow_cli._cli_helpers import _FLOW_ID_RE
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
+from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.video import VIDEO_DURATION_CHOICES, is_media_uuid
 from gflow_cli.auth import verification
+from gflow_cli.cli_image import lookup_project_in_catalog
 from gflow_cli.cli_instructions import classify_refs
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, AssetLookup
@@ -757,14 +759,17 @@ def _build_video_media_inputs(
     description=(
         "Generate an image using Google Flow's Imagen model. "
         "Produces 1-4 images from a text prompt. "
-        "Models: nano2 (fast), nano-pro (balanced), image4 (highest quality). "
+        "Models: nano2 (fast), nano2-lite (lightweight), nano-pro (balanced), "
+        "image4 (highest quality). "
         "Aspects: 1:1, 9:16, 16:9, 4:3, 3:4. "
         "The prompt supports @AssetName mentions to tag saved project characters/assets by name "
         "(resolves to referenceEntities/referenceImages). Reference a SAVED named asset via "
         "@Name; reference an arbitrary one-off image via reference_images. See "
         "docs/REFERENCE_STRATEGIES.md. "
         "On accounts served from flow.google.com, use an existing project and local "
-        "reference files; UUID/entity references and image4 are not ported to that "
+        "reference files. A character attaches there by name (@Name, or "
+        "reference_entities paired with reference_entity_names); UUID media "
+        "references, an entity id without a name, and image4 are not ported to that "
         "composer yet and fail before submit; retrying will not clear it. "
         "Returns local file paths to the generated images."
     ),
@@ -796,7 +801,7 @@ async def gflow_generate_image(
             referenceEntities / referenceImages, deduped against reference_images). Use
             ``@Name`` for a saved named asset; use ``reference_images`` for an arbitrary
             one-off image. See ``docs/REFERENCE_STRATEGIES.md``.
-        model: Model to use — 'nano2', 'nano-pro', or 'image4'.
+        model: Model to use — 'nano2', 'nano2-lite', 'nano-pro', or 'image4'.
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
         seed: Optional random seed for reproducibility.
@@ -948,6 +953,7 @@ def _build_video_payload(
     count: int,
     model: str | None,
     duration: int | None,
+    resolution: str | None,
     tool_specs: Any,
     project: str | None,
     project_name: str | None,
@@ -968,6 +974,8 @@ def _build_video_payload(
         payload["model"] = model
     if duration is not None:
         payload["duration"] = duration
+    if resolution is not None:
+        payload["resolution"] = resolution
     if tool_specs:
         payload["tool_specs"] = list(tool_specs)
     if project is not None:
@@ -1013,6 +1021,7 @@ async def gflow_generate_video(  # NOSONAR
     reference_entity_names: list[str] | None = None,
     model: str | None = None,
     duration: int | None = None,
+    resolution: str | None = None,
     count: int = 1,
     tools: list[dict[str, Any]] | None = None,
     profile: str = _DEFAULT_PROFILE,
@@ -1065,6 +1074,10 @@ async def gflow_generate_video(  # NOSONAR
             omitted — Flow offers reference-to-video at its base tier alone, and at
             4 or 6 it drops the references and bills a text-to-video clip instead of
             refusing; any other value returns the exit-11-equivalent envelope.
+        resolution: Optional video resolution — '360p' or '720p' (omni-flash only,
+            mirrors the CLI ``--resolution``). When omitted, Flow's default applies. On any
+            other model, or on the labs editor, the job fails pre-submit with the
+            exit-11-equivalent envelope and no credits spent.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
@@ -1201,6 +1214,7 @@ async def gflow_generate_video(  # NOSONAR
         count=count,
         model=model,
         duration=duration,
+        resolution=resolution,
         tool_specs=tool_specs,
         project=project,
         project_name=project_name,
@@ -1229,6 +1243,7 @@ async def gflow_generate_video(  # NOSONAR
         "reference_images": reference_images or [],
         "model": model,
         "duration": duration,
+        "resolution": resolution,
         "count": count,
         "tools": tools or [],
         "tool_specs": list(tool_specs),
@@ -1265,24 +1280,29 @@ async def gflow_list_tools() -> dict[str, Any]:
     name="gflow_get_credits",
     description=(
         "Read the current Google Flow credit balance for one saved profile or all profiles. "
-        "This is read-only and spends no credits. Set all_profiles=true when choosing an "
-        "account for generation; partial profile failures remain visible in the result."
+        "Spends no credits. Set all_profiles=true when choosing an "
+        "account for generation; partial profile failures remain visible in the result. "
+        "Set refresh=true to renew an expired session (rewrites that profile's saved "
+        "cookies) in a headless browser and ask again "
+        "(slower — one Chrome launch per expired profile; a revoked session still needs "
+        "`gflow auth login`)."
     ),
 )
 @_guarded
 async def gflow_get_credits(
     profile: str = _DEFAULT_PROFILE,
     all_profiles: bool = False,
+    refresh: bool = False,
 ) -> dict[str, Any]:
     """Inspect current Flow credits through the shared CLI service."""
 
     if all_profiles:
-        return await inspect_all_credit_profiles()
+        return await inspect_all_credit_profiles(refresh=refresh)
     resolved = _resolve_and_validate_profile(profile)
     if isinstance(resolved, dict):
         return resolved
     async with _profile_lock(resolved):
-        return await inspect_credit_profile(resolved)
+        return await inspect_credit_profile(resolved, refresh=refresh)
 
 
 def _character_to_dict(char: Any) -> dict[str, Any]:
@@ -1442,7 +1462,11 @@ async def gflow_character_show(
         "Spends no credits: the generation was already paid for. The bytes are verified "
         "against the size Flow reports before the file is written. Video only: an image "
         "media ID is refused immediately (exit 11) because the signed URL this needs "
-        "comes from a record only a clip's route emits. See issue #877."
+        "comes from a record only a clip's route emits. See issue #877. "
+        "The transfer already retries a dropped connection internally, so a failure "
+        "marked retryable means wait a moment and call again — never immediately, and "
+        "never in a tight loop: each call opens a browser under a per-profile lease, and "
+        "a second concurrent call fails on that lease instead (exit 11)."
     ),
 )
 @_guarded
@@ -1478,6 +1502,190 @@ async def gflow_download_media(
         "project_id": result.project_id,
         "path": str(result.path),
         "bytes": result.bytes,
+    }
+
+
+@server.tool(
+    name="gflow_upscale_image",
+    description=(
+        "Upscale a platform-generated Flow image to 2K or 4K and save it locally. "
+        "media_id is the UUID of the image to upscale. "
+        "scale is '2k' or '4k' (4k requires Ultra subscription; Pro/Plus accounts support 2k). "
+        "project is optional (resolved from the local catalog when omitted). "
+        "out_dir is the output directory (defaults to configured images directory). "
+        "profile selects the auth profile (defaults to the active profile). "
+        "Spends no credits: image upscale is free."
+    ),
+)
+@_guarded
+async def gflow_upscale_image(
+    media_id: str,
+    scale: str = "2k",
+    project: str | None = None,
+    out_dir: str | None = None,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Upscale a platform-generated image to 2K or 4K.
+
+    Args:
+        media_id: The Flow media ID (UUID) of the generated image.
+        scale: Target resolution: '2k' or '4k' (4k is Ultra-only).
+        project: Project UUID that owns the media. Resolved from local catalog when omitted.
+        out_dir: Output directory (defaults to configured images directory).
+        profile: Profile name (overrides default).
+
+    Returns:
+        Dict with status, media_id, project_id, scale, path, and size bytes.
+    """
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+
+    try:
+        resolution = TargetResolution.from_cli(scale)
+    except ValueError as exc:
+        return _bad_param("Invalid Scale", str(exc))
+
+    return await _run_upscale_tool(
+        kind="image",
+        profile=resolved,
+        media_id=media_id,
+        project=project,
+        out_dir=out_dir,
+        scale_label=scale.strip().lower(),
+        ext="png",
+        upscale=lambda client, project_id, out_path: client.upsample_image(
+            media_id=media_id,
+            project_id=project_id,
+            target_resolution=resolution,
+            out_path=out_path,
+        ),
+    )
+
+
+@server.tool(
+    name="gflow_upscale_video",
+    description=(
+        "Upscale or export a platform-generated Flow video to 1080p Full HD (or 270p GIF). "
+        "media_id is the UUID of the video to upscale. "
+        "scale is '1080p' (Full HD), '720p' (original), or '270p' (animated GIF). "
+        "project is optional (resolved from the local catalog when omitted). "
+        "out_dir is the output directory (defaults to configured videos directory). "
+        "profile selects the auth profile (defaults to the active profile). "
+        "flow.google.com only (GFLOW_CLI_FLOW_HOST=labs.google refuses it). "
+        "Measured free (1 observation, 2026-10-07): the 1080p export spent no credits."
+    ),
+)
+@_guarded
+async def gflow_upscale_video(
+    media_id: str,
+    scale: str = "1080p",
+    project: str | None = None,
+    out_dir: str | None = None,
+    profile: str = _DEFAULT_PROFILE,
+) -> dict[str, Any]:
+    """Upscale or export a platform-generated video to 1080p, 720p, or 270p.
+
+    Driven on flow.google.com only. Measured free (1 observation, 2026-10-07), so this
+    tool is deliberately not in ``_SPEND_TOOLS``.
+
+    Args:
+        media_id: The Flow media ID (UUID) of the generated video.
+        scale: Target quality: '1080p' (enhanced), '720p' (original), or '270p' (GIF).
+        project: Project UUID that owns the media. Resolved from local catalog when omitted.
+        out_dir: Output directory (defaults to configured videos directory).
+        profile: Profile name (overrides default).
+
+    Returns:
+        Dict with status, media_id, project_id, scale, path, and size bytes.
+    """
+    resolved = _resolve_and_validate_profile(profile)
+    if isinstance(resolved, dict):
+        return resolved
+
+    scale_label = scale.strip().lower()
+    from gflow_cli.api.transports.migrated_video_upscale import VALID_VIDEO_SCALES
+
+    if scale_label not in VALID_VIDEO_SCALES:
+        msg = f"Scale must be one of {VALID_VIDEO_SCALES}, got {scale!r}"
+        return _bad_param("Invalid Scale", msg)
+
+    return await _run_upscale_tool(
+        kind="video",
+        profile=resolved,
+        media_id=media_id,
+        project=project,
+        out_dir=out_dir,
+        scale_label=scale_label,
+        ext="gif" if scale_label == "270p" else "mp4",
+        upscale=lambda client, project_id, out_path: client.upsample_video(
+            media_id=media_id,
+            project_id=project_id,
+            scale=scale_label,
+            out_path=out_path,
+        ),
+    )
+
+
+async def _run_upscale_tool(
+    *,
+    kind: str,
+    profile: str,
+    media_id: str,
+    project: str | None,
+    out_dir: str | None,
+    scale_label: str,
+    ext: str,
+    upscale: Callable[[FlowApiClient, str, Path], Awaitable[Any]],
+) -> dict[str, Any]:
+    """Shared tail of the upscale tools: validate ids, resolve the project, run, report."""
+    if not is_media_uuid(media_id):
+        return _bad_param("Invalid Media ID", f"Media ID {media_id!r} is not a valid UUID")
+
+    if (proj_err := _validate_project(project)) is not None:
+        return proj_err
+
+    resolved_project = project or lookup_project_in_catalog(media_id, profile)
+    if not resolved_project:
+        return _bad_param(
+            "Project Required",
+            f"Could not resolve the owning project for media {media_id!r} from the local catalog "
+            f"(profile {profile!r}). Pass project parameter explicitly.",
+        )
+
+    settings = get_settings()
+    profile_dir = settings.profile_subdir(profile)
+    output_root = Path(out_dir) if out_dir is not None else settings.output_dir
+    from datetime import date
+
+    out_path = (
+        output_root / f"{kind}s" / date.today().isoformat() / f"{media_id}_{scale_label}.{ext}"
+    )
+
+    log.info(f"mcp.tool.upscale_{kind}", media_id=media_id, scale=scale_label, profile=profile)
+    async with (
+        _profile_lock(profile),
+        FlowApiClient(
+            profile_dir=profile_dir,
+            headless=settings.headless,
+            out_dir=output_root,
+        ) as client,
+    ):
+        target = await upscale(client, resolved_project, out_path)
+
+    from gflow_cli.storage import is_cloud_path
+
+    target_path = Path(str(target))
+    file_bytes = (
+        target_path.stat().st_size if target_path.exists() and not is_cloud_path(target) else 0
+    )
+    return {
+        "status": "ok",
+        "media_id": media_id,
+        "project_id": resolved_project,
+        "scale": scale_label,
+        "path": str(target),
+        "bytes": file_bytes,
     }
 
 
@@ -2047,6 +2255,8 @@ __all__ = [
     "gflow_list_tools",
     "gflow_list_projects",
     "gflow_download_media",
+    "gflow_upscale_image",
+    "gflow_upscale_video",
     "gflow_auth_status",
     "gflow_instructions_list",
     "gflow_instructions_add",

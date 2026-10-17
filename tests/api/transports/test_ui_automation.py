@@ -41,7 +41,12 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
     zip_entity_refs,
 )
-from gflow_cli.errors import ContentPolicyError, UiSelectorDriftError, WafRejectionError
+from gflow_cli.errors import (
+    ContentPolicyError,
+    MentionIndexUnavailableError,
+    UiSelectorDriftError,
+    WafRejectionError,
+)
 
 # ---------------------------------------------------------------------------
 # Async helpers shared across units
@@ -231,6 +236,8 @@ class TestSetup:
                 assert call_kwargs.get("headless") is False
                 assert call_kwargs.get("viewport") == {"width": 1920, "height": 1080}
                 assert call_kwargs.get("locale") == "en-US"
+                # #923: the standalone launch honours the window position too.
+                assert "--window-position=-30000,-30000" in call_kwargs["args"]
                 assert t._owns_playwright is True  # type: ignore[attr-defined]
                 assert t._setup_done is True  # type: ignore[attr-defined]
             finally:
@@ -1396,6 +1403,27 @@ class TestGenerateImages:
             await t.generate_images(project_id="x", request=_req())
 
         attach.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_by_name_character_without_an_id_is_refused(self) -> None:
+        """A character resolved by name only (#723 fallback) has no entity id, and
+        this picker attaches by id — refuse instead of generating without it."""
+        t = UiAutomationTransport()
+        t._setup_done = True  # type: ignore[attr-defined]
+        t._page = MagicMock()  # type: ignore[attr-defined]
+        req = GenerateImageRequest(
+            prompt="Sussy cooks", model=Model.NARWHAL, reference_entity_names=("Sussy",)
+        )
+
+        with (
+            patch.object(t, "_enter_editor", new=AsyncMock()),
+            patch.object(t, "_send_prompt", new=AsyncMock()) as send,
+            patch.object(t, "_await_captured", new=AsyncMock(return_value=[_flow_200_capture()])),
+            pytest.raises(MentionIndexUnavailableError),
+        ):
+            await t.generate_images(project_id="x", request=req)
+
+        send.assert_not_awaited()
 
 
 class TestZipEntities:
@@ -2638,7 +2666,7 @@ class TestSelectorLocaleInvariance:
         """Every model entry in IMAGE_MODEL_OPTION_SELECTORS must be a non-empty tuple."""
         from gflow_cli.api.image import Model
 
-        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.HARBOR_SEAL, Model.IMAGEN_3_5):
             sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
             assert sels is not None, f"Missing entry for {model!r}"
             assert isinstance(sels, tuple), f"Entry for {model!r} must be a tuple, got {type(sels)}"
@@ -2652,10 +2680,10 @@ class TestSelectorLocaleInvariance:
             )
 
     def test_image_model_option_selectors_all_models_covered(self) -> None:
-        """All three image models must have selector entries."""
+        """All image models must have selector entries."""
         from gflow_cli.api.image import Model
 
-        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.IMAGEN_3_5):
+        for model in (Model.NARWHAL, Model.GEM_PIX_2, Model.HARBOR_SEAL, Model.IMAGEN_3_5):
             assert model in IMAGE_MODEL_OPTION_SELECTORS, (
                 f"{model!r} missing from IMAGE_MODEL_OPTION_SELECTORS"
             )
