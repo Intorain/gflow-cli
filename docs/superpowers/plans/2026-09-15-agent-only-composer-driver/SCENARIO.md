@@ -26,7 +26,7 @@ unchanged, recorder untouched) · D8 paths (downloads reuse existing writers) ·
 | 11 | D11 | i2i / refs / `--reference-entity` / instructions / i2v / r2v / extend on this composer | High | `FlowHostMigratedError` exit 36, $0, before typing | Unit |
 | 12 | D11 | `--duration` other than measured 4 s | Medium | Directive carries it; duration unverified → logged, not asserted | E2E video |
 | 13 | D3 | Non-English account (reporter is `ru`) | High | No text selectors anywhere; directive text is English — agent must still accept it. Unmeasured on non-en → record, e2e on en only | Unit (selector lint) |
-| 14 | D5 | Page opens with Agent-settings pane or a previous session's chat open | Medium | Close pane via `arrow_back` / start typing in live editor; never Save | Integration |
+| 14 | D5 | Page opens with Agent-settings pane or a previous session's chat open | Medium | Close pane via `arrow_back` / start typing in live editor; never Save (superseded by PLAN decision 1: the run Saves and restores) | Integration |
 | 15 | D5 | ProseMirror already holds a half-typed draft | Medium | Cleared before insert | Integration |
 | 16 | D9 | Out of credits at the gate | High | Existing `_raise_if_out_of_credits` → `InsufficientCreditsError` 37 | Integration |
 | 17 | D7 | Readiness: classic composer healthy | Critical (regression) | Classic path unchanged, one wait, no agent probing | Existing tests + new race test |

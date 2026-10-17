@@ -143,6 +143,31 @@ def _mcp_t2i(world: dict[str, Any]) -> None:
     )
 
 
+@when("the MCP tool gflow_generate_video runs t2v for 4 seconds at 9:16")
+def _mcp_t2v(world: dict[str, Any]) -> None:
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO", "") != "1":
+        pytest.skip("set GFLOW_CLI_E2E_RUN_VIDEO=1 to spend credits on the agent-only t2v e2e")
+    world["mcp"] = asyncio.run(
+        mcp_tools.gflow_generate_video(
+            prompt=_PROMPT,
+            mode="t2v",
+            aspect="9:16",
+            duration=4,
+            profile=os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
+            project=world["project"],
+            wait=True,
+        )
+    )
+
+
+@then("the tool reports completed with 1 video file")
+def _mcp_video_completed(world: dict[str, Any]) -> None:
+    result = world["mcp"]
+    assert result["status"] == "completed", result
+    files = [Path(p) for p in result["files"]]
+    assert len(files) == 1 and files[0].read_bytes()[4:8] == b"ftyp", files
+
+
 @when("`gflow video t2v` runs for 4 seconds at 9:16")
 def _cli_t2v(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path) -> None:
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO", "") != "1":

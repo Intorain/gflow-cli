@@ -25,3 +25,8 @@ Feature: gflow drives Flow's agent-only composer (#799)
     When `gflow video t2v` runs for 4 seconds at 9:16
     Then it exits 0 with one portrait MP4
     And the run restored the Agent-settings defaults
+
+  @e2e @e2e_video
+  Scenario: text-to-video through the MCP tool drives the same composer
+    When the MCP tool gflow_generate_video runs t2v for 4 seconds at 9:16
+    Then the tool reports completed with 1 video file
