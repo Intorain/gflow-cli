@@ -93,12 +93,12 @@ The labs arm and `extend_chain` are develop's, unchanged.
 
 ## Task 10 — gates
 
-- [ ] the AGENTS.md gate list, all green; MCP parity tests
+- [x] the AGENTS.md gate list, all green; MCP parity tests (5062 passed, 24 skipped)
 
 ---
 
 ## Definition of done
 
-- [ ] all tasks checked; `/gflow:check` green
-- [ ] the $0 `e2e_auth` test run and its result recorded
-- [ ] the paid `e2e_video` run left for the owner, with the exact command
+- [x] all tasks checked; gates green
+- [x] the $0 `e2e_auth` test run and its result recorded
+- [x] the paid `e2e_video` run left for the owner, with the exact command

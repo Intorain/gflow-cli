@@ -99,6 +99,9 @@ can stay.
 - Scene `80df52ec-b2f6-4b3b-89e0-622cdafb41e5` ("Untitled Scene …", run 7), project `95763401…`.
 - Probably scene `adbda9dd-b763-4aa8-a117-b679b0b9e53c` (run 6: `rqZuUc` went through, the
   follow-up read was aborted; the id is taken from that read's body — existence unverified).
+- Six more empty "Untitled Scene" entries from the `e2e_auth` runs of
+  `tests/e2e/test_video_extend_migrated_e2e.py` (each contract / aspect test lets the free
+  `rqZuUc` through; ids not recorded). No `fZytfe` reached Flow in any run.
 - No scene delete was attempted (gflow has no scene-delete surface); delete both from the
   Scenes tab by hand if wanted. Credits: none — no `fZytfe` reached Flow.
 
