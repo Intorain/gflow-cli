@@ -131,6 +131,7 @@ class _FakeClient:
         self._listing = listing
         self.submitted: list[dict[str, Any]] = []
         self.concat_calls = 0
+        self.downloads: list[str] = []
         self.created_scene = False
         self.scene_clips: list[Any] = []
 
@@ -147,6 +148,22 @@ class _FakeClient:
         self.created_scene = True
         return _FakeScene("aaaaaaaa-0000-0000-0000-000000000000")
 
+    async def create_scene_for_extend(
+        self, *, project_id: str, media_id: str, listing: dict[str, Any]
+    ) -> _FakeScene:
+        # Mirrors the real labs arm: resolve the owning workflow, else name --project.
+        from gflow_cli.api import video_extend
+        from gflow_cli.errors import ConfigurationError
+
+        workflow_id = video_extend.workflow_id_for_media(listing, media_id)
+        if not workflow_id:
+            msg = (
+                f"media {media_id} is not in project {project_id} "
+                "(no workflow owns it) — check --project"
+            )
+            raise ConfigurationError(msg)
+        return await self.create_scene(project_id=project_id, workflow_ids=[workflow_id])
+
     async def get_scene_workflows(self, scene_id: str, *, project_id: str) -> _FakeScene:
         return _FakeScene(scene_id, list(self.scene_clips))
 
@@ -162,11 +179,17 @@ class _FakeClient:
             unit_cost=10,
         )
 
-    async def poll_video_status(self, media_id: str, *, project_id: str) -> object:
+    async def poll_video_status(
+        self, media_id: str, *, project_id: str, workflow_id: str | None = None
+    ) -> object:
         return object()
 
     async def concatenate_scene(self, inputs: Any, *, out_path: Any) -> Any:
         self.concat_calls += 1
+        return out_path
+
+    async def download_video(self, media_id: str, out_path: Path) -> Path:
+        self.downloads.append(media_id)
         return out_path
 
 
@@ -249,9 +272,11 @@ async def test_session_refuses_when_the_balance_cannot_finish_the_run(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("segments", "concats", "downloads"), [(1, 0, 1), (2, 1, 0)])
 async def test_session_renders_when_output_is_given(
-    _patched_client: _FakeClient, tmp_path: Path
+    _patched_client: _FakeClient, tmp_path: Path, segments: int, concats: int, downloads: int
 ) -> None:
+    # One segment is downloaded directly (no concat on the migrated host); more are joined.
     from gflow_cli.cli_video import _extend_session
 
     await _extend_session(
@@ -259,7 +284,7 @@ async def test_session_renders_when_output_is_given(
         profile_dir=tmp_path,
         media_id=MEDIA,
         prompts=("a",),
-        segments=1,
+        segments=segments,
         aspect="16:9",
         jitter_range=(0.0, 0.0),
         output_file=tmp_path / "out.mp4",
@@ -269,7 +294,8 @@ async def test_session_renders_when_output_is_given(
         as_json=False,
         recorder=None,
     )
-    assert _patched_client.concat_calls == 1
+    assert _patched_client.concat_calls == concats
+    assert len(_patched_client.downloads) == downloads
 
 
 @pytest.mark.asyncio
