@@ -48,6 +48,9 @@ from gflow_cli.errors import (
 pytestmark = pytest.mark.e2e
 
 _PROMPT = "the camera keeps drifting forward, same light"
+#: The page sends fZytfe only after rqZuUc, uwAyfb and its own reCAPTCHA mint; a 15 s
+#: wait missed it once (2026-10-17). The observer caps its submit wait at 60 s anyway.
+_SUBMIT_WAIT_S = 60.0
 
 
 def _env(name: str, default: str | None = None) -> str:
@@ -119,7 +122,7 @@ async def test_e2e_extend_submit_contract_at_zero_cost(
                 media_id=media,
                 prompt=_PROMPT,
                 aspect=None,
-                poll_timeout_s=15.0,
+                poll_timeout_s=_SUBMIT_WAIT_S,
             )
     finally:
         await transport.teardown()
@@ -156,7 +159,7 @@ async def test_e2e_a_media_not_in_the_project_is_refused_before_any_click(
                 media_id=str(uuid.uuid4()),
                 prompt=_PROMPT,
                 aspect=None,
-                poll_timeout_s=15.0,
+                poll_timeout_s=_SUBMIT_WAIT_S,
             )
     finally:
         await transport.teardown()
@@ -182,7 +185,7 @@ async def test_e2e_a_foreign_aspect_is_aborted_by_the_production_guard(
                 media_id=media,
                 prompt=_PROMPT,
                 aspect=foreign,
-                poll_timeout_s=15.0,
+                poll_timeout_s=_SUBMIT_WAIT_S,
             )
     finally:
         await transport.teardown()
