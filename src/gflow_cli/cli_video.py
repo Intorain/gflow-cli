@@ -1926,10 +1926,16 @@ async def _extend_session(  # noqa: PLR0913
                         f"continuing from {source_media}"
                     )
         if not target_scene:
-            scene = await client.create_scene_for_extend(
-                project_id=project_id, media_id=media_id, listing=listing
-            )
+            workflow_id = video_extend.workflow_id_for_media(listing, media_id)
+            if not workflow_id:
+                msg = (
+                    f"media {media_id} is not in project {project_id} "
+                    "(no workflow owns it) — check --project"
+                )
+                raise ConfigurationError(msg)
+            scene = await client.create_scene(project_id=project_id, workflow_ids=[workflow_id])
             target_scene = scene.scene_id
+
         # Publish the resume handle BEFORE the first submit, so an interrupt at
         # any point has something to report rather than only on a clean failure.
         set_interrupt_context(credits_spent=0, resume_id=target_scene, segments_done=0)
@@ -1990,9 +1996,7 @@ async def _extend_session(  # noqa: PLR0913
         # and discarding them because the run did not finish wastes real money.
         if output_file is not None and result.completed_media_ids:
             if len(result.completed_media_ids) == 1:
-                # Single segment extension: download the generated segment directly
-                # into output_file. Bypasses remote concatenation queue and 401 on
-                # migrated hosts where aisandbox concatenate_scene is dead.
+                # One segment needs no server-side join: download it directly (#882).
                 await client.download_video(result.completed_media_ids[0], output_file)
                 rendered = str(output_file)
             else:

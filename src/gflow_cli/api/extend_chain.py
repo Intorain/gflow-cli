@@ -60,9 +60,7 @@ class _ExtendCapable(Protocol):
         seed: int | None = ...,
     ) -> ExtendStarted: ...
 
-    async def poll_video_status(
-        self, media_id: str, *, project_id: str, workflow_id: str | None = None
-    ) -> Any: ...
+    async def poll_video_status(self, media_id: str, *, project_id: str) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,11 +179,7 @@ async def run_extend_chain(  # noqa: PLR0913
         )
 
         try:
-            await client.poll_video_status(
-                started.media_id,
-                project_id=project_id,
-                workflow_id=started.workflow_id or None,
-            )
+            await client.poll_video_status(started.media_id, project_id=project_id)
         except (GFlowError, ValueError) as exc:
             logger.warning(
                 "extend_chain_aborted",

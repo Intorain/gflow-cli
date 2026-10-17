@@ -148,22 +148,6 @@ class _FakeClient:
         self.created_scene = True
         return _FakeScene("aaaaaaaa-0000-0000-0000-000000000000")
 
-    async def create_scene_for_extend(
-        self, *, project_id: str, media_id: str, listing: dict[str, Any]
-    ) -> _FakeScene:
-        # Mirrors the real labs arm: resolve the owning workflow, else name --project.
-        from gflow_cli.api import video_extend
-        from gflow_cli.errors import ConfigurationError
-
-        workflow_id = video_extend.workflow_id_for_media(listing, media_id)
-        if not workflow_id:
-            msg = (
-                f"media {media_id} is not in project {project_id} "
-                "(no workflow owns it) — check --project"
-            )
-            raise ConfigurationError(msg)
-        return await self.create_scene(project_id=project_id, workflow_ids=[workflow_id])
-
     async def get_scene_workflows(self, scene_id: str, *, project_id: str) -> _FakeScene:
         return _FakeScene(scene_id, list(self.scene_clips))
 
@@ -179,9 +163,7 @@ class _FakeClient:
             unit_cost=10,
         )
 
-    async def poll_video_status(
-        self, media_id: str, *, project_id: str, workflow_id: str | None = None
-    ) -> object:
+    async def poll_video_status(self, media_id: str, *, project_id: str) -> object:
         return object()
 
     async def concatenate_scene(self, inputs: Any, *, out_path: Any) -> Any:
@@ -276,7 +258,7 @@ async def test_session_refuses_when_the_balance_cannot_finish_the_run(
 async def test_session_renders_when_output_is_given(
     _patched_client: _FakeClient, tmp_path: Path, segments: int, concats: int, downloads: int
 ) -> None:
-    # One segment is downloaded directly (no concat on the migrated host); more are joined.
+    # One segment is downloaded directly (no server-side join); more are joined.
     from gflow_cli.cli_video import _extend_session
 
     await _extend_session(
@@ -505,6 +487,20 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     assert payload["aborted"] is True
     assert payload["segments_completed"] == 1
     assert payload["credits_spent"] == 10
+    # The video_result shape t2v/i2v emit, so one parser reads all three (#882, @stgmt).
+    assert payload["status"] == "fail"
+    assert payload["succeeded"] is False
+    assert payload["media_id"] == "m1"
+    assert payload["request"]["mode"] == "extend"
+
+
+def test_json_mode_prints_no_human_plan(runner: CliRunner) -> None:
+    """The plan preamble on stdout corrupted the JSON document (#882, @stgmt)."""
+    result = runner.invoke(
+        cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, "--dry-run", "--json"]
+    )
+    assert result.exit_code == 0
+    assert "Extend plan" not in result.output
 
 
 @pytest.mark.asyncio
