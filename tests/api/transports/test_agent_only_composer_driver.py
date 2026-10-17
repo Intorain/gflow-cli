@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -808,6 +808,8 @@ async def test_a_form_only_the_agent_composer_takes_is_not_refused_up_front(
     [
         image_api.GenerateImageRequest(prompt="x", ref_paths=(MagicMock(),)),
         image_api.GenerateImageRequest(prompt="x", reference_entities=("e1",)),
+        # Names only: nothing here attaches a character, so driving on would bill without it.
+        image_api.GenerateImageRequest(prompt="x", reference_entity_names=("Ada",)),
         image_api.GenerateImageRequest(prompt="x", model=image_api.Model.IMAGEN_3_5),
     ],
 )
@@ -826,6 +828,7 @@ async def test_unported_image_forms_are_refused(request_: Any) -> None:
         {"count": 2},
         {"aspect": video_api.Aspect.SQUARE},
         {"reference_entities": ("e1",)},
+        {"reference_entity_names": ("Ada",)},
         # The agent pane has no resolution control: driving on would silently drop it.
         {"resolution": "720p"},
     ],
@@ -847,6 +850,138 @@ async def test_unported_video_forms_are_refused(changes: dict[str, Any]) -> None
             on_started=None,
         )
     page.locator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The classic composer attaches a named character; the agent-only one cannot, so a
+    request it is routed to refuses (exit 36) rather than billing without the character."""
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    async def agent_only(*_: Any, **__: Any) -> str:
+        return "agent_only"
+
+    monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", agent_only)
+    page = MagicMock(url="https://flow.google.com/project/p1")
+    with pytest.raises(FlowHostMigratedError, match="character"):
+        await mc.run_images(
+            page,
+            image_api.GenerateImageRequest(prompt="x", reference_entity_names=("Ada",)),
+            project_id="p1",
+        )
+    with pytest.raises(FlowHostMigratedError, match="character"):
+        await mc.run_video(
+            page,
+            video_api.GenerateVideoRequest(prompt="x", reference_entity_names=("Ada",)),
+            project_id="p1",
+            out_dir=None,
+            poll_timeout_s=5,
+            download=False,
+            on_started=None,
+        )
+    page.locator.assert_not_called()
+
+
+# --- Playwright failures become typed errors ------------------------------------------------
+
+
+def _clicks_time_out() -> MagicMock:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count = AsyncMock(return_value=0)
+    loc.click = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout 5000ms exceeded"))
+    loc.last = loc.first = loc
+    loc.locator.return_value = loc
+    page.locator.return_value = loc
+    return page
+
+
+@pytest.mark.asyncio
+async def test_an_approve_click_that_times_out_is_an_after_submit_failure() -> None:
+    """The gate is answered AFTER the submit: a raw timeout would read as retryable drift."""
+    with pytest.raises(FlowAgentUiError) as exc:
+        await aoc.AgentOnlyComposer()._approve_gate(_clicks_time_out(), 0)  # pyright: ignore[reportPrivateUsage]
+    _assert_not_retried(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_a_pane_click_that_times_out_is_drift() -> None:
+    page = _clicks_time_out()
+    page.locator.return_value.count = AsyncMock(side_effect=[0, 1])
+    with pytest.raises(UiSelectorDriftError):
+        await aoc.AgentOnlyComposer()._open_pane(page)  # pyright: ignore[reportPrivateUsage]
+
+
+# --- image size and orientation -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_size_probe_that_raises_is_unknown_not_fatal() -> None:
+    from playwright.async_api import Error as PlaywrightError
+    from structlog.testing import capture_logs
+
+    page = MagicMock()
+    page.evaluate = AsyncMock(side_effect=PlaywrightError("Target closed"))
+    with capture_logs() as logs:
+        size = await aoc._natural_size(page, "https://flow.google.com/asb/x=s0")  # pyright: ignore[reportPrivateUsage]
+    assert size == (0, 0)
+    (warned,) = [e for e in logs if e["event"] == "migrated.agent_only.image_size_unknown"]
+    assert warned["src_kind"] == "flow.google.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("src", ["", "not-a-url"])
+async def test_an_odd_src_does_not_crash_the_size_warning(src: str) -> None:
+    page = MagicMock()
+    page.evaluate = AsyncMock(return_value=[0, 0])
+    assert await aoc._natural_size(page, src) == (0, 0)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("aspect", "size", "warned"),
+    [
+        (image_api.Aspect.PORTRAIT, (1200, 896), True),
+        (image_api.Aspect.PORTRAIT, (896, 1200), False),
+        (image_api.Aspect.SQUARE, (1024, 1024), False),
+        (image_api.Aspect.SQUARE, (1200, 896), True),
+        (image_api.Aspect.LANDSCAPE, (0, 0), False),  # unknown size: nothing to compare
+    ],
+)
+async def test_an_image_in_the_wrong_orientation_is_warned_about_and_kept(
+    page: Page,
+    monkeypatch: pytest.MonkeyPatch,
+    aspect: image_api.Aspect,
+    size: tuple[int, int],
+    warned: bool,
+) -> None:
+    """PREDICT mitigation 2: the directive asks for an aspect the agent may ignore. The
+    run is already billed and the file is valid, so a mismatch warns and keeps it."""
+    from structlog.testing import capture_logs
+
+    from gflow_cli.config import reset_settings
+
+    async def sized(*_: Any) -> tuple[int, int]:
+        return size
+
+    monkeypatch.setattr(aoc, "_natural_size", sized)
+    monkeypatch.setenv("GFLOW_CLI_AGENT_CONFIRM", "account")
+    reset_settings()
+    await _load(page, kind="image")
+    with capture_logs() as logs:
+        (image,) = await aoc.run_agent_images(
+            page, image_api.GenerateImageRequest(prompt="x", aspect=aspect), project_id="p1"
+        )
+    assert image.dimensions == size
+    hits = [e for e in logs if e["event"] == "migrated.agent_only.aspect_mismatch"]
+    assert bool(hits) is warned
+    if warned:
+        assert hits[0]["requested"] == aspect.value
+        assert hits[0]["got"] == f"{size[0]}x{size[1]}"
 
 
 @pytest.mark.parametrize(

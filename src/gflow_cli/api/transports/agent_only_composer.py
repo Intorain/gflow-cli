@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
@@ -65,7 +66,7 @@ from gflow_cli.redaction import redact_sensitive_text
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable
 
-    from playwright.async_api import Page
+    from playwright.async_api import Locator, Page
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
@@ -135,7 +136,6 @@ _TILES_JS = r"""
     poster: img ? (img.currentSrc || img.src || '') : '',
     video: vid ? (vid.currentSrc || vid.src || '') : '',
     id: img ? (img.dataset.mediaId || '') : '',
-    w: img ? img.naturalWidth : 0, h: img ? img.naturalHeight : 0,
   }];
 })
 """
@@ -177,8 +177,6 @@ class TileMedia:
 
     uuid: str
     src: str
-    width: int = 0
-    height: int = 0
 
 
 @dataclass(frozen=True)
@@ -251,6 +249,14 @@ def _tile_key(tile: dict[str, str]) -> str:
     return tile["video"] or tile["img"]
 
 
+async def _click(target: Locator, what: str, timeout: int = 4000) -> None:
+    """A pre-submit click: a Playwright failure here is drift (exit 23), nothing was sent."""
+    try:
+        await target.click(timeout=timeout)
+    except PlaywrightError as exc:
+        raise UiSelectorDriftError(detail=f"agent-only composer: could not click {what}") from exc
+
+
 class AgentOnlyComposer:
     """Agent settings in and out, directive in, finished tiles out."""
 
@@ -265,8 +271,13 @@ class AgentOnlyComposer:
             raise UiSelectorDriftError(
                 detail=f"agent-only composer: Agent settings button ({SETTINGS_BUTTON}) missing"
             )
-        await button.click(timeout=5000)
-        await pane.first.wait_for(state="visible", timeout=int(PANE_S * 1000))
+        await _click(button, "the Agent settings button", timeout=5000)
+        try:
+            await pane.first.wait_for(state="visible", timeout=int(PANE_S * 1000))
+        except PlaywrightError as exc:
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: Agent settings ({PANE}) did not open"
+            ) from exc
 
     async def _checked_index(self, page: Page, group: int) -> int:
         index = (
@@ -293,7 +304,7 @@ class AgentOnlyComposer:
         first = target.first
         if await first.get_attribute("aria-checked") == "true":
             return
-        await first.click(timeout=4000)
+        await _click(first, f"the {named} radio {radio!r}")
         # Angular re-renders `aria-checked` after the click, not during it — a read in the
         # same tick saw the old value on a live restore (2026-09-15) and left the account
         # on the run's defaults.
@@ -321,7 +332,7 @@ class AgentOnlyComposer:
 
         if hit(await picker.inner_text()):
             return
-        await picker.click(timeout=4000)
+        await _click(picker, f"the {section} model picker")
         items = page.locator(MENU_ITEM)
         try:
             await items.first.wait_for(state="visible", timeout=5000)
@@ -340,7 +351,7 @@ class AgentOnlyComposer:
                 ),
                 remediation_hint="Pass a --model that names one offered entry, or omit it.",
             )
-        await items.nth(hits[0]).click(timeout=4000)
+        await _click(items.nth(hits[0]), f"the {section} model {offered[hits[0]]!r}")
         # A click can report success and fire nothing; generating on the previous model
         # would bill at the wrong tier with no error, so the picker must read back the hit.
         deadline = time.monotonic() + RADIO_SETTLE_S
@@ -385,7 +396,12 @@ class AgentOnlyComposer:
                 detail=f"agent-only composer: no single {confirm!r} confirm radio in Agent settings"
             )
         if not await radio.is_checked():
-            await radio.check(timeout=4000)
+            try:
+                await radio.check(timeout=4000)
+            except PlaywrightError as exc:
+                raise UiSelectorDriftError(
+                    detail=f"agent-only composer: could not check the {confirm!r} confirm radio"
+                ) from exc
 
     async def apply_defaults(
         self,
@@ -455,9 +471,7 @@ class AgentOnlyComposer:
         for tile in await page.evaluate(_TILES_JS):
             uuid = _tile_uuid(tile, "image") if tile["tile"] == "flow-image-tile" else None
             if uuid:
-                found.setdefault(
-                    uuid, TileMedia(uuid, tile["poster"], int(tile["w"]), int(tile["h"]))
-                )
+                found.setdefault(uuid, TileMedia(uuid, tile["poster"]))
         return found
 
     async def _hover_video_src(self, page: Page) -> str:
@@ -494,7 +508,15 @@ class AgentOnlyComposer:
         return ""
 
     async def _approve_gate(self, page: Page, baseline_gates: int) -> None:
-        await page.locator(LIVE_GATE).last.locator(APPROVE_ROW).first.click(timeout=5000)
+        try:
+            await page.locator(LIVE_GATE).last.locator(APPROVE_ROW).first.click(timeout=5000)
+        except PlaywrightError as exc:
+            # After the submit: whether the gate took the click is unknown, so never retry.
+            raise FlowAgentUiError(
+                detail="agent-only composer: could not approve the credit confirmation",
+                retryable=False,
+                remediation_hint=_AFTER_SUBMIT_HINT,
+            ) from exc
         deadline = time.monotonic() + GATE_SETTLE_S
         while await page.locator(LIVE_GATE).count() > baseline_gates:
             if time.monotonic() >= deadline:
@@ -537,7 +559,7 @@ class AgentOnlyComposer:
         editor = page.locator(EDITOR).last
         if not await editor.count():
             raise UiSelectorDriftError(detail=f"agent-only composer: editor ({EDITOR}) missing")
-        await editor.click(timeout=5000)
+        await _click(editor, "the editor", timeout=5000)
         await page.keyboard.press("ControlOrMeta+a")
         await page.keyboard.press("Delete")
         await page.keyboard.insert_text(directive)
@@ -545,7 +567,7 @@ class AgentOnlyComposer:
         if not await submit.count():
             await _raise_if_out_of_credits(page)
             raise UiSelectorDriftError(detail=f"agent-only composer: submit ({SUBMIT}) missing")
-        await submit.click(timeout=5000)
+        await _click(submit, "submit", timeout=5000)
         log.info("migrated.agent_only.submitted", kind=kind, count=count)
 
         deadline = time.monotonic() + budget_s
@@ -794,6 +816,8 @@ async def run_agent_images(
     images: list[GeneratedImage] = []
     for m in media:
         src = _full_size_src(m.src)
+        size = await _natural_size(page, src)
+        _warn_on_aspect_mismatch(request.aspect, size)
         images.append(
             GeneratedImage(
                 media_name=m.uuid,
@@ -803,7 +827,7 @@ async def run_agent_images(
                 model_name_type=request.model.value,
                 aspect_ratio=request.aspect.value,
                 fife_url=src,
-                dimensions=await _natural_size(page, src),
+                dimensions=size,
             )
         )
     return images
@@ -822,10 +846,26 @@ async (src) => {
 
 
 async def _natural_size(page: Page, src: str) -> tuple[int, int]:
-    w, h = await page.evaluate(_NATURAL_SIZE_JS, src)
+    try:
+        w, h = await page.evaluate(_NATURAL_SIZE_JS, src)
+    except PlaywrightError:  # the size is a report, never worth failing a billed run over
+        w = h = 0
     if not (w and h):
-        log.warning("migrated.agent_only.image_size_unknown", src_kind=src.split("/")[2])
+        log.warning("migrated.agent_only.image_size_unknown", src_kind=urlsplit(src).hostname)
     return int(w), int(h)
+
+
+def _orientation(w: int, h: int) -> int:
+    return (w > h) - (w < h)
+
+
+def _warn_on_aspect_mismatch(aspect: ImageAspect, size: tuple[int, int]) -> None:
+    """The directive asks for an aspect the agent may ignore. Warn, don't fail: the run is
+    already billed and the file is valid (PLAN decision 4)."""
+    w, h = size
+    a, b = (int(x) for x in _IMAGE_ASPECT_LABEL[aspect].split(":"))
+    if w and h and _orientation(w, h) != _orientation(a, b):
+        log.warning("migrated.agent_only.aspect_mismatch", requested=aspect.value, got=f"{w}x{h}")
 
 
 async def run_agent_video(

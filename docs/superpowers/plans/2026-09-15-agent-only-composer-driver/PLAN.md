@@ -19,6 +19,7 @@
    restored** — it is a standing preference. With a gate present gflow approves exactly one
    its own submit produced and stops on a second; with `never` there is no gate and the
    post-hoc count check is the only guard. Setting shipped in Task 0 (config + docs + test).
+4. **Orientation mismatch** (Predict mitigation 2): decided 2026-10-17: warn, don't fail — the run is already billed (`migrated.agent_only.aspect_mismatch`).
 
 **Goal:** `gflow image t2i` and `gflow video t2v` (CLI and MCP) succeed on accounts Flow serves
 the agent-only composer, instead of exiting 25.
@@ -58,7 +59,7 @@ src/gflow_cli/api/transports/agent_only_composer.py
 tests/api/transports/test_agent_only_composer_driver.py
   fixture-DOM (real Chromium, set_content) tests for gate/baseline/dedupe/poster
 tests/features/agent_only_composer.feature + test_agent_only_composer_steps.py
-tests/e2e/agent_only_composer_e2e.feature + test_agent_only_composer_bdd.py
+tests/features/agent_only_composer_live.feature + tests/e2e/test_agent_only_composer_bdd.py
 ```
 
 ### Modified files
