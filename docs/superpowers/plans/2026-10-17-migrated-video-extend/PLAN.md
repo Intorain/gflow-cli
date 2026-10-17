@@ -42,53 +42,53 @@ The labs arm and `extend_chain` are develop's, unchanged.
 **Files:** `api/client.py`, `api/video_extend.py`, `api/extend_chain.py`, their tests,
 `tests/api/test_client_migrated_mint.py`, the CLI fake.
 
-- [ ] restore develop's `client.py`, `video_extend.py`, `extend_chain.py` (mint guard byte-identical)
-- [ ] restore develop's `test_client_extend.py`, `test_video_extend.py`, `test_client_migrated_mint.py`
-- [ ] CLI calls `create_scene` again; drop `create_scene_for_extend` from the fake
-- [ ] keep #882's host-independent CLI fixes and their tests (JSON `video_result`, no plan
+- [x] restore develop's `client.py`, `video_extend.py`, `extend_chain.py` (mint guard byte-identical)
+- [x] restore develop's `test_client_extend.py`, `test_video_extend.py`, `test_client_migrated_mint.py`
+- [x] CLI calls `create_scene` again; drop `create_scene_for_extend` from the fake
+- [x] keep #882's host-independent CLI fixes and their tests (JSON `video_result`, no plan
       preamble under `--json`, single-segment direct download)
 
 ## Task 3 — `migrated_extend.py` pure helpers (red → green)
 
 **Tests:** `tests/api/transports/test_migrated_extend.py`
-- [ ] `unported_extend_form`: segments > 1, scene, seed → noun; single → None (mitigation 1)
-- [ ] `source_record`: Zzl0ze payload → (workflow id, kind) / None (mitigation 2)
-- [ ] `extend_request_problem`: rqZuUc without media, fZytfe slot1 ≠ workflow, aspect
+- [x] `unported_extend_form`: segments > 1, scene, seed → noun; single → None (mitigation 1)
+- [x] `source_record`: Zzl0ze payload → (workflow id, kind) / None (mitigation 2)
+- [x] `extend_request_problem`: rqZuUc without media, fZytfe slot1 ≠ workflow, aspect
       mismatch (FlowHostMigratedError), unreadable body; error text never carries the token (mitigation 3)
 
 ## Task 4 — composer parametrisation (mitigation 5)
 
-- [ ] `submit_and_observe(submit_rpcs=, submit_selector=, request_check=)`; defaults keep every caller byte-identical
-- [ ] `_fetch_mp4` → `fetch_mp4` (rename, update `test_signed_media_retry.py`)
-- [ ] test: a `request_check` error raises before the reply; `submit_rpcs` routes fZytfe replies
+- [x] `submit_and_observe(submit_rpcs=, submit_selector=, request_check=)`; defaults keep every caller byte-identical
+- [x] `_fetch_mp4` → `fetch_mp4` (rename, update `test_signed_media_retry.py`)
+- [x] test: a `request_check` error raises before the reply; `submit_rpcs` routes fZytfe replies
 
 ## Task 5 — `run_extend` driver (mitigations 2–5)
 
-- [ ] goto editor URL, await Zzl0ze record, refuse absent (exit 11) / image (exit 11)
-- [ ] confirm `/project/<pid>/edit/<media>` before opening the menu
-- [ ] add-clip → Extend → prompt; route guard on rqZuUc/fZytfe; observe; refuse an echo
-- [ ] listeners + route removed in `finally`
+- [x] goto editor URL, await Zzl0ze record, refuse absent (exit 11) / image (exit 11)
+- [x] confirm `/project/<pid>/edit/<media>` before opening the menu
+- [x] add-clip → Extend → prompt; route guard on rqZuUc/fZytfe; observe; refuse an echo
+- [x] listeners + route removed in `finally`
 
 ## Task 6 — client entry + CLI arm (mitigations 1, 7)
 
-- [ ] `FlowApiClient.extend_video_migrated` (kill switch → exit 36; one checkout)
-- [ ] `_run_extend`: route chosen before the browser; unported form on the migrated route → exit 36
-- [ ] `--aspect` default None (labs arm keeps 9:16); plan screen makes no price claim on migrated
-- [ ] CLI tests for the refusal matrix, the migrated dispatch and `--json`
+- [x] `FlowApiClient.extend_video_migrated` (kill switch → exit 36; one checkout)
+- [x] `_run_extend`: route chosen before the browser; unported form on the migrated route → exit 36
+- [x] `--aspect` default None (labs arm keeps 9:16); plan screen makes no price claim on migrated
+- [x] CLI tests for the refusal matrix, the migrated dispatch and `--json`
 
 ## Task 7 — MCP surface mirror
 
-- [ ] no new surface: `video extend` stays in `_MCP_EXEMPT`; the reason text is still true
+- [x] no new surface: `video extend` stays in `_MCP_EXEMPT`; the reason text is still true
       (billed, not worker-enqueued, consent prompt has no MCP equivalent). Recorded in SCENARIO #23.
 
 ## Task 8 — e2e (mitigation 9)
 
-- [ ] `tests/e2e/test_video_extend_migrated_e2e.py`: `e2e_auth` route-abort contract + unknown-media refusal (run, $0)
-- [ ] `e2e_video` single paid segment (written, NOT run — owner consent required)
+- [x] `tests/e2e/test_video_extend_migrated_e2e.py`: `e2e_auth` route-abort contract + unknown-media refusal (run, $0)
+- [x] `e2e_video` single paid segment (written, NOT run — owner consent required)
 
 ## Task 9 — docs (mitigation 8)
 
-- [ ] CHANGELOG [Unreleased] (credit @stgmt), USAGE extend section, KNOWN_ISSUES, `--help`,
+- [x] CHANGELOG [Unreleased] (credit @stgmt), USAGE extend section, KNOWN_ISSUES, `--help`,
       llms.txt line 3, skills/gflow-cli/SKILL.md, regenerate website docs + plugin skills
 
 ## Task 10 — gates
