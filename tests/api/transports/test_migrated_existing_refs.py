@@ -175,6 +175,24 @@ async def test_a_search_miss_reloads_the_editor_and_tries_again() -> None:
     assert page.typed.index("<Escape>") < [i for i, t in enumerate(page.typed) if t == "@"][1]
 
 
+async def test_a_reload_that_lands_on_the_agent_only_composer_is_refused() -> None:
+    """#799: that composer has no `@` picker; carrying on would mention into a chat box."""
+    from gflow_cli.errors import FlowHostMigratedError
+
+    page: Any = FakePage(grid={PARENT: "tokNew"}, options=[("c", "tokNew")], miss_first=1)
+    composer = _composer()
+
+    async def agent_only(*_: Any, **__: Any) -> str:
+        return "agent_only"
+
+    composer.ensure_editor = agent_only  # type: ignore[method-assign]
+    request = _req(refs=(_ref("c"),))
+    with pytest.raises(FlowHostMigratedError, match="image-to-image"):
+        await composer.reference_existing(page, "proj", request)
+    assert page.reloads == 1
+    assert page.bound == []
+
+
 async def test_no_matching_option_is_refused_without_binding_anything() -> None:
     page: Any = FakePage(grid={PARENT: "tokNew"}, options=[("c", "tokOld")])
     with pytest.raises(ReferenceNotFoundError):

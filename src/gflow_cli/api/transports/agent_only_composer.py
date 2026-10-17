@@ -646,10 +646,10 @@ class AgentOnlyComposer:
             await asyncio.sleep(POLL_S)
 
 
-def _unported_image(request: GenerateImageRequest) -> str | None:
+def unported_image(request: GenerateImageRequest) -> str | None:
     if request.refs or request.ref_paths:
         return "image-to-image"
-    if request.reference_entities:
+    if request.reference_entities or request.reference_entity_names:
         return "character references"
     if request.instructions:
         return "Agent instructions"
@@ -660,10 +660,10 @@ def _unported_image(request: GenerateImageRequest) -> str | None:
     return None
 
 
-def _unported_video(request: GenerateVideoRequest) -> str | None:
+def unported_video(request: GenerateVideoRequest) -> str | None:
     if request.mode is not Mode.T2V:
         return f"{request.mode.value}"
-    if request.reference_entities:
+    if request.reference_entities or request.reference_entity_names:
         return "character references"
     if request.count != 1:
         return "more than one video per request"
@@ -676,7 +676,7 @@ def _unported_video(request: GenerateVideoRequest) -> str | None:
     return None
 
 
-def _refuse(what: str) -> FlowHostMigratedError:
+def refuse_unported(what: str) -> FlowHostMigratedError:
     return FlowHostMigratedError(
         detail=(
             "this account is served Flow's agent-only composer, where gflow drives text-to-image "
@@ -766,9 +766,9 @@ async def run_agent_images(
     project_id: str,
 ) -> list[GeneratedImage]:
     """Text-to-image on the agent-only composer. Same return shape as the classic path."""
-    unported = _unported_image(request)
+    unported = unported_image(request)
     if unported is not None:
-        raise _refuse(unported)
+        raise refuse_unported(unported)
     composer = AgentOnlyComposer()
     snapshot = await composer.apply_defaults(
         page,
@@ -839,9 +839,9 @@ async def run_agent_video(
     on_started: VideoStartedCallback | None,
 ) -> VideoResult:
     """Text-to-video on the agent-only composer. Same return shape as the classic path."""
-    unported = _unported_video(request)
+    unported = unported_video(request)
     if unported is not None:
-        raise _refuse(unported)
+        raise refuse_unported(unported)
     composer = AgentOnlyComposer()
     snapshot = await composer.apply_defaults(
         page,

@@ -2270,7 +2270,10 @@ class MigratedComposer:
             log.info("migrated.existing_reference_reload")
             await page.wait_for_timeout(EXISTING_REF_RELOAD_PAUSE_S * 1000)
             await page.reload(wait_until="domcontentloaded", timeout=45_000)
-            await self.ensure_editor(page, project_id)
+            if await self.ensure_editor(page, project_id) == "agent_only":
+                from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415
+
+                raise agent.refuse_unported("image-to-image")
 
     async def await_existing_references(
         self, page: Page, refs: tuple[ImageRef, ...]
@@ -3454,7 +3457,7 @@ async def run_video(
         )
 
     # $0 and before the page only when neither composer takes it (see run_images).
-    if unported is not None and agent._unported_video(request) is not None:  # pyright: ignore[reportPrivateUsage]
+    if unported is not None and agent.unported_video(request) is not None:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
@@ -3467,11 +3470,7 @@ async def run_video(
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
     if await composer.ensure_editor(page, pid) == "agent_only":
-        from gflow_cli.api.transports.agent_only_composer import (  # noqa: PLC0415 - cycle
-            run_agent_video,
-        )
-
-        return await run_agent_video(
+        return await agent.run_agent_video(
             page,
             request,
             project_id=pid,
@@ -3569,7 +3568,7 @@ async def run_images(
 
     # $0 and before the page only when NEITHER composer takes it: the agent-only one has
     # its own limits (#799) — its Agent-settings pane offers 3:4, the classic pane does not.
-    if unported is not None and agent._unported_image(request) is not None:  # pyright: ignore[reportPrivateUsage]
+    if unported is not None and agent.unported_image(request) is not None:
         raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
