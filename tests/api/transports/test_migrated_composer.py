@@ -1332,6 +1332,46 @@ async def test_submit_observes_submit_then_poll_then_result() -> None:
     assert page.dom.submit_clicked == 1
 
 
+async def test_submit_rpcs_lets_another_surface_reuse_the_observer() -> None:
+    """Extend (#882 takeover) submits on fZytfe; the same observer must read it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_rpcs=("fZytfe",)
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+
+
+async def test_a_request_check_verdict_fails_the_run_before_any_reply() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=wrong-clip")
+    seen: list[tuple[str, str]] = []
+
+    def check(rpcid: str, body: str) -> WireFormatError | None:
+        seen.append((rpcid, body))
+        return WireFormatError(detail="wrong clip") if "wrong" in body else None
+
+    with pytest.raises(WireFormatError, match="wrong clip"):
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert seen == [("fZytfe", "f.req=wrong-clip")]
+
+
 async def test_submit_waits_for_the_button_to_enable_after_insert_text() -> None:
     """#670: the button reads disabled for a tick after the prompt lands; wait, don't raise."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer

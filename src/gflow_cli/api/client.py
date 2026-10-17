@@ -129,6 +129,7 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -2748,6 +2749,54 @@ class FlowApiClient:
                 self._checkin_page(page)
         except Exception as exc:
             await self._raise_with_incident(exc, phase="video_upscale")
+
+    async def extend_video_migrated(  # noqa: PLR0913
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        prompt: str,
+        aspect: str | None,
+        out_path: Path,
+        on_started: ExtendStartedCallback | None = None,
+        poll_timeout_s: float = 900.0,
+    ) -> tuple[ExtendOutcome, AnyPath | None]:
+        """One extend segment through Flow's own UI on flow.google.com. Costs credits.
+
+        The page mints and sends ``fZytfe`` itself; see
+        :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome and the
+        written mp4 (``None`` when the generation did not finish).
+        """
+        from gflow_cli.api.transports.migrated_extend import run_extend
+
+        if self._upscale_route(prefer_migrated=True) != "migrated":
+            raise FlowHostMigratedError(
+                detail=(
+                    "the flow.google.com extend driver was asked for, and "
+                    "GFLOW_CLI_FLOW_HOST=labs.google switched that host off"
+                ),
+            )
+        try:
+            page = await self._checkout_page()
+            try:
+                outcome = await run_extend(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    prompt=prompt,
+                    aspect=aspect,
+                    poll_timeout_s=poll_timeout_s,
+                    on_started=on_started,
+                )
+            finally:
+                self._checkin_page(page)
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="video_extend")
+        if outcome.video is None:
+            return outcome, None
+        target = self._write_target(out_path)
+        await write_asset_async(target, outcome.video)
+        return outcome, target
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
