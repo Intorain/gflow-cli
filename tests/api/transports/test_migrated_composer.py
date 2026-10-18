@@ -1455,6 +1455,24 @@ async def test_a_missing_submit_with_no_credits_warning_is_still_drift() -> None
         )
 
 
+async def test_a_missing_custom_submit_names_its_own_selector() -> None:
+    """Extend passes its own submit button; drift must name THAT, not arrow_forward."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    selector = "flow-edit-video-prompt-box button"
+    page = FakePage()
+    page.dom.credits_warning_present = False
+    modelled = page.locator
+    page.locator = lambda css, **kw: (  # type: ignore[method-assign]
+        FakeLocator(page, "submit", []) if css == selector else modelled(css, **kw)
+    )
+    with pytest.raises(UiSelectorDriftError, match="flow-edit-video-prompt-box") as caught:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_selector=selector
+        )
+    assert "arrow_forward" not in caught.value.detail
+
+
 async def test_a_submit_that_never_enables_also_checks_the_wallet_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

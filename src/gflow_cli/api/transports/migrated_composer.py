@@ -2962,6 +2962,7 @@ class MigratedComposer:
                 if submit_selector
                 else page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             )
+            submit_named = submit_selector or "arrow_forward"
             if not await submit.count():
                 # A credit shortfall and a moved frontend look identical here: both are
                 # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
@@ -2970,7 +2971,7 @@ class MigratedComposer:
                 await _raise_if_out_of_credits(page)
                 raise UiSelectorDriftError(
                     detail=(
-                        "migrated host: the submit button (arrow_forward) is missing "
+                        f"migrated host: the submit button ({submit_named}) is missing "
                         "after the prompt was typed (host=migrated)"
                     ),
                 )
@@ -2981,7 +2982,7 @@ class MigratedComposer:
                     await _raise_if_out_of_credits(page)
                     raise UiSelectorDriftError(
                         detail=(
-                            "migrated host: the submit button (arrow_forward) stayed disabled "
+                            f"migrated host: the submit button ({submit_named}) stayed disabled "
                             f"for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed "
                             "(host=migrated)"
                         ),
