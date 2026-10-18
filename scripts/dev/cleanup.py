@@ -6,11 +6,12 @@ Dry run by default: prints what it WOULD remove and mutates nothing. Never promp
     uv run python scripts/dev/cleanup.py --apply          # remove local leftovers
     uv run python scripts/dev/cleanup.py --apply --remote # + merged origin branches
 
-Categories: worktrees (merged into the base, PR merged/closed, or detached inside the base;
-never the main checkout, never a dirty one), local branches (merged, plus ``pr-<N>`` fetch
-branches whose PR is done), remote branches (``--remote`` only: PR merged, same repo, no
-open PR), untracked ``.env`` copies in kept worktrees, old ``bt*`` pytest basetemp dirs,
-dead agentctl agents and their leases (report only), and a Flow-side reminder.
+Categories: worktrees (PR merged/closed, or detached inside the base; never the main
+checkout, a dirty or a locked one — ancestry alone is not "finished", a fresh branch is an
+ancestor too), local branches (merged, plus ``pr-<N>`` fetch branches whose PR is done),
+remote branches (``--remote`` only: PR merged, same repo, no open PR, tip contained in the
+base; refused if the fetch failed), old ``bt*`` pytest basetemp dirs, and — report only —
+untracked ``.env`` files in kept worktrees, dead agentctl agents and a Flow-side reminder.
 
 Stdlib only; ``git``/``gh`` through one ``run`` seam so tests can fake ``gh``.
 """
@@ -135,20 +136,20 @@ def build_plan(
         if i == 0 or path.resolve() == here or not path.exists():
             remaining_branches.add(branch)
             continue
-        if branch and _is_ancestor(run, repo, branch, base):
-            why = "merged"
-        elif branch in done_heads:
+        # Ancestry alone is not "finished": a worktree an agent just branched from the base
+        # is an ancestor too. Only a done PR (or a detached checkout of the base) says so.
+        if branch in done_heads:
             why = "PR merged/closed"
         elif "detached" in wt and _is_ancestor(run, repo, wt["HEAD"], base):
             why = "detached, in base"
         else:
             why = ""
         dirty = bool(_git(run, path, "status", "--porcelain").stdout.strip())
-        if why and not dirty:
+        if why and not dirty and "locked" not in wt:
             plan.worktrees.append((path, f"{branch or 'detached'}: {why}"))
             continue
         remaining_branches.add(branch)
-        plan.kept.append((path, "dirty" if why else "in use"))
+        plan.kept.append((path, "locked" if "locked" in wt else "dirty" if why else "in use"))
         env = path / ".env"
         if env.is_file() and not _git(run, path, "ls-files", ".env").stdout.strip():
             plan.envs.append(env)
@@ -179,11 +180,14 @@ def build_plan(
         )
 
     cutoff = time.time() - older_than_hours * 3600
-    plan.temps = sorted(
-        d for d in tmp_root.glob("bt*") if d.is_dir() and d.stat().st_mtime < cutoff
-    )
+    plan.temps = sorted(d for d in tmp_root.glob("bt*") if d.is_dir() and _newest(d) < cutoff)
     plan.agents = _agent_report(run, repo, agentctl)
     return plan
+
+
+def _newest(d: Path) -> float:
+    """Newest mtime of a dir and its direct children: under xdist only `popen-gw*` change."""
+    return max([d.stat().st_mtime, *(c.stat().st_mtime for c in d.iterdir())])
 
 
 def apply_plan(plan: Plan, repo: Path, run: Runner) -> list[str]:
@@ -191,7 +195,7 @@ def apply_plan(plan: Plan, repo: Path, run: Runner) -> list[str]:
     problems: list[str] = []
     for path, _ in plan.worktrees:
         if _git(run, repo, "worktree", "remove", "--force", str(path)).returncode != 0:
-            problems.append(f"could not remove {path} (file lock) — delete {path} later")
+            problems.append(f"could not remove {path} (a file is in use?) — delete {path} later")
     if plan.worktrees:
         _git(run, repo, "worktree", "prune")
     for name in plan.branches:
@@ -202,8 +206,6 @@ def apply_plan(plan: Plan, repo: Path, run: Runner) -> list[str]:
         out = _git(run, repo, "push", "origin", "--delete", name)
         if out.returncode != 0:
             problems.append(f"origin/{name}: {out.stderr.strip()}")
-    for env in plan.envs:
-        env.unlink(missing_ok=True)
     for d in plan.temps:
         shutil.rmtree(d, ignore_errors=True)
     return problems
@@ -224,7 +226,8 @@ def render(plan: Plan, *, applied: bool, base: str) -> str:
         group(f"{verb}: origin branches", plan.remote_branches)
     else:
         out.append("\nOrigin branches: not checked (pass --remote)")
-    group(f"{verb}: stray .env files", [str(p) for p in plan.envs])
+    # Kept worktrees are in use, and a .env may hold credentials someone typed: name it only.
+    group("Untracked .env in kept worktrees (report only)", [str(p) for p in plan.envs])
     group(f"{verb}: pytest basetemp dirs", [str(p) for p in plan.temps])
     group("agentctl (report only)", plan.agents)
     out.append(f"\n{FLOW_REMINDER}")
@@ -258,8 +261,12 @@ def main(
     args = ap.parse_args(argv)
 
     repo: Path = args.repo.resolve()
-    if not args.no_fetch:
-        _git(run, repo, "fetch", "--prune", "origin")
+    if not args.no_fetch and _git(run, repo, "fetch", "--prune", "origin").returncode != 0:
+        if args.remote:
+            # A stale origin/<name> cannot prove its tip is in the base.
+            print("! git fetch failed — refusing --remote; rerun when origin is reachable")
+            return 2
+        print("! git fetch failed — judging against the last fetched origin")
     plan = build_plan(
         repo,
         base=args.base,

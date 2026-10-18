@@ -127,15 +127,54 @@ def _paths(entries: list[tuple[Path, str]]) -> set[Path]:
 # --- worktrees -----------------------------------------------------------------------
 
 
-def test_merged_worktree_is_selected(repo: Path) -> None:
+def _done(branch: str, number: int = 1, state: str = "MERGED") -> dict[str, object]:
+    return {"headRefName": branch, "state": state, "number": number, "isCrossRepository": False}
+
+
+def test_worktree_whose_pr_is_merged_is_selected(repo: Path) -> None:
+    wt = _merged_worktree(repo, "feature/done")
+    plan = _plan(repo, Recorder(prs=[_done("feature/done")]))
+    assert wt.resolve() in _paths(plan.worktrees)
+
+
+def test_a_merged_worktree_with_no_pr_is_kept(repo: Path) -> None:
+    """Ancestry alone cannot tell a finished branch from one an agent just started."""
     wt = _merged_worktree(repo, "feature/done")
     plan = _plan(repo, Recorder(prs=[]))
-    assert wt.resolve() in _paths(plan.worktrees)
+    assert wt.resolve() not in _paths(plan.worktrees)
+
+
+def test_a_fresh_unstarted_worktree_is_kept(repo: Path) -> None:
+    """Right after `switch -c x origin/develop` the tip is in the base — and in use."""
+    wt = repo.parent / "wt-fresh"
+    _git(repo, "worktree", "add", "-q", "-b", "feature/fresh", str(wt), "origin/develop")
+    plan = _plan(repo, Recorder(prs=[]))
+    assert wt.resolve() not in _paths(plan.worktrees)
+    assert "feature/fresh" not in plan.branches
+
+
+def test_a_locked_worktree_is_kept(repo: Path) -> None:
+    wt = _merged_worktree(repo, "feature/held")
+    _git(repo, "worktree", "lock", str(wt))
+    plan = _plan(repo, Recorder(prs=[_done("feature/held")]))
+    assert wt.resolve() not in _paths(plan.worktrees)
+    assert any(p.resolve() == wt.resolve() and "locked" in why for p, why in plan.kept)
 
 
 def test_never_selects_the_main_checkout(repo: Path) -> None:
     _merged_worktree(repo, "feature/done")
-    plan = _plan(repo, Recorder(prs=[]))
+    plan = _plan(repo, Recorder(prs=[_done("feature/done")]))
+    assert repo.resolve() not in _paths(plan.worktrees)
+
+
+def test_never_selects_the_main_checkout_when_run_from_a_linked_worktree(repo: Path) -> None:
+    """The `i == 0` guard: from a linked worktree, the main checkout is not `here`."""
+    _git(repo, "switch", "-q", "-c", "feature/main-done")
+    _git(repo, "switch", "-q", "--detach")
+    linked = repo.parent / "wt-runner"
+    _git(repo, "worktree", "add", "-q", "-b", "feature/runner", str(linked))
+    _git(repo, "switch", "-q", "feature/main-done")
+    plan = _plan(linked, Recorder(prs=[_done("feature/main-done")]))
     assert repo.resolve() not in _paths(plan.worktrees)
 
 
@@ -149,7 +188,8 @@ def test_unmerged_worktree_without_a_pr_is_not_selected(repo: Path) -> None:
 def test_dirty_merged_worktree_is_kept_as_dirty(repo: Path) -> None:
     wt = _merged_worktree(repo, "feature/dirty")
     (wt / "scratch.txt").write_text("x", encoding="utf-8")
-    plan = _plan(repo, Recorder(prs=[]))
+    # a done PR makes it removable, so only the dirty guard keeps it
+    plan = _plan(repo, Recorder(prs=[_done("feature/dirty")]))
     assert wt.resolve() not in _paths(plan.worktrees)
     assert any(p.resolve() == wt.resolve() and "dirty" in why for p, why in plan.kept)
     # its branch is checked out in a remaining worktree, so it stays too
@@ -173,7 +213,9 @@ def test_worktree_whose_pr_is_merged_is_selected_even_if_not_ancestor(repo: Path
 def test_missing_gh_is_skipped_silently(repo: Path) -> None:
     wt = _merged_worktree(repo, "feature/done")
     plan = _plan(repo, Recorder(prs=None))
-    assert wt.resolve() in _paths(plan.worktrees)
+    # without PR facts nothing proves the worktree is finished: kept, and no crash
+    assert wt.resolve() not in _paths(plan.worktrees)
+    assert "feature/done" not in plan.branches
 
 
 def test_detached_worktree_contained_in_base_is_selected(repo: Path) -> None:
@@ -201,7 +243,7 @@ def test_dry_run_performs_zero_mutations(repo: Path, tmp_path: Path) -> None:
 
 def test_apply_removes_worktree_and_merged_branch(repo: Path) -> None:
     wt = _merged_worktree(repo, "feature/done")
-    run = Recorder(prs=[])
+    run = Recorder(prs=[_done("feature/done")])
     plan = _plan(repo, run)
     problems = cleanup.apply_plan(plan, repo, run)
     assert problems == []
@@ -221,10 +263,10 @@ def test_locked_worktree_removal_is_reported_not_raised(repo: Path) -> None:
                 return subprocess.CompletedProcess(cmd, 1, "", "Permission denied")
             return super().__call__(cmd, cwd)
 
-    run = Locked(prs=[])
+    run = Locked(prs=[_done("feature/locked")])
     plan = _plan(repo, run)
     problems = cleanup.apply_plan(plan, repo, run)
-    assert any("file lock" in p and "delete" in p for p in problems)
+    assert any("could not remove" in p and "delete" in p for p in problems)
 
 
 # --- local branches ------------------------------------------------------------------
@@ -324,14 +366,16 @@ def test_a_merged_pr_branch_with_later_unmerged_commits_is_kept_on_origin(repo: 
 # --- stray .env / basetemp / agentctl / flow ------------------------------------------
 
 
-def test_stray_env_in_kept_worktree_is_reported_and_deleted(repo: Path) -> None:
+def test_stray_env_in_kept_worktree_is_reported_never_deleted(repo: Path) -> None:
+    """A kept worktree is in use; its .env is gflow's per-directory config and may hold
+    credentials someone typed — the sweep names it, the owner decides."""
     wt = _unmerged_worktree(repo, "feature/kept")
     (wt / ".env").write_text("K=1", encoding="utf-8")
     run = Recorder(prs=[])
     plan = _plan(repo, run)
     assert [p.resolve() for p in plan.envs] == [(wt / ".env").resolve()]
     cleanup.apply_plan(plan, repo, run)
-    assert not (wt / ".env").exists()
+    assert (wt / ".env").read_text(encoding="utf-8") == "K=1"
 
 
 def test_tracked_env_is_not_stray(repo: Path) -> None:
@@ -351,6 +395,34 @@ def test_only_old_bt_temp_dirs_are_selected(repo: Path, tmp_path: Path) -> None:
     assert plan.temps == [old]
     cleanup.apply_plan(plan, repo, Recorder(prs=[]))
     assert not old.exists() and fresh.exists() and other.exists()
+
+
+def test_a_bt_dir_with_a_recent_child_is_in_use(repo: Path, tmp_path: Path) -> None:
+    """Under xdist only `popen-gw*` children change; the parent's mtime stays old."""
+    temps = tmp_path / "temps"
+    busy = temps / "btcl9"
+    (busy / "popen-gw0").mkdir(parents=True)
+    os.utime(busy, (time.time() - 7200, time.time() - 7200))
+    assert _plan(repo, Recorder(prs=[]), tmp_root=temps).temps == []
+
+
+def test_remote_deletion_is_refused_when_the_fetch_failed(repo: Path) -> None:
+    """A stale origin/<name> cannot prove its tip is in the base."""
+
+    class Offline(Recorder):
+        def __call__(
+            self, cmd: list[str], cwd: Path | None = None
+        ) -> subprocess.CompletedProcess[str]:
+            if cmd[:2] == ["git", "-C"] and "fetch" in cmd:
+                self.calls.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 128, "", "could not resolve host")
+            return super().__call__(cmd, cwd)
+
+    _push_branch(repo, "feature/merged")
+    run = Offline(prs=[_done("feature/merged")])
+    rc = cleanup.main(["--repo", str(repo), "--remote", "--apply"], run=run)
+    assert rc != 0
+    assert "feature/merged" in _git(repo, "ls-remote", "--heads", "origin")
 
 
 def test_agentctl_dead_agents_and_their_leases_are_reported(repo: Path, tmp_path: Path) -> None:
