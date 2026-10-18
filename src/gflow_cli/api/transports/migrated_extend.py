@@ -47,7 +47,7 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from playwright.async_api import Page
 
@@ -318,6 +318,19 @@ async def _anchor(page: Page, selector: str, *, named: str) -> Any:
     return locator
 
 
+def _listing_clip(text: str, media_id: str) -> tuple[bool, SourceClip | None]:
+    """(whether any ``Zzl0ze`` frame was in ``text``, the first one holding ``media_id``)."""
+    seen = False
+    for rid, payload in parse_frames(text):
+        if rid != LISTING_RPC:
+            continue
+        seen = True
+        clip = source_record(payload, media_id)
+        if clip is not None:
+            return True, clip
+    return seen, None
+
+
 async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceClip | None:
     """Open the clip editor and read its own ``Zzl0ze`` replies (no request of ours).
 
@@ -337,13 +350,10 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
             text = await response.text()
         except Exception:  # noqa: BLE001 - an aborted body is not our frame
             return
-        for rid, payload in parse_frames(text):
-            if rid != LISTING_RPC:
-                continue
-            seen = True
-            clip = source_record(payload, media_id)
-            if clip is not None and not found.done():
-                found.set_result(clip)
+        listed, clip = _listing_clip(text, media_id)
+        seen = seen or listed
+        if clip is not None and not found.done():
+            found.set_result(clip)
 
     page.on("response", on_response)
     try:
@@ -379,6 +389,99 @@ def _confirm_editor(page: Page, *, project_id: str, media_id: str) -> None:
         )
 
 
+def _request_verdict(
+    rpcids: list[str],
+    body: str,
+    *,
+    media_id: str,
+    workflow_id: str,
+    aspect: str | None,
+    released_submits: int,
+) -> GFlowError | None:
+    """Why one intercepted ``batchexecute`` request must be aborted, or ``None``."""
+    verdict = batch_request_problem(
+        rpcids, body, media_id=media_id, workflow_id=workflow_id, aspect=aspect
+    )
+    if verdict is None and EXTEND_SUBMIT_RPC in rpcids and released_submits:
+        # One billed extend per run: a second fZytfe would bill a second clip.
+        verdict = WireFormatError(
+            detail=f"migrated host: a second {EXTEND_SUBMIT_RPC} in one run — refused",
+            route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
+        )
+    return verdict
+
+
+def _released_rpc(rpcids: list[str], *, is_submit: bool) -> str | None:
+    """The rpc id a released request is reported to ``_release`` under."""
+    if is_submit:
+        return EXTEND_SUBMIT_RPC
+    return rpcids[0] if rpcids else None
+
+
+def _route_guard(
+    *, media_id: str, workflow_id: str, aspect: str | None, facts: dict[str, str | None]
+) -> Callable[[Any, Any], Awaitable[None]]:
+    """The ``page.route`` handler: abort a wrong request, release a right one."""
+    released_submits = 0
+
+    async def guard(route: Any, request: Any) -> None:
+        nonlocal released_submits
+        body = request_body(request)
+        rpcids = batch_rpcids(url_rpcids(str(getattr(request, "url", ""))), body)
+        verdict = _request_verdict(
+            rpcids,
+            body,
+            media_id=media_id,
+            workflow_id=workflow_id,
+            aspect=aspect,
+            released_submits=released_submits,
+        )
+        is_submit = EXTEND_SUBMIT_RPC in rpcids
+        if verdict is not None:
+            await route.abort()
+            log.warning(
+                "migrated_extend.request_refused", rpcs=rpcids, error=type(verdict).__name__
+            )
+            return
+        if is_submit:
+            released_submits += 1
+            facts["model_key"], facts["aspect"] = submit_facts(body)
+        await _release(route, _released_rpc(rpcids, is_submit=is_submit))
+
+    return guard
+
+
+def _started_handler(
+    *,
+    workflow_id: str,
+    facts: dict[str, str | None],
+    on_started: ExtendStartedCallback | None,
+) -> Callable[[VideoStarted], None]:
+    """The composer's ``on_started``: refuse a reply naming the source, then report it."""
+
+    def started(info: VideoStarted) -> None:
+        if info.workflow_id == workflow_id:
+            raise WireFormatError(
+                detail=(
+                    f"migrated host: Flow's {EXTEND_SUBMIT_RPC} reply names the source clip's "
+                    "own workflow, not a new generation — Flow may still have billed it"
+                ),
+                route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
+            )
+        if not facts:
+            log.warning("migrated_extend.no_submit_facts", workflow_id=info.workflow_id)
+        if on_started is not None:
+            # The guard read the page's own fZytfe before this reply arrived.
+            accepted = ExtendStarted(
+                media_id=info.media_id,
+                workflow_id=info.workflow_id or "",
+                model_key=facts.get("model_key") or "unknown",
+            )
+            on_started(accepted, facts.get("aspect"))
+
+    return started
+
+
 async def run_extend(  # noqa: PLR0913
     page: Page,
     *,
@@ -408,52 +511,8 @@ async def run_extend(  # noqa: PLR0913
             [rpcid], body, media_id=media_id, workflow_id=workflow_id, aspect=aspect
         )
 
-    released_submits = 0
-
-    async def guard(route: Any, request: Any) -> None:
-        nonlocal released_submits
-        body = request_body(request)
-        rpcids = batch_rpcids(url_rpcids(str(getattr(request, "url", ""))), body)
-        verdict = batch_request_problem(
-            rpcids, body, media_id=media_id, workflow_id=workflow_id, aspect=aspect
-        )
-        is_submit = EXTEND_SUBMIT_RPC in rpcids
-        if verdict is None and is_submit and released_submits:
-            # One billed extend per run: a second fZytfe would bill a second clip.
-            verdict = WireFormatError(
-                detail=f"migrated host: a second {EXTEND_SUBMIT_RPC} in one run — refused",
-                route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
-            )
-        if verdict is not None:
-            await route.abort()
-            log.warning(
-                "migrated_extend.request_refused", rpcs=rpcids, error=type(verdict).__name__
-            )
-            return
-        if is_submit:
-            released_submits += 1
-            facts["model_key"], facts["aspect"] = submit_facts(body)
-        await _release(route, EXTEND_SUBMIT_RPC if is_submit else (rpcids[0] if rpcids else None))
-
-    async def started(info: VideoStarted) -> None:
-        if info.workflow_id == workflow_id:
-            raise WireFormatError(
-                detail=(
-                    f"migrated host: Flow's {EXTEND_SUBMIT_RPC} reply names the source clip's "
-                    "own workflow, not a new generation — Flow may still have billed it"
-                ),
-                route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
-            )
-        if not facts:
-            log.warning("migrated_extend.no_submit_facts", workflow_id=info.workflow_id)
-        if on_started is not None:
-            # The guard read the page's own fZytfe before this reply arrived.
-            accepted = ExtendStarted(
-                media_id=info.media_id,
-                workflow_id=info.workflow_id or "",
-                model_key=facts.get("model_key") or "unknown",
-            )
-            on_started(accepted, facts.get("aspect"))
+    guard = _route_guard(media_id=media_id, workflow_id=workflow_id, aspect=aspect, facts=facts)
+    started = _started_handler(workflow_id=workflow_id, facts=facts, on_started=on_started)
 
     def is_batchexecute(url: str) -> bool:
         return "batchexecute" in url

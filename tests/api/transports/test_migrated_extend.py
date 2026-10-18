@@ -295,7 +295,7 @@ def driver(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def observe(_self: Any, page: Any, **kwargs: Any) -> GenerationRecord:
         seen["observe"] = kwargs
         seen["routes_during_observe"] = len(page.routes)
-        await kwargs["on_started"](VideoStarted(media_id=NEW_MEDIA, workflow_id=seen["workflow"]))
+        kwargs["on_started"](VideoStarted(media_id=NEW_MEDIA, workflow_id=seen["workflow"]))
         page.url = f"https://flow.google.com/project/{PID}/scene/{SCENE}"
         return _done_record()
 
