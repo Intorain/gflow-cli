@@ -66,4 +66,9 @@ Runs on the release tree:
 
 ## Post-tag evidence
 
-_Filled after the signed tag `v0.86.0` is pushed: Release workflow run, PyPI version, GitHub Release._
+| | |
+|---|---|
+| Signed tag | `v0.86.0` on `d7ef85da` (SSH signature present) |
+| Release workflow | run `39157226336`: **success** (`build-and-publish` ✅, `mcp-registry / publish` ✅) |
+| PyPI | `gflow-cli` latest = **0.86.0** |
+| GitHub Release | https://github.com/ffroliva/gflow-cli/releases/tag/v0.86.0, stable (not a prerelease), published 2026-10-18T19:07:10Z |
