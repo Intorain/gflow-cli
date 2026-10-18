@@ -47,7 +47,7 @@ from gflow_cli.image_batch import resolve_jitter_range
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.chain import ChainLinkSpec
@@ -1915,68 +1915,126 @@ async def _extend_migrated_session(  # noqa: PLR0913
         get_settings().output_dir / "videos" / date.today().isoformat() / f"{media_id}_extend.mp4"
     )
     async with FlowApiClient(profile_dir=profile_dir) as client:
-
-        def _on_started(started: ExtendStarted, page_aspect: str | None) -> None:
-            if not as_json:
-                console.print(f"  submitted   : {started.media_id} ({started.model_key})")
-            if recorder is not None:  # at SUBMIT: Flow bills on acceptance
-                try:
-                    recorder.record_started_extend(
-                        profile_name=profile_name,
-                        profile_dir=profile_dir,
-                        project_id=project_id,
-                        aspect=page_aspect or aspect or "unknown",
-                        started=started,
-                    )
-                except DataStoreError as exc:
-                    logger.warning("extend_record_failed", error_class=type(exc).__name__)
-
         outcome, target = await client.extend_video_migrated(
             media_id=media_id,
             project_id=project_id,
             prompt=prompt,
             aspect=aspect,
             out_path=out_path,
-            on_started=_on_started,
+            on_started=_migrated_extend_on_started(
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project_id=project_id,
+                aspect=aspect,
+                as_json=as_json,
+                recorder=recorder,
+            ),
         )
+    _report_migrated_extend(
+        outcome,
+        target,
+        profile_name=profile_name,
+        media_id=media_id,
+        project_id=project_id,
+        aspect=aspect,
+        as_json=as_json,
+    )
+
+
+def _migrated_extend_on_started(  # noqa: PLR0913
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    project_id: str,
+    aspect: str | None,
+    as_json: bool,
+    recorder: OperationRecorder | None,
+) -> Callable[[ExtendStarted, str | None], None]:
+    """The migrated arm's submit hook: announce it and record it at acceptance."""
+
+    def _on_started(started: ExtendStarted, page_aspect: str | None) -> None:
+        if not as_json:
+            console.print(f"  submitted   : {started.media_id} ({started.model_key})")
+        if recorder is not None:  # at SUBMIT: Flow bills on acceptance
+            try:
+                recorder.record_started_extend(
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    project_id=project_id,
+                    aspect=page_aspect or aspect or "unknown",
+                    started=started,
+                )
+            except DataStoreError as exc:
+                logger.warning("extend_record_failed", error_class=type(exc).__name__)
+
+    return _on_started
+
+
+def _migrated_extend_payload(
+    outcome: migrated_extend.ExtendOutcome,
+    rendered: str | None,
+    *,
+    profile_name: str,
+    project_id: str,
+    aspect: str | None,
+) -> dict[str, Any]:
+    """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
+    record = outcome.record
+    ok = rendered is not None
+    return {
+        "status": "ok" if ok else "fail",
+        "command": _EXTEND_COMMAND,
+        "media_id": record.media_id,
+        "generation_status": (
+            "MEDIA_GENERATION_STATUS_COMPLETED" if ok else "MEDIA_GENERATION_STATUS_FAILED"
+        ),
+        "succeeded": ok,
+        "local_path": rendered,
+        "output": rendered,
+        "failure_reasons": [],
+        "error_message": None if ok else f"Flow reported status {record.status}",
+        "scene_id": outcome.scene_id,
+        "project_id": project_id,
+        "model": outcome.model_key,
+        "segments_requested": 1,
+        "segments_completed": 1 if ok else 0,
+        "media_ids": [record.media_id],
+        "credits_spent": None,
+        "seconds_added": _EXTEND_CONTENT_SECONDS if ok else 0,
+        "seconds_billed": _EXTEND_SEGMENT_SECONDS,
+        "aborted": not ok,
+        "profile": profile_name,
+        "host": "flow.google.com",
+        "request": {
+            "model": outcome.model_key,
+            "mode": "extend",
+            "aspect": outcome.aspect or aspect,
+            "duration": _EXTEND_CONTENT_SECONDS,
+            "count": 1,
+            "seed": None,
+        },
+    }
+
+
+def _report_migrated_extend(  # noqa: PLR0913
+    outcome: migrated_extend.ExtendOutcome,
+    target: Path | None,
+    *,
+    profile_name: str,
+    media_id: str,
+    project_id: str,
+    aspect: str | None,
+    as_json: bool,
+) -> None:
+    """Emit the migrated extend's result, then raise if Flow did not complete it."""
     record = outcome.record
     ok = target is not None
     rendered = str(target) if target is not None else None
     if as_json:
         json_output.emit(
-            {
-                "status": "ok" if ok else "fail",
-                "command": _EXTEND_COMMAND,
-                "media_id": record.media_id,
-                "generation_status": (
-                    "MEDIA_GENERATION_STATUS_COMPLETED" if ok else "MEDIA_GENERATION_STATUS_FAILED"
-                ),
-                "succeeded": ok,
-                "local_path": rendered,
-                "output": rendered,
-                "failure_reasons": [],
-                "error_message": None if ok else f"Flow reported status {record.status}",
-                "scene_id": outcome.scene_id,
-                "project_id": project_id,
-                "model": outcome.model_key,
-                "segments_requested": 1,
-                "segments_completed": 1 if ok else 0,
-                "media_ids": [record.media_id],
-                "credits_spent": None,
-                "seconds_added": _EXTEND_CONTENT_SECONDS if ok else 0,
-                "seconds_billed": _EXTEND_SEGMENT_SECONDS,
-                "aborted": not ok,
-                "profile": profile_name,
-                "host": "flow.google.com",
-                "request": {
-                    "model": outcome.model_key,
-                    "mode": "extend",
-                    "aspect": outcome.aspect or aspect,
-                    "duration": _EXTEND_CONTENT_SECONDS,
-                    "count": 1,
-                    "seed": None,
-                },
-            }
+            _migrated_extend_payload(
+                outcome, rendered, profile_name=profile_name, project_id=project_id, aspect=aspect
+            )
         )
     else:
         state = "[bold green]Extended[/bold green]" if ok else "[red]Failed[/red]"
