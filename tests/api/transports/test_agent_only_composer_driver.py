@@ -16,6 +16,7 @@ No account, no network, no credits; skips when Chromium is absent.
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -909,6 +910,39 @@ async def test_an_approve_click_that_times_out_is_an_after_submit_failure() -> N
 
 
 @pytest.mark.asyncio
+async def test_an_approved_gate_that_never_turns_read_only_is_drift() -> None:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    page = _clicks_time_out()
+    loc = page.locator.return_value
+    loc.click = AsyncMock()
+    loc.nth.return_value = loc
+    loc.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout exceeded"))
+    with pytest.raises(UiSelectorDriftError, match="did not turn read-only"):
+        await aoc.AgentOnlyComposer()._approve_gate(page, 0)  # pyright: ignore[reportPrivateUsage]
+    loc.nth.assert_called_once_with(0)
+    assert loc.wait_for.await_args.kwargs["state"] == "detached"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("counts", "missing"),
+    [([0], "editor"), ([1, 0, 0], "submit")],  # editor, submit, credits warning
+)
+async def test_a_missing_editor_or_submit_is_drift_before_anything_is_sent(
+    counts: list[int], missing: str
+) -> None:
+    page = _clicks_time_out()
+    loc = page.locator.return_value
+    loc.count = AsyncMock(side_effect=counts)
+    loc.click = AsyncMock()
+    page.keyboard = MagicMock(press=AsyncMock(), insert_text=AsyncMock())
+    with pytest.raises(UiSelectorDriftError, match=f"{missing} .* missing"):
+        await aoc.AgentOnlyComposer()._submit(page, "a cat")  # pyright: ignore[reportPrivateUsage]
+    assert loc.click.await_count == (len(counts) > 1)
+
+
+@pytest.mark.asyncio
 async def test_a_pane_click_that_times_out_is_drift() -> None:
     page = _clicks_time_out()
     page.locator.return_value.count = AsyncMock(side_effect=[0, 1])
@@ -1011,3 +1045,19 @@ async def test_an_image_in_the_wrong_orientation_is_warned_about_and_kept(
 )
 def test_full_size_src_asks_asb_for_the_original_size(src: str, expected: str) -> None:
     assert aoc._full_size_src(src) == expected  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "https://flow.google.com" + "/asb/x" * 50_000 + "=",  # many /asb/, no valid spec
+        "https://" + "/asb/=" * 50_000 + "!",  # many '=' inside the path
+        "https://flow.google.com/asb/" + "a" * 200_000 + "=s0!",
+    ],
+    ids=["many-asb", "many-eq", "long-id"],
+)
+def test_full_size_src_stays_linear_on_a_hostile_src(src: str) -> None:
+    # The regex this replaced backtracked on shapes like these (Sonar S8786).
+    started = time.perf_counter()
+    assert aoc._full_size_src(src) == src  # pyright: ignore[reportPrivateUsage]
+    assert time.perf_counter() - started < 0.5

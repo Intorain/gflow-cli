@@ -104,6 +104,8 @@ _GROUP_BASE: dict[Section, int] = {"image": 0, "video": 2}
 #: Measured 2026-09-16 (``scripts/dev/spike_agent_confirm_radios.py``): Always is
 #: ``value="1"``, Never is ``value="2"``, read against their English labels.
 _CONFIRM_VALUE = {"always": "1", "never": "2"}
+#: The ``route`` every clip-download failure carries.
+_VIDEO_ROUTE = "agent-only:video"
 
 POLL_S = 1.0
 #: An image turn that ends with no gate and no tile for this long made nothing.
@@ -216,13 +218,28 @@ def _tile_uuid(tile: dict[str, Any], kind: str) -> str | None:
 #: spec survives the redirect to `lh3.google.com/rd-asb/`, Google's image server, where `=s0`
 #: means the original size. The classic composer never needs this: its ogiZ0b reply carries
 #: a signed full-size URL, which the agent-only page never exposes.
-_ASB_SIZE_SPEC_RE = re.compile(r"^(https://[^?#]*/asb/[^?#=]+)=[A-Za-z0-9-]+$")
+_SIZE_SPEC_RE = re.compile(r"[A-Za-z0-9-]+")
 
 
 def _full_size_src(src: str) -> str:
-    """The original-size URL for an `/asb/` image src; any other src unchanged."""
-    m = _ASB_SIZE_SPEC_RE.match(src or "")
-    return f"{m.group(1)}=s0" if m else src
+    """The original-size URL for an `/asb/` image src; any other src unchanged.
+
+    String splits rather than one regex: `https://…/asb/<id>=<spec>` as a pattern backtracks
+    super-linearly on a long src (Sonar S8786), and every step here is a single scan.
+    """
+    head, eq, spec = (src or "").rpartition("=")
+    # The `/asb/` must follow the scheme and the head's last `=`, with an id after it.
+    path = head[max(len("https://"), head.rfind("=") + 1) :]
+    if (
+        eq
+        and head.startswith("https://")
+        and "/asb/" in path[:-1]
+        and "?" not in src
+        and "#" not in src
+        and _SIZE_SPEC_RE.fullmatch(spec)
+    ):
+        return f"{head}=s0"
+    return src
 
 
 def _cdn_uuid(src: str, kind: str) -> str | None:
@@ -249,10 +266,10 @@ def _tile_key(tile: dict[str, str]) -> str:
     return tile["video"] or tile["img"]
 
 
-async def _click(target: Locator, what: str, timeout: int = 4000) -> None:
+async def _click(target: Locator, what: str, timeout_ms: int = 4000) -> None:
     """A pre-submit click: a Playwright failure here is drift (exit 23), nothing was sent."""
     try:
-        await target.click(timeout=timeout)
+        await target.click(timeout=timeout_ms)
     except PlaywrightError as exc:
         raise UiSelectorDriftError(detail=f"agent-only composer: could not click {what}") from exc
 
@@ -271,7 +288,7 @@ class AgentOnlyComposer:
             raise UiSelectorDriftError(
                 detail=f"agent-only composer: Agent settings button ({SETTINGS_BUTTON}) missing"
             )
-        await _click(button, "the Agent settings button", timeout=5000)
+        await _click(button, "the Agent settings button", timeout_ms=5000)
         try:
             await pane.first.wait_for(state="visible", timeout=int(PANE_S * 1000))
         except PlaywrightError as exc:
@@ -517,14 +534,77 @@ class AgentOnlyComposer:
                 retryable=False,
                 remediation_hint=_AFTER_SUBMIT_HINT,
             ) from exc
-        deadline = time.monotonic() + GATE_SETTLE_S
-        while await page.locator(LIVE_GATE).count() > baseline_gates:
-            if time.monotonic() >= deadline:
-                raise UiSelectorDriftError(
-                    detail="agent-only composer: an approved credit gate did not turn read-only"
-                )
-            await asyncio.sleep(POLL_S)
+        # The live-gate count is back at the baseline once the gate at that index is gone.
+        settled = page.locator(LIVE_GATE).nth(baseline_gates)
+        try:
+            await settled.wait_for(state="detached", timeout=GATE_SETTLE_S * 1000)
+        except PlaywrightError as exc:
+            raise UiSelectorDriftError(
+                detail="agent-only composer: an approved credit gate did not turn read-only"
+            ) from exc
         log.info("migrated.agent_only.gate_approved")
+
+    async def _gate_turn(self, page: Page, run: _Run) -> bool:
+        """Enforce the budget and the one-approval rule; True when a gate was just approved."""
+        if time.monotonic() >= run.deadline:
+            raise TransportTimeoutError(
+                detail=(
+                    f"agent-only composer: no finished {run.kind} within {run.budget_s:.0f}s "
+                    f"of submit (approvals={run.approvals})"
+                ),
+                retryable=False,
+                remediation_hint=(
+                    "The generation may still finish in Flow — check the project before "
+                    "re-running, because a re-run submits again (a video spends credits "
+                    "again)."
+                ),
+            )
+        if await page.locator(LIVE_GATE).count() <= run.baseline_gates:
+            return False
+        if run.approvals:
+            raise FlowAgentUiError(
+                detail=(
+                    "agent-only composer: the agent asked for a second credit "
+                    "confirmation in one run — it queued more than was requested, so "
+                    "the second one was not approved. Last reply: "
+                    f"{await self._last_reply(page)}"
+                ),
+                retryable=False,
+                remediation_hint=_AFTER_SUBMIT_HINT,
+            )
+        await self._approve_gate(page, run.baseline_gates)
+        run.approvals += 1
+        return True
+
+    async def _video_baseline(self, page: Page) -> tuple[set[str], str | None]:
+        """Clip uuids already named, and the newest finished tile, before the submit."""
+        state0 = await page.evaluate(_VIDEO_JS)
+        if state0["pending"]:
+            # A clip still generating (a timed-out earlier run, say) would finish during
+            # ours and pass every readiness check as this run's result.
+            raise FlowAgentUiError(
+                detail=(
+                    "agent-only composer: a video is still generating in this project, so "
+                    "a new one could not be told apart from it; nothing was submitted"
+                ),
+                remediation_hint="Wait for the pending clip in the Flow project, then re-run.",
+            )
+        head = _tile_key(state0["finished"][0]) if state0["finished"] else None
+        return set(_video_uuids(state0)), head
+
+    async def _submit(self, page: Page, directive: str) -> None:
+        editor = page.locator(EDITOR).last
+        if not await editor.count():
+            raise UiSelectorDriftError(detail=f"agent-only composer: editor ({EDITOR}) missing")
+        await _click(editor, "the editor", timeout_ms=5000)
+        await page.keyboard.press("ControlOrMeta+a")
+        await page.keyboard.press("Delete")
+        await page.keyboard.insert_text(directive)
+        submit = page.locator(SUBMIT).last
+        if not await submit.count():
+            await _raise_if_out_of_credits(page)
+            raise UiSelectorDriftError(detail=f"agent-only composer: submit ({SUBMIT}) missing")
+        await _click(submit, "submit", timeout_ms=5000)
 
     async def generate(
         self,
@@ -538,134 +618,127 @@ class AgentOnlyComposer:
     ) -> list[TileMedia]:
         """Submit ``directive`` and return the ``count`` new results it produced."""
         baseline_gates = await page.locator(LIVE_GATE).count()
-        baseline_head: str | None = None
         if kind == "video":
-            state0 = await page.evaluate(_VIDEO_JS)
-            if state0["pending"]:
-                # A clip still generating (a timed-out earlier run, say) would finish during
-                # ours and pass every readiness check as this run's result.
-                raise FlowAgentUiError(
-                    detail=(
-                        "agent-only composer: a video is still generating in this project, so "
-                        "a new one could not be told apart from it; nothing was submitted"
-                    ),
-                    remediation_hint="Wait for the pending clip in the Flow project, then re-run.",
-                )
-            baseline = set(_video_uuids(state0))
-            baseline_head = _tile_key(state0["finished"][0]) if state0["finished"] else None
+            baseline, baseline_head = await self._video_baseline(page)
         else:
-            baseline = await self._any_uuids(page)
-
-        editor = page.locator(EDITOR).last
-        if not await editor.count():
-            raise UiSelectorDriftError(detail=f"agent-only composer: editor ({EDITOR}) missing")
-        await _click(editor, "the editor", timeout=5000)
-        await page.keyboard.press("ControlOrMeta+a")
-        await page.keyboard.press("Delete")
-        await page.keyboard.insert_text(directive)
-        submit = page.locator(SUBMIT).last
-        if not await submit.count():
-            await _raise_if_out_of_credits(page)
-            raise UiSelectorDriftError(detail=f"agent-only composer: submit ({SUBMIT}) missing")
-        await _click(submit, "submit", timeout=5000)
+            baseline, baseline_head = await self._any_uuids(page), None
+        await self._submit(page, directive)
         log.info("migrated.agent_only.submitted", kind=kind, count=count)
+        run = _Run(kind, budget_s, time.monotonic() + budget_s, baseline_gates)
+        if kind == "video":
+            return await self._await_video(
+                page, run, count, baseline, baseline_head, on_first_media
+            )
+        return await self._await_images(page, run, count, baseline)
 
-        deadline = time.monotonic() + budget_s
-        approvals = 0
+    async def _await_video(
+        self,
+        page: Page,
+        run: _Run,
+        count: int,
+        baseline: set[str],
+        baseline_head: str | None,
+        on_first_media: Callable[[str], object] | None,
+    ) -> list[TileMedia]:
         started = False
         peak_pending = 0
-        idle_since: float | None = None
         while True:
-            if time.monotonic() >= deadline:
-                raise TransportTimeoutError(
+            if await self._gate_turn(page, run):
+                continue
+            state = await page.evaluate(_VIDEO_JS)
+            named = [u for u in _video_uuids(state) if u not in baseline]
+            peak_pending = max(peak_pending, state["pending"])
+            if peak_pending > count:
+                # One gate can cover several clips (its title names the count), so the
+                # one-approval rule alone does not stop an over-billed run.
+                raise FlowAgentUiError(
                     detail=(
-                        f"agent-only composer: no finished {kind} within {budget_s:.0f}s of "
-                        f"submit (approvals={approvals})"
+                        f"agent-only composer: {peak_pending} videos were queued where "
+                        f"{count} was requested. Last reply: {await self._last_reply(page)}"
                     ),
                     retryable=False,
-                    remediation_hint=(
-                        "The generation may still finish in Flow — check the project before "
-                        "re-running, because a re-run submits again (a video spends credits "
-                        "again)."
-                    ),
+                    remediation_hint=_AFTER_SUBMIT_HINT,
                 )
-            if await page.locator(LIVE_GATE).count() > baseline_gates:
-                if approvals:
-                    raise FlowAgentUiError(
-                        detail=(
-                            "agent-only composer: the agent asked for a second credit "
-                            "confirmation in one run — it queued more than was requested, so "
-                            "the second one was not approved. Last reply: "
-                            f"{await self._last_reply(page)}"
-                        ),
-                        retryable=False,
-                        remediation_hint=_AFTER_SUBMIT_HINT,
-                    )
-                await self._approve_gate(page, baseline_gates)
-                approvals += 1
-                continue
+            if named and not started and on_first_media is not None:
+                started = True
+                await _maybe_await(on_first_media(named[0]))
+            ready = await self._ready_video(page, state, named, baseline_head)
+            if ready is not None:
+                return [ready]
+            await asyncio.sleep(POLL_S)
 
-            in_flight = bool(await page.locator(IN_FLIGHT).count())
-            if kind == "video":
-                state = await page.evaluate(_VIDEO_JS)
-                named = [u for u in _video_uuids(state) if u not in baseline]
-                peak_pending = max(peak_pending, state["pending"])
-                if peak_pending > count:
-                    # One gate can cover several clips (its title names the count), so the
-                    # one-approval rule alone does not stop an over-billed run.
-                    raise FlowAgentUiError(
-                        detail=(
-                            f"agent-only composer: {peak_pending} videos were queued where "
-                            f"{count} was requested. Last reply: {await self._last_reply(page)}"
-                        ),
-                        retryable=False,
-                        remediation_hint=_AFTER_SUBMIT_HINT,
-                    )
-                if named and not started and on_first_media is not None:
-                    started = True
-                    maybe = on_first_media(named[0])
-                    if asyncio.iscoroutine(maybe):
-                        await maybe
-                head = state["finished"][0] if state["finished"] else None
-                # All three: a uuid names THIS clip, nothing is still pending, and the
-                # newest finished tile is not the one that was newest before submit (a
-                # re-render alone swaps a tile's cdn media for /asb/ — not a new clip).
-                if named and head and not state["pending"] and _tile_key(head) != baseline_head:
-                    uuid = _cdn_uuid(head["video"], "video") or named[-1]
-                    src = head["video"] or await self._hover_video_src(page)
-                    if not src:
-                        await asyncio.sleep(POLL_S)
-                        continue
-                    log.info("migrated.agent_only.video_ready", media_id=uuid)
-                    return [TileMedia(uuid, src)]
-                await asyncio.sleep(POLL_S)
+    async def _ready_video(
+        self, page: Page, state: dict[str, Any], named: list[str], baseline_head: str | None
+    ) -> TileMedia | None:
+        """This run's finished clip, or None while it is not ready yet."""
+        head = state["finished"][0] if state["finished"] else None
+        # All three: a uuid names THIS clip, nothing is still pending, and the newest
+        # finished tile is not the one that was newest before submit (a re-render alone
+        # swaps a tile's cdn media for /asb/ — not a new clip).
+        if not (named and head and not state["pending"] and _tile_key(head) != baseline_head):
+            return None
+        uuid = _cdn_uuid(head["video"], "video") or named[-1]
+        src = head["video"] or await self._hover_video_src(page)
+        if not src:
+            return None
+        log.info("migrated.agent_only.video_ready", media_id=uuid)
+        return TileMedia(uuid, src)
+
+    async def _await_images(
+        self, page: Page, run: _Run, count: int, baseline: set[str]
+    ) -> list[TileMedia]:
+        idle_since: float | None = None
+        while True:
+            if await self._gate_turn(page, run):
                 continue
+            in_flight = bool(await page.locator(IN_FLIGHT).count())
             fresh = {u: m for u, m in (await self._media(page)).items() if u not in baseline}
             if len(fresh) >= count and not in_flight:
                 if len(fresh) > count:
                     raise FlowAgentUiError(
                         detail=(
-                            f"agent-only composer: {len(fresh)} {kind} results appeared where "
-                            f"{count} were requested ({', '.join(sorted(fresh))})"
+                            f"agent-only composer: {len(fresh)} {run.kind} results appeared "
+                            f"where {count} were requested ({', '.join(sorted(fresh))})"
                         ),
                         retryable=False,
                         remediation_hint=_AFTER_SUBMIT_HINT,
                     )
                 return list(fresh.values())
-            if kind == "image" and not approvals and not in_flight and not fresh:
-                idle_since = idle_since or time.monotonic()
-                if time.monotonic() - idle_since >= IDLE_S:
-                    raise FlowAgentUiError(
-                        detail=(
-                            "agent-only composer: the agent turn ended with no image and no "
-                            f"credit gate. Last reply: {await self._last_reply(page)}"
-                        ),
-                        retryable=False,
-                        remediation_hint=_AFTER_SUBMIT_HINT,
-                    )
-            else:
-                idle_since = None
+            busy = bool(run.approvals or in_flight or fresh)
+            idle_since = await self._idle_turn(page, idle_since, busy=busy)
             await asyncio.sleep(POLL_S)
+
+    async def _idle_turn(self, page: Page, since: float | None, *, busy: bool) -> float | None:
+        """Fail an image turn that ended with no gate and no tile for ``IDLE_S``."""
+        if busy:
+            return None
+        since = since or time.monotonic()
+        if time.monotonic() - since >= IDLE_S:
+            raise FlowAgentUiError(
+                detail=(
+                    "agent-only composer: the agent turn ended with no image and no "
+                    f"credit gate. Last reply: {await self._last_reply(page)}"
+                ),
+                retryable=False,
+                remediation_hint=_AFTER_SUBMIT_HINT,
+            )
+        return since
+
+
+@dataclass
+class _Run:
+    """One generation's budget and gate bookkeeping, shared by both result loops."""
+
+    kind: Section
+    budget_s: float
+    deadline: float
+    baseline_gates: int
+    approvals: int = 0
+
+
+async def _maybe_await(value: object) -> None:
+    if asyncio.iscoroutine(value):
+        await value
 
 
 def unported_image(request: GenerateImageRequest) -> str | None:
@@ -719,7 +792,7 @@ async def _restore_quietly(
     """Restore must never mask the run's own outcome; a failure is logged with the originals."""
     try:
         await composer.restore_defaults(page, snapshot)
-    except Exception as exc:  # noqa: BLE001 - reported, never raised over the real result
+    except Exception as exc:  # noqa: BLE001 - reported and never raised over the real result
         log.warning(
             "migrated.agent_only.defaults_restore_failed",
             section=snapshot.section,
@@ -747,7 +820,7 @@ async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) 
                 f"agent-only composer: refusing to download a clip from "
                 f"{urlsplit(src).hostname!r} (not an allowed Google host)"
             ),
-            route="agent-only:video",
+            route=_VIDEO_ROUTE,
         )
     resp = await page.request.get(src, timeout=180_000, max_redirects=5)
     final_host = urlsplit(str(resp.url)).hostname or ""
@@ -757,13 +830,13 @@ async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) 
     if not (on_video_cdn or _is_allowed_download_host(str(resp.url))):
         raise WireFormatError(
             detail=f"agent-only composer: clip download was redirected to {final_host!r}",
-            route="agent-only:video",
+            route=_VIDEO_ROUTE,
         )
     if resp.status >= 300:
         raise WireFormatError(
             detail=f"agent-only composer: clip download answered HTTP {resp.status}",
             status=resp.status,
-            route="agent-only:video",
+            route=_VIDEO_ROUTE,
         )
     body = await resp.body()
     if body[4:8] != b"ftyp":
@@ -771,7 +844,7 @@ async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) 
             detail=(
                 f"agent-only composer: the finished clip did not download as an MP4 ({len(body)} B)"
             ),
-            route="agent-only:video",
+            route=_VIDEO_ROUTE,
         )
     target = out_dir or Path.cwd()
     target.mkdir(parents=True, exist_ok=True)
