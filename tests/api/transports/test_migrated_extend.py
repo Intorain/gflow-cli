@@ -332,6 +332,24 @@ async def test_a_media_missing_from_the_project_is_refused_before_any_click(
 
 
 @pytest.mark.asyncio
+async def test_a_later_listing_that_holds_the_clip_is_not_lost_to_an_earlier_one(
+    driver: dict[str, Any],
+) -> None:
+    page = _Page([[[_image_record()]]], then=_zzl0ze())
+    out = await _run(page)
+    assert out.record.media_id == NEW_MEDIA
+
+
+@pytest.mark.asyncio
+async def test_no_captured_submit_facts_is_logged(driver: dict[str, Any]) -> None:
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        await _run(_Page(_zzl0ze()))
+    assert any(e["event"] == "migrated_extend.no_submit_facts" for e in logs)
+
+
+@pytest.mark.asyncio
 async def test_an_image_is_refused_before_any_click(driver: dict[str, Any]) -> None:
     page = _Page([[[_image_record()]]], land=f"https://flow.google.com/project/{PID}/edit/{IMAGE}")
     with pytest.raises(ConfigurationError, match="image"):

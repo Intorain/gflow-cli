@@ -319,10 +319,16 @@ async def _anchor(page: Page, selector: str, *, named: str) -> Any:
 
 
 async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceClip | None:
-    """Open the clip editor and read its own ``Zzl0ze`` reply (no request of ours)."""
-    found: asyncio.Future[SourceClip | None] = asyncio.get_running_loop().create_future()
+    """Open the clip editor and read its own ``Zzl0ze`` replies (no request of ours).
+
+    Settles on the reply that holds ``media_id``; at the budget, ``None`` if a read
+    answered without it (exit 11), a timeout if none answered at all (exit 9).
+    """
+    found: asyncio.Future[SourceClip] = asyncio.get_running_loop().create_future()
+    seen = False
 
     async def on_response(response: Any) -> None:
+        nonlocal seen
         # Matched on the whole URL, not the first `rpcids` entry: the read can be batched
         # with others (`rpcids=A,Zzl0ze`), and parse_frames picks its frame out.
         if found.done() or LISTING_RPC not in str(getattr(response, "url", "")):
@@ -332,8 +338,12 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
         except Exception:  # noqa: BLE001 - an aborted body is not our frame
             return
         for rid, payload in parse_frames(text):
-            if rid == LISTING_RPC and not found.done():
-                found.set_result(source_record(payload, media_id))
+            if rid != LISTING_RPC:
+                continue
+            seen = True
+            clip = source_record(payload, media_id)
+            if clip is not None and not found.done():
+                found.set_result(clip)
 
     page.on("response", on_response)
     try:
@@ -343,6 +353,8 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
         )
         return await asyncio.wait_for(found, LISTING_BUDGET_S)
     except TimeoutError as exc:
+        if seen:
+            return None
         raise TransportTimeoutError(
             detail=(
                 f"migrated host: the clip editor's project read ({LISTING_RPC}) did not "
@@ -432,6 +444,8 @@ async def run_extend(  # noqa: PLR0913
                 ),
                 route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
             )
+        if not facts:
+            log.warning("migrated_extend.no_submit_facts", workflow_id=info.workflow_id)
         if on_started is not None:
             # The guard read the page's own fZytfe before this reply arrived.
             accepted = ExtendStarted(
