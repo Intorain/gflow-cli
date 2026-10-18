@@ -256,9 +256,12 @@ jobs:
         # (bad marker/-k filter, broken conftest), never routine deletions.
         run: uv run python scripts/ci/check_test_count.py pytest-report.xml 2000
 
-      # Upload coverage XML so the sonar job can consume it
+      # Upload coverage XML so the sonar job can consume it. It must come from the job
+      # that installs Chromium: the real-DOM fixture tests skip everywhere else, so a
+      # 3.11 upload counted every browser-tested module as uncovered (#989's
+      # agent_only_composer.py measured 39% new coverage with its tests green).
       - name: Upload coverage report
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-xml
