@@ -4,6 +4,30 @@
 
 ## Current release
 
+**v0.86.0 — alpha.** Video extend and the agent-only composer on flow.google.com.
+
+**`gflow video extend` runs on flow.google.com, one segment at a time (#991, #639).**
+gflow drives Flow's own extend UI. The page mints its own reCAPTCHA token and builds
+the request; gflow observes it and never replays it. A route guard aborts any scene or
+extend request that names the wrong clip before Flow bills it. A media id that is not a
+video in the project exits 11 before any click. Chained extends, `--scene`/`--resume-from`,
+`--seed` and an `--aspect` other than the source's are not ported yet and exit 36 before
+anything is billed. Built on @stgmt's
+wire research (#882).
+
+**Text-to-image and text-to-video on Flow's agent-only composer (#989, #799).** On accounts
+that Flow serves only the agent-only composer, `gflow image t2i` and `gflow video t2v` now
+run instead of exiting 25. That includes their MCP twins. Every other form exits 36 before
+any click. `GFLOW_CLI_AGENT_CONFIRM` sets how the run treats Flow's credit confirmation.
+Reading the gate's clip count is #988. Contributed by @WAOmaster (#824).
+
+**`gflow auth renew` and `gflow credits … --refresh` (#982).** Saved sessions are refreshed
+headlessly, without signing in again. Contributed by @ziyedbe.
+
+Full ledger: [LIVE_VERIFICATION_v0.86.0](LIVE_VERIFICATION_v0.86.0.md).
+
+<details><summary>v0.85.0 — images on flow.google.com can tag a character</summary>
+
 **v0.85.0 — alpha.** Images on flow.google.com can tag a character.
 
 **`@Character` on `gflow image t2i`/`i2i` (#723, #979).** On an account Flow serves from
@@ -20,6 +44,8 @@ Contributed by @BeckZero.
 **`gflow image t2i --project-name` titles a multi-prompt run's project (#975).**
 
 Full ledger: [LIVE_VERIFICATION_v0.85.0](LIVE_VERIFICATION_v0.85.0.md).
+
+</details>
 
 <details><summary>v0.84.0 — batch image runs target an existing project</summary>
 
@@ -487,6 +513,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `video extend` driven through Flow's own UI on flow.google.com, single segment, with a route guard on the billed request (#991); t2i/t2v on the agent-only composer (#989); `auth renew` / `credits --refresh` (#982) | ✅ done (v0.86.0) |
 | `@Character` mentions on flow.google.com images attach the Flow character by exact picker title, verified as an entity chip, with an exact-set submit guard (#723, #979); multi-prompt `t2i --project-name` titles its project (#975) | ✅ done (v0.85.0) |
 | `gflow run --project` (#970) and multi-prompt `gflow image t2i --project` (#971) generate into an existing Flow project and create none | ✅ done (v0.84.0) |
 | `--duration` binds in a non-English Flow UI (#963), a notice-only cookie bar is acknowledged, image upscale clicks through locators (#957), and `auth status` probes with the profile's own channel (#962) | ✅ done (v0.83.2) |
