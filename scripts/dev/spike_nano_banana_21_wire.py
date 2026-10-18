@@ -55,7 +55,7 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     MENU_ITEM,
     MigratedComposer,
     _ligature,  # pyright: ignore[reportPrivateUsage]
-    _post_data,  # pyright: ignore[reportPrivateUsage]
+    request_body,
 )
 
 _TOKENS = ("NARWHAL", "BELUGA", "GEM_PIX_2", "HARBOR_SEAL", "Nano Banana 2.1", "Nano Banana")
@@ -112,7 +112,7 @@ async def main() -> int:
 
         def on_request(req: Any) -> None:
             if IMAGE_SUBMIT_RPC in str(getattr(req, "url", "")):
-                bodies.append(_hits(_post_data(req)))
+                bodies.append(_hits(request_body(req)))
 
         page.on("response", on_response)
         page.on("request", on_request)

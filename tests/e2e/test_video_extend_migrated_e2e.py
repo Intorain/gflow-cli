@@ -66,8 +66,8 @@ def _ids() -> tuple[str, str]:
 
 async def _block_fzytfe(route: Any, request: Any) -> None:
     """Context-level: whatever the driver does, ``fZytfe`` never leaves the browser."""
-    body = migrated_composer._post_data(request)  # noqa: SLF001
-    rpcid = migrated_composer._rpcid(str(request.url)) or migrated_composer._body_rpcid(body)  # noqa: SLF001
+    body = migrated_composer.request_body(request)  # noqa: SLF001
+    rpcid = migrated_composer.url_rpcid(str(request.url)) or migrated_composer.body_rpcid(body)  # noqa: SLF001
     if rpcid == mx.EXTEND_SUBMIT_RPC:
         await route.abort()
         return
@@ -101,13 +101,13 @@ async def test_e2e_extend_submit_contract_at_zero_cost(
 
     async def capture_release(route: Any, rpcid: str | None) -> None:
         if rpcid == mx.EXTEND_SUBMIT_RPC:
-            body = migrated_composer._post_data(route.request)  # noqa: SLF001
+            body = migrated_composer.request_body(route.request)  # noqa: SLF001
             entry = mx._at(mx._inner(rpcid, body), 0, 0)  # noqa: SLF001
             seen["fZytfe"].append({"slot1": mx._at(entry, 0, 1), "facts": mx.submit_facts(body)})  # noqa: SLF001
             await route.abort()  # the checked submit is kept at $0 too
             return
         if rpcid == mx.SCENE_CREATE_RPC:
-            body = migrated_composer._post_data(route.request)  # noqa: SLF001
+            body = migrated_composer.request_body(route.request)  # noqa: SLF001
             seen["rqZuUc"].append(media in body)
         await route.fallback()
 
@@ -146,7 +146,7 @@ async def test_e2e_a_media_not_in_the_project_is_refused_before_any_click(
     transport, page = await _live_page(e2e_profile_dir)
 
     def on_request(request: Any) -> None:
-        rpcid = migrated_composer._rpcid(str(request.url))  # noqa: SLF001
+        rpcid = migrated_composer.url_rpcid(str(request.url))  # noqa: SLF001
         if rpcid in (mx.SCENE_CREATE_RPC, mx.EXTEND_SUBMIT_RPC):
             sent.append(rpcid)
 

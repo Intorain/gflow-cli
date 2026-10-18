@@ -22,7 +22,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -32,9 +32,7 @@ from gflow_cli.api.transports.batchexecute import find_record, parse_frames
 from gflow_cli.api.transports.migrated_composer import (
     MODEL_KEY,
     MigratedComposer,
-    _body_rpcid,  # pyright: ignore[reportPrivateUsage]
-    _post_data,  # pyright: ignore[reportPrivateUsage]
-    _rpcid,  # pyright: ignore[reportPrivateUsage]
+    request_body,
 )
 from gflow_cli.api.transports.migrated_recover import MIGRATED_CLIP_URL
 from gflow_cli.api.video_extend import ExtendStarted
@@ -183,20 +181,38 @@ def require_video_source(clip: SourceClip | None, *, media_id: str, project_id: 
 # --- the route guard's verdict ----------------------------------------------
 
 
-def _inner(rpcid: str, body: str) -> Any:
-    """The decoded inner payload of ``rpcid`` in a form-decoded ``f.req`` body, or None."""
+def _frames(body: str) -> list[Any]:
+    """Every ``[rpcid, inner, ...]`` frame of a form-decoded ``f.req`` body."""
     start = body.find("f.req=")
     if start < 0:
-        return None
+        return []
     try:
         outer, _ = json.JSONDecoder().raw_decode(body, start + len("f.req="))
-        frames = _at(outer, 0)
-        for i in range(len(cast("list[Any]", frames)) if isinstance(frames, list) else 0):
-            if _at(frames, i, 0) == rpcid:
-                return json.loads(str(_at(frames, i, 1)))
-    except (ValueError, TypeError):
-        return None
+    except ValueError:
+        return []
+    frames = _at(outer, 0)
+    return cast("list[Any]", frames) if isinstance(frames, list) else []
+
+
+def _inner(rpcid: str, body: str) -> Any:
+    """The decoded inner payload of ``rpcid`` in a form-decoded ``f.req`` body, or None."""
+    for frame in _frames(body):
+        if _at(frame, 0) == rpcid:
+            try:
+                return json.loads(str(_at(frame, 1)))
+            except (ValueError, TypeError):
+                return None
     return None
+
+
+def url_rpcids(url: str) -> list[str]:
+    """Every id in a ``batchexecute`` URL's ``rpcids=`` list (it may batch several)."""
+    return [r for v in parse_qs(urlsplit(url).query).get("rpcids", []) for r in v.split(",") if r]
+
+
+def batch_rpcids(rpcids: list[str], body: str) -> list[str]:
+    """``rpcids`` plus the id of every ``f.req`` frame, deduplicated in order."""
+    return list(dict.fromkeys([*rpcids, *(str(_at(f, 0)) for f in _frames(body))]))
 
 
 def submit_facts(body: str) -> tuple[str | None, str | None]:
@@ -258,6 +274,23 @@ def extend_request_problem(
             ),
             remediation_hint="Drop --aspect; the extension keeps the source clip's aspect.",
         )
+    return None
+
+
+def batch_request_problem(
+    rpcids: list[str], body: str, *, media_id: str, workflow_id: str, aspect: str | None
+) -> GFlowError | None:
+    """The first problem of any rpc this (possibly batched) request carries, or ``None``.
+
+    A batch is judged frame by frame: a wrong ``fZytfe`` behind another rpc
+    (``rpcids=uwAyfb,fZytfe``) must not ride through on the first id's verdict.
+    """
+    for rpcid in batch_rpcids(rpcids, body):
+        problem = extend_request_problem(
+            rpcid, body, media_id=media_id, workflow_id=workflow_id, aspect=aspect
+        )
+        if problem is not None:
+            return problem
     return None
 
 
@@ -359,21 +392,36 @@ async def run_extend(  # noqa: PLR0913
     facts: dict[str, str | None] = {}
 
     def check(rpcid: str, body: str) -> GFlowError | None:
-        return extend_request_problem(
-            rpcid, body, media_id=media_id, workflow_id=workflow_id, aspect=aspect
+        return batch_request_problem(
+            [rpcid], body, media_id=media_id, workflow_id=workflow_id, aspect=aspect
         )
 
+    released_submits = 0
+
     async def guard(route: Any, request: Any) -> None:
-        body = _post_data(request)
-        rpcid = _rpcid(str(getattr(request, "url", ""))) or _body_rpcid(body)
-        verdict = check(rpcid, body) if rpcid else None
+        nonlocal released_submits
+        body = request_body(request)
+        rpcids = batch_rpcids(url_rpcids(str(getattr(request, "url", ""))), body)
+        verdict = batch_request_problem(
+            rpcids, body, media_id=media_id, workflow_id=workflow_id, aspect=aspect
+        )
+        is_submit = EXTEND_SUBMIT_RPC in rpcids
+        if verdict is None and is_submit and released_submits:
+            # One billed extend per run: a second fZytfe would bill a second clip.
+            verdict = WireFormatError(
+                detail=f"migrated host: a second {EXTEND_SUBMIT_RPC} in one run — refused",
+                route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
+            )
         if verdict is not None:
             await route.abort()
-            log.warning("migrated_extend.request_refused", rpc=rpcid, error=type(verdict).__name__)
+            log.warning(
+                "migrated_extend.request_refused", rpcs=rpcids, error=type(verdict).__name__
+            )
             return
-        if rpcid == EXTEND_SUBMIT_RPC:
+        if is_submit:
+            released_submits += 1
             facts["model_key"], facts["aspect"] = submit_facts(body)
-        await _release(route, rpcid)
+        await _release(route, EXTEND_SUBMIT_RPC if is_submit else (rpcids[0] if rpcids else None))
 
     async def started(info: VideoStarted) -> None:
         if info.workflow_id == workflow_id:
@@ -430,6 +478,7 @@ __all__ = [
     "EXTEND_SUBMIT_RPC",
     "ExtendOutcome",
     "SourceClip",
+    "batch_request_problem",
     "extend_request_problem",
     "require_video_source",
     "run_extend",

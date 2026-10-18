@@ -35,9 +35,9 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     MODEL_KEY,
     SUBMIT_RPCS,
     MigratedComposer,
-    _body_rpcid,
     _ligature,
-    _rpcid,
+    body_rpcid,
+    url_rpcid,
 )
 from gflow_cli.paths import default_home, profile_subdir  # noqa: E402
 
@@ -190,14 +190,14 @@ async def submit_probe(
 
             async def block_submit(route, request) -> None:
                 body = request.post_data or ""
-                rpcid = _body_rpcid(body) or _rpcid(request.url)
+                rpcid = body_rpcid(body) or url_rpcid(request.url)
                 if rpcid in SUBMIT_RPCS:
                     key = MODEL_KEY.search(body)
                     captured.append(
                         {
                             "rpcid": rpcid,
                             "rpcid_source": "f.req body"
-                            if _body_rpcid(body)
+                            if body_rpcid(body)
                             else "url rpcids param",
                             "model_key": key.group(0) if key else None,
                             "carries_start_id": start_id in body,

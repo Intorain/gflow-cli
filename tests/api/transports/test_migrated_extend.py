@@ -141,6 +141,9 @@ def test_a_video_source_returns_its_workflow() -> None:
 # --- the route guard's verdicts (mitigation 3) ------------------------------
 
 
+_IDS: dict[str, Any] = {"media_id": MEDIA, "workflow_id": WF, "aspect": None}
+
+
 def _check(rpcid: str, body: str, aspect: str | None = None) -> Any:
     return mx.extend_request_problem(rpcid, body, media_id=MEDIA, workflow_id=WF, aspect=aspect)
 
@@ -432,3 +435,56 @@ async def test_the_route_guard_aborts_a_wrong_request_and_releases_a_right_one(
     ]
     assert out.model_key == "veo_3_1_extension_lite"
     assert out.aspect == "16:9"
+
+
+class _BatchedRequest:
+    """A batched request: every rpcid in the URL list, one ``f.req`` frame each."""
+
+    def __init__(self, *frames: tuple[str, Any]) -> None:
+        rpcids = ",".join(rpcid for rpcid, _ in frames)
+        self.url = f"https://flow.google.com/_/X/data/batchexecute?rpcids={rpcids}&rt=c"
+        outer = [[[rpcid, json.dumps(inner), None, "generic"] for rpcid, inner in frames]]
+        self.post_data = f"f.req={json.dumps(outer)}&at=AJpMEa0:1760000000000&"
+
+
+def _fzytfe_inner(wf: str = WF) -> Any:
+    return json.loads(json.loads(_fzytfe(wf=wf)[len("f.req=") :].split("&at=")[0])[0][0][1])
+
+
+async def _guard_calls(monkeypatch: pytest.MonkeyPatch, *requests: Any) -> list[str]:
+    calls: list[str] = []
+
+    async def observe(_self: Any, page: Any, **_kwargs: Any) -> GenerationRecord:
+        for request in requests:
+            route = _Route()
+            await page.routes[0](route, request)
+            calls.append(route.calls[0])
+        return _done_record()
+
+    monkeypatch.setattr(mx.MigratedComposer, "submit_and_observe", observe)
+    await _run(_Page(_zzl0ze()))
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_extend_batched_behind_another_rpc_is_aborted(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wrong = _BatchedRequest(("uwAyfb", [SCENE]), ("fZytfe", _fzytfe_inner(wf=OTHER_WF)))
+    right = _BatchedRequest(("uwAyfb", [SCENE]), ("fZytfe", _fzytfe_inner()))
+    assert await _guard_calls(monkeypatch, wrong, right) == ["abort", "fallback"]
+
+
+@pytest.mark.asyncio
+async def test_a_second_extend_after_a_released_one_is_aborted(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = await _guard_calls(
+        monkeypatch, _Request("fZytfe", _fzytfe()), _Request("fZytfe", _fzytfe())
+    )
+    assert calls == ["fallback", "abort"]
+
+
+def test_the_observer_check_judges_every_frame_of_a_batch() -> None:
+    body = _BatchedRequest(("uwAyfb", [SCENE]), ("fZytfe", _fzytfe_inner(wf=OTHER_WF))).post_data
+    assert mx.batch_request_problem(["uwAyfb"], body, **_IDS) is not None

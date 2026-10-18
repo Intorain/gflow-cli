@@ -780,16 +780,16 @@ async def _raise_if_out_of_credits(page: Any) -> None:
         )
 
 
-def _rpcid(url: str) -> str | None:
+def url_rpcid(url: str) -> str | None:
     m = re.search(r"[?&]rpcids=([A-Za-z0-9]+)", url)
     return m.group(1) if m else None
 
 
-def _body_rpcid(body: str) -> str | None:
+def body_rpcid(body: str) -> str | None:
     """The rpc name inside a ``batchexecute`` POST body, or ``None``.
 
     The interpolation submit (``nprQif``) carries no ``rpcids`` query param — the
-    name lives at the head of ``f.req``. ``_post_data`` form-decodes first, so the
+    name lives at the head of ``f.req``. ``request_body`` form-decodes first, so the
     match runs on plain text either way.
     """
     m = re.search(r'f\.req=\[\[\["([A-Za-z0-9]+)"', body or "")
@@ -808,7 +808,7 @@ def _first_uuid(text: str) -> str | None:
     return None
 
 
-def _post_data(request: Any) -> str:
+def request_body(request: Any) -> str:
     """The POST body as text, or ``""`` when Playwright cannot decode it —
     a listener must not raise.
 
@@ -1052,7 +1052,7 @@ async def _guard_image_submit(
     such a run: by then Flow has generated it, spent quota and added an image (#913,
     SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
     """
-    problem = _image_body_problem(_post_data(request), reference_ids, model, entity_ids)
+    problem = _image_body_problem(request_body(request), reference_ids, model, entity_ids)
     if problem is not None:
         await route.abort()
         return problem
@@ -2063,7 +2063,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            if "batchexecute" not in url or _rpcid(url) != UPLOAD_RPC or reply.done():
+            if "batchexecute" not in url or url_rpcid(url) != UPLOAD_RPC or reply.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
             text = ""
@@ -2084,7 +2084,7 @@ class MigratedComposer:
         def on_request(request: Any) -> None:
             nonlocal sent
             url = str(getattr(request, "url", ""))
-            if "batchexecute" in url and _rpcid(url) == UPLOAD_RPC:
+            if "batchexecute" in url and url_rpcid(url) == UPLOAD_RPC:
                 sent = True
 
         page.on("response", on_response)
@@ -2827,8 +2827,8 @@ class MigratedComposer:
             # without that param; on the account measured 2026-09-17 it DID carry it
             # (`nprQif` in the URL, key `omni_flash_i2v_8s_first_last`), so treat the
             # body as a second carrier rather than the rule — cohorts differ here.
-            body = _post_data(request)
-            rpcid = _rpcid(url) or _body_rpcid(body)
+            body = request_body(request)
+            rpcid = url_rpcid(url) or body_rpcid(body)
             # Record request rpcids too: at timeout the set shows both what went
             # out and what answered (issue #639).
             if rpcid is not None:
@@ -2896,7 +2896,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            rpcid = _rpcid(url) if "batchexecute" in url else None
+            rpcid = url_rpcid(url) if "batchexecute" in url else None
             if rpcid is not None:
                 seen_submit_rpcs.add(rpcid)
             if "batchexecute" not in url:
@@ -3171,10 +3171,10 @@ class MigratedComposer:
 
         def on_request(raw_request: Any) -> None:
             url = str(getattr(raw_request, "url", ""))
-            if _rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
                 return
             problem = _image_body_problem(
-                _post_data(raw_request), reference_ids, request.model, entity_ids
+                request_body(raw_request), reference_ids, request.model, entity_ids
             )
             if problem is not None:
                 route_error.set_result(
@@ -3183,7 +3183,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            if _rpcid(url) != IMAGE_SUBMIT_RPC or result.done():
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or result.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
             if status != 200:
@@ -3245,13 +3245,13 @@ class MigratedComposer:
             result.set_result(images)
 
         def is_image_submit(url: str) -> bool:
-            return _rpcid(url) == IMAGE_SUBMIT_RPC
+            return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
         async def guard(route: Any, raw_request: Any) -> None:
             problem = await _guard_image_submit(
                 route, raw_request, reference_ids, request.model, entity_ids
             )
-            found = _image_body_references(_post_data(raw_request))
+            found = _image_body_references(request_body(raw_request))
             log.info(
                 "migrated.image_submit_guarded",
                 outcome="aborted" if problem else "passed",
