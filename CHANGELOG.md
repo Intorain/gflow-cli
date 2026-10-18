@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/dev/cleanup.py` — sweeps what a release or takeover session leaves behind:
+  merged worktrees and branches, done `pr-<N>` fetch branches, merged same-repo origin
+  branches (`--remote`), stray `.env` copies, old `bt*` pytest basetemps, and dead agentctl
+  agents (reported only). Dry run unless `--apply`; never touches the main checkout, a dirty
+  worktree, an unmerged branch, `develop` or `main`. The release skill's final report runs it.
+
 ## [0.86.0] — 2026-10-18
 
 ### Added
