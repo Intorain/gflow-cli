@@ -47,11 +47,12 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   `_unported_form` and `_unported_image_form` in `migrated_composer.py` ARE the
   matrix. As of #639's end-frame slice the ported set is t2v; i2v from a local start
   frame AND from a local start+end pair (interpolation, 2026-09-17); r2v from local
-  files; `character create`/`list`; image t2i/i2i from local files; and a character
-  by name on an image (`@Name`, #723) — each with `--project`. Unported:
+  files; `character create`/`list`; image t2i/i2i from local files; a character
+  by name on an image (`@Name`, #723); and a single-segment `video extend` (#882) —
+  each with `--project`. Unported:
   frames/references by UUID or `@Name`, character entities on a VIDEO generation, an
   entity id without a name on an image, Agent instructions, Imagen 4, `image batch`, the 3:4
-  image aspect, scenes, extend and tools. Of those only i2v-by-UUID rests on a
+  image aspect, scenes, multi-segment / `--scene` / `--seed` extend (exit 36) and tools. Of those only i2v-by-UUID rests on a
   positive observation of absence; the rest are *unported by gflow*, never proven
   impossible on the host.
 - Both accounts are fine for **mint-free** REST-path work (`gflow project list`,
@@ -68,8 +69,9 @@ having a migrated driver at all, and read as "the new host cannot be driven"):
   now RUN when Flow serves flow.google.com and the client skips the labs mint entirely.
   Upscale is ported too (#922): video always drives flow.google.com; image tries the labs
   mint first unless the pooled page is already on flow.google.com, and falls back to the
-  migrated driver when that mint raises exit 36. `extend` still takes the old path and
-  exits 36.
+  migrated driver when that mint raises exit 36. `extend` is ported for one segment
+  (#882): it drives Flow's own extend UI, so the page mints its own token and no labs
+  mint runs; more than one segment, `--scene`/`--resume-from` and `--seed` exit 36.
 - **Labs-side** behaviour is what is now unreachable: no maintainer account is left on
   `labs.google`, so a labs-only claim is cohort-external — verify via a contributor or
   record it NOT verified.

@@ -2237,13 +2237,14 @@ async def _extend_session(  # noqa: PLR0913
         "The shared --project help calls it optional because it is — for every "
         "other generate command.\n\n"
         "Each segment spends credits — the exact cost depends on your plan and is "
-        "shown for confirmation before anything is submitted.\n\n"
+        "shown for confirmation before anything is submitted (labs.google).\n\n"
         "Note: a segment carries ~7s of content though Flow bills 8s, so a "
         "multi-segment render holds a frozen, silent second at each internal "
         "seam. See KNOWN_ISSUES.\n\n"
         "On flow.google.com gflow drives Flow's own extend UI: one segment per call "
         "(one PROMPT; --segments > 1, --scene/--resume-from and --seed exit 36), in "
-        "the source clip's aspect, downloaded to --output or the output directory. "
+        "the source clip's aspect; the new extension clip alone (not the joined "
+        "scene) is downloaded to --output or the output directory. "
         "Each run leaves a new scene in the project, and the price is not shown "
         "before submitting there."
     ),
@@ -2289,8 +2290,9 @@ async def _extend_session(  # noqa: PLR0913
     default=None,
     type=click.Path(dir_okay=False, path_type=Path),
     help=(
-        "Render the finished scene to ONE mp4 here (server-side concat, credit-free). "
-        "On flow.google.com: where the new segment is saved."
+        "labs.google: render the whole scene (source clip + extensions) to ONE mp4 "
+        "here (server-side concat, credit-free). flow.google.com: save only the new "
+        "extension clip here — scene concat is not ported there yet."
     ),
 )
 @_project_option

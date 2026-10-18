@@ -999,7 +999,7 @@ server-side concat, which is credit-free. Without `-o`, render later with
 | Flag | Meaning |
 |---|---|
 | `-n`, `--segments N` | How many 8s continuations (1–30). Default: one per prompt |
-| `-o`, `--output PATH` | Render the finished scene to one mp4 (free) |
+| `-o`, `--output PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save only the new extension clip — scene concat is not ported there yet |
 | `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model. Default 9:16 on labs.google; flow.google.com keeps the source clip's aspect |
 | `--project ID` | Required — the project owning `MEDIA_ID` |
 | `--scene ID` | Extend inside an existing scene instead of creating one |
