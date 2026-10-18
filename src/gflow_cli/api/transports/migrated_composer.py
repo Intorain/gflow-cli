@@ -1082,6 +1082,32 @@ def _redacted_page_url(page: Any) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 
+def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
+    """Why the trigger did not come back after the agent chip was clicked (#749)."""
+    if pressed:
+        return (
+            f"migrated host: the account was in Flow's agent mode, the chip was "
+            f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
+            f"{page.url} (host=migrated) — the mode is pinned on this account; "
+            f"turn the Agent chip off in a browser and re-run: {error}"
+        )
+    if pressed is None:
+        return (
+            f"migrated host: the account was in Flow's agent mode, the chip was "
+            f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
+            f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
+            f"— the chip could not be read back, so whether the mode is still "
+            f"on is unknown; check the Agent chip in a browser before filing "
+            f"this as drift: {error}"
+        )
+    return (
+        f"migrated host: Flow's agent mode was left, but the settings "
+        f"trigger ({READY_ANCHOR}) still did not become visible within "
+        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
+        f"is off, so this is ordinary selector drift: {error}"
+    )
+
+
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
 
@@ -1234,28 +1260,9 @@ class MigratedComposer:
             # healthy run nothing — no extra query is issued unless the gate has failed.
             state, click_error = await self._exit_agent_mode(page)
             if state == "absent":
-                # #799. Before calling this drift, separate the third cohort from our own
-                # bug, because the DOM they leave is the same one: the trigger present
-                # under a bare `hidden`. With a pressed chip that is agent mode and the
-                # branch above recovers it. With NO chip in the page at all, there is no
-                # classic arm to return to — the account's only composer is the agent
-                # panel, so model/aspect/count live in Agent settings as defaults and
-                # nothing gflow drives is on the page. A trigger that has LEFT the DOM is
-                # the opposite finding, a renamed selector, and stays drift.
-                if await self._is_agent_only_composer(page, trigger):
-                    log.info("migrated.agent_only_composer", issue_ref="#799", url=page.url)
-                    return "agent_only"
-                if timeout_s > early_s:
-                    # Neither composer yet — a slow mount. Spend the rest of the gate on a
-                    # full re-entry, so the chip and the discriminator get asked again.
-                    return await self.ensure_editor(page, project_id, timeout_s=timeout_s - early_s)
-                raise UiSelectorDriftError(
-                    detail=(
-                        f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
-                        f"become visible within {timeout_s:.0f}s on {page.url} "
-                        f"(host=migrated): {e}"
-                    ),
-                ) from e
+                return await self._absent_chip_verdict(
+                    page, project_id, trigger, timeout_s=timeout_s, early_s=early_s, error=e
+                )
             if state == "blocked":
                 # Nothing was toggled, so the trigger cannot have changed — spending
                 # AGENT_RECOVERY_S here buys a verdict already in hand. The click's own
@@ -1277,30 +1284,7 @@ class MigratedComposer:
                 # BACK rather than assumed. Reporting both as "the mode may be pinned"
                 # hides genuine selector drift behind a mode the driver already left.
                 pressed = await self._agent_chip_pressed(page)
-                if pressed:
-                    detail = (
-                        f"migrated host: the account was in Flow's agent mode, the chip was "
-                        f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
-                        f"{page.url} (host=migrated) — the mode is pinned on this account; "
-                        f"turn the Agent chip off in a browser and re-run: {e2}"
-                    )
-                elif pressed is None:
-                    detail = (
-                        f"migrated host: the account was in Flow's agent mode, the chip was "
-                        f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
-                        f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
-                        f"— the chip could not be read back, so whether the mode is still "
-                        f"on is unknown; check the Agent chip in a browser before filing "
-                        f"this as drift: {e2}"
-                    )
-                else:
-                    detail = (
-                        f"migrated host: Flow's agent mode was left, but the settings "
-                        f"trigger ({READY_ANCHOR}) still did not become visible within "
-                        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
-                        f"is off, so this is ordinary selector drift: {e2}"
-                    )
-                raise UiSelectorDriftError(detail=detail) from e2
+                raise UiSelectorDriftError(detail=_recovery_detail(page, pressed, e2)) from e2
         # One count() on the happy path, for the cohort that would render the agent prompt
         # box while LEAVING the trigger visible: `send_prompt` would type into the agent
         # composer ([contenteditable='true'].first) and nothing downstream would notice.
@@ -1318,6 +1302,40 @@ class MigratedComposer:
             log.warning("migrated.agent_mode_chip_pressed_while_ready", issue_ref="#752")
         log.info("migrated.editor_ready", url=page.url)
         return "classic"
+
+    async def _absent_chip_verdict(
+        self,
+        page: Page,
+        project_id: str,
+        trigger: Locator,
+        *,
+        timeout_s: float,
+        early_s: float,
+        error: Exception,
+    ) -> ComposerKind:
+        """No agent-mode chip and no visible trigger: agent-only, a slow mount, or drift."""
+        # #799. Before calling this drift, separate the third cohort from our own
+        # bug, because the DOM they leave is the same one: the trigger present
+        # under a bare `hidden`. With a pressed chip that is agent mode and the
+        # branch above recovers it. With NO chip in the page at all, there is no
+        # classic arm to return to — the account's only composer is the agent
+        # panel, so model/aspect/count live in Agent settings as defaults and
+        # nothing gflow drives is on the page. A trigger that has LEFT the DOM is
+        # the opposite finding, a renamed selector, and stays drift.
+        if await self._is_agent_only_composer(page, trigger):
+            log.info("migrated.agent_only_composer", issue_ref="#799", url=page.url)
+            return "agent_only"
+        if timeout_s > early_s:
+            # Neither composer yet — a slow mount. Spend the rest of the gate on a
+            # full re-entry, so the chip and the discriminator get asked again.
+            return await self.ensure_editor(page, project_id, timeout_s=timeout_s - early_s)
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
+                f"become visible within {timeout_s:.0f}s on {page.url} "
+                f"(host=migrated): {error}"
+            ),
+        ) from error
 
     @staticmethod
     async def _agent_chip_pressed(page: Page) -> bool | None:
