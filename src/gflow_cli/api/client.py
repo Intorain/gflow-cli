@@ -213,6 +213,7 @@ MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
 # Content type for the labs.google BFF (tRPC) endpoints, which DO accept JSON.
 _APPLICATION_JSON = "application/json"
+_MIGRATED_FLOW_HOST = "flow.google.com"
 
 # aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
 # <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
@@ -1868,7 +1869,7 @@ class FlowApiClient:
         page when that route refuses (#864, see :meth:`_labs_project_route_refused`).
         """
         title = title or _default_project_title()
-        if self.settings.flow_host != "flow.google.com":
+        if self.settings.flow_host != _MIGRATED_FLOW_HOST:
             body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
             try:
                 data = await self._post_json(
@@ -1926,7 +1927,7 @@ class FlowApiClient:
         Maps to `POST .../trpc/project.renameProject`, and to the project's header title
         on flow.google.com when that route refuses (#864). Returns ``{}`` there.
         """
-        if self.settings.flow_host != "flow.google.com":
+        if self.settings.flow_host != _MIGRATED_FLOW_HOST:
             body = {"json": {"projectId": project_id, "projectTitle": new_title}}
             try:
                 return await self._post_json(
@@ -3735,7 +3736,9 @@ def _validate_fife_url(url: str) -> None:
         raise ValueError(msg)
     host = parts.hostname or ""
     # flow.google.com: agent-only image tiles serve from an opaque /asb/ URL there (2026-10-04).
-    if not (host == "flow-content.google" or host.endswith(".google") or host == "flow.google.com"):
+    if not (
+        host == "flow-content.google" or host.endswith(".google") or host == _MIGRATED_FLOW_HOST
+    ):
         msg = f"Refusing download from unexpected host: {host!r}"
         raise ValueError(msg)
 
