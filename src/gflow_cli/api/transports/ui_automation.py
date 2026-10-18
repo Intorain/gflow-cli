@@ -3106,7 +3106,10 @@ class UiAutomationTransport(VideoGenerationMixin):
                 raise_if_migrated(page, at="reference_upload_kill_switch")
             composer = MigratedComposer(out_dir=self._out_dir)
             try:
-                await composer.ensure_editor(page, project_id)
+                if await composer.ensure_editor(page, project_id) == "agent_only":
+                    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415
+
+                    raise agent.refuse_unported("image-to-image")
                 media_id, display_name = await composer.upload(page, project_id, path)
             except Exception:
                 # Same failure discipline as image generation (#792): keep the page for

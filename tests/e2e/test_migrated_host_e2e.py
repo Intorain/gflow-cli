@@ -167,7 +167,7 @@ async def test_e2e_end_frame_binds_the_second_chip_and_submits_interpolation(
 
         async def block_submit(route: object, request: object) -> None:
             body = getattr(request, "post_data", None) or ""
-            rpcid = migrated_composer._body_rpcid(body) or migrated_composer._rpcid(  # noqa: SLF001
+            rpcid = migrated_composer.body_rpcid(body) or migrated_composer.url_rpcid(
                 str(getattr(request, "url", ""))
             )
             if rpcid in migrated_composer.SUBMIT_RPCS:

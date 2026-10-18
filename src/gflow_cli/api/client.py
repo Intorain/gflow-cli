@@ -129,6 +129,7 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -213,6 +214,7 @@ MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
 # Content type for the labs.google BFF (tRPC) endpoints, which DO accept JSON.
 _APPLICATION_JSON = "application/json"
+_MIGRATED_FLOW_HOST = "flow.google.com"
 
 # aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
 # <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
@@ -1868,7 +1870,7 @@ class FlowApiClient:
         page when that route refuses (#864, see :meth:`_labs_project_route_refused`).
         """
         title = title or _default_project_title()
-        if self.settings.flow_host != "flow.google.com":
+        if self.settings.flow_host != _MIGRATED_FLOW_HOST:
             body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
             try:
                 data = await self._post_json(
@@ -1926,7 +1928,7 @@ class FlowApiClient:
         Maps to `POST .../trpc/project.renameProject`, and to the project's header title
         on flow.google.com when that route refuses (#864). Returns ``{}`` there.
         """
-        if self.settings.flow_host != "flow.google.com":
+        if self.settings.flow_host != _MIGRATED_FLOW_HOST:
             body = {"json": {"projectId": project_id, "projectTitle": new_title}}
             try:
                 return await self._post_json(
@@ -2128,6 +2130,7 @@ class FlowApiClient:
                 self._checkin_page(page)
 
         resp = await self._run_with_retry(attempt, route=route)
+        _validate_fife_final_url(str(resp.url))
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
         body = await resp.body()
@@ -2521,7 +2524,8 @@ class FlowApiClient:
         await write_asset_async(target, video_bytes)
         return target
 
-    def _upscale_route(self, *, prefer_migrated: bool) -> str:
+    def served_route(self, *, prefer_migrated: bool) -> str:
+        """``migrated_route`` for the host this client's page was actually served."""
         return migrated_route(
             getattr(self._page, "url", None),
             self.settings.flow_host,
@@ -2609,7 +2613,7 @@ class FlowApiClient:
             target_resolution=target_resolution,
             out_path=out_path,
         )
-        route = self._upscale_route(prefer_migrated=False)
+        route = self.served_route(prefer_migrated=False)
         if route == "blocked":
             raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
         if route == "migrated":
@@ -2618,7 +2622,7 @@ class FlowApiClient:
         try:
             token = await self._mint_recaptcha_token(recaptcha_action)
         except FlowHostMigratedError:
-            if self._upscale_route(prefer_migrated=True) != "migrated":
+            if self.served_route(prefer_migrated=True) != "migrated":
                 raise
             return await migrated()
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
@@ -2704,7 +2708,7 @@ class FlowApiClient:
         """
         from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
 
-        if self._upscale_route(prefer_migrated=True) != "migrated":
+        if self.served_route(prefer_migrated=True) != "migrated":
             raise FlowHostMigratedError(
                 detail=(
                     "video upscale is driven only on flow.google.com (there is no "
@@ -2748,6 +2752,47 @@ class FlowApiClient:
                 self._checkin_page(page)
         except Exception as exc:
             await self._raise_with_incident(exc, phase="video_upscale")
+
+    async def extend_video_migrated(  # noqa: PLR0913
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        prompt: str,
+        aspect: str | None,
+        out_path: Path,
+        on_started: ExtendStartedCallback | None = None,
+        poll_timeout_s: float = 900.0,
+    ) -> tuple[ExtendOutcome, AnyPath | None]:
+        """One extend segment through Flow's own UI on flow.google.com. Costs credits.
+
+        The page mints and sends ``fZytfe`` itself; see
+        :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome and the
+        written mp4 (``None`` when the generation did not finish).
+        """
+        from gflow_cli.api.transports.migrated_extend import run_extend
+
+        try:
+            page = await self._checkout_page()
+            try:
+                outcome = await run_extend(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    prompt=prompt,
+                    aspect=aspect,
+                    poll_timeout_s=poll_timeout_s,
+                    on_started=on_started,
+                )
+            finally:
+                self._checkin_page(page)
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="video_extend")
+        if outcome.video is None:
+            return outcome, None
+        target = self._write_target(out_path)
+        await write_asset_async(target, outcome.video)
+        return outcome, target
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
@@ -3719,7 +3764,8 @@ def _validate_fife_url(url: str) -> None:
     constructed from untrusted input), the URL could point to internal
     services (``http://169.254.169.254/``, ``http://localhost:6006/``,
     ``http://127.0.0.1/``, ...). Playwright's ``max_redirects`` does not
-    constrain the redirect target host, so we validate up-front.
+    constrain the redirect target host, so this up-front check is paired with
+    :func:`_validate_fife_final_url` on the host the response ended on.
 
     Allowlist: scheme must be ``https`` AND host must be ``flow-content.google``
     or any subdomain of ``.google``. The captured samples (see
@@ -3732,9 +3778,32 @@ def _validate_fife_url(url: str) -> None:
         msg = f"Refusing non-HTTPS download URL: scheme={parts.scheme!r}"
         raise ValueError(msg)
     host = parts.hostname or ""
-    if not (host == "flow-content.google" or host.endswith(".google")):
+    # flow.google.com: agent-only image tiles serve from an opaque /asb/ URL there (2026-10-04).
+    if not (
+        host == "flow-content.google" or host.endswith(".google") or host == _MIGRATED_FLOW_HOST
+    ):
         msg = f"Refusing download from unexpected host: {host!r}"
         raise ValueError(msg)
+
+
+def _validate_fife_final_url(url: str) -> None:
+    """Refuse a download whose redirects ended off Google's hosts (SSRF guard, part 2).
+
+    ``flow.google.com/asb/...`` answers with a redirect to ``lh3.google.com``, so the
+    final host is checked against the same allowlist the agent-only clip download uses.
+    """
+    from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - cycle
+        _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    if _is_allowed_download_host(url):
+        return
+    try:
+        _validate_fife_url(url)
+    except ValueError:
+        parts = urlsplit(url)
+        msg = f"Refusing image download redirected to {parts.scheme}://{parts.hostname!r}"
+        raise ValueError(msg) from None
 
 
 def _make_instance() -> str:

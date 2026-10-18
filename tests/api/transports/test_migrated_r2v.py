@@ -101,14 +101,14 @@ def test_the_submit_body_is_form_decoded_before_it_is_quoted_back() -> None:
     """`batchexecute` sends `f.req=<percent-encoded JSON>`. Raw, the key reads as
     `%5C%22veo_...%5C%22` and a real run quoted it back to the user as
     `22veo_3_1_t2v_lite_4s_low_priority`."""
-    from gflow_cli.api.transports.migrated_composer import _post_data
+    from gflow_cli.api.transports.migrated_composer import request_body
 
     class _Req:
         post_data = (
             "f.req=%5B%5B%5B%22MZZa6b%22%2C%22%5B%5C%22veo_3_1_r2v_lite%5C%22%5D%22%5D%5D%5D"
         )
 
-    body = _post_data(_Req())
+    body = request_body(_Req())
     # The nested JSON keeps its own backslash escapes; what must be gone is the percent
     # encoding, whose `%5C%22` is what MODEL_KEY was matching as a leading "22".
     assert "%5C%22" not in body and "%22" not in body
@@ -119,7 +119,7 @@ def test_the_submit_body_is_form_decoded_before_it_is_quoted_back() -> None:
         def post_data(self) -> str:
             raise RuntimeError("undecodable bytes")
 
-    assert _post_data(_Boom()) == ""  # a listener must never raise
+    assert request_body(_Boom()) == ""  # a listener must never raise
 
 
 def test_submit_rpcs_cover_the_ingredients_submit() -> None:

@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.0] — 2026-10-18
+
+### Added
+
+- **`gflow video extend` runs on flow.google.com, one segment at a time.** gflow opens the
+  clip's editor and drives Flow's own Extend control, so the page builds and mints the
+  `fZytfe` submit itself, the way every other flow.google.com port works. Before any click,
+  Flow's own project read must list the clip as a video in `--project` (exit 11 otherwise).
+  Every scene/extend request passes a route guard that aborts it, before Flow sees it, if
+  it names another clip. The new segment is downloaded to `--output` (or the output
+  directory). On that host `--segments > 1`, `--scene`/`--resume-from`, `--seed` and an
+  `--aspect` other than the source's exit 36 before anything is billed; `--aspect` now
+  defaults to the source's aspect there (9:16 on labs.google, as before). Each run leaves a
+  new scene in the project, and the plan shows no price, because flow.google.com does not
+  report one before submitting. Thanks to @stgmt, whose wire research in #882 (the
+  workflow-id slot, the frame window, the `as29s` record) mapped this surface.
+  ([#639](https://github.com/ffroliva/gflow-cli/issues/639), [#882](https://github.com/ffroliva/gflow-cli/pull/882))
+- **Text-to-image and text-to-video on Flow's agent-only composer
+  ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).** Accounts `flow.google.com` serves
+  with no classic composer exited 25; `gflow image t2i` and `gflow video t2v` (and their MCP
+  twins) now run there. gflow sets aspect, count and model in Agent settings, saves, asks the
+  agent in plain language, and restores those defaults afterwards — also when the run fails
+  with an error. A run killed between Save and restore leaves the run's defaults in place; the
+  `migrated.agent_only.defaults_restore_failed` log names the originals (KNOWN_ISSUES).
+  Completion is read from the page: images from new grid tiles, named by their
+  `img[data-media-id]` and downloaded at original size from the tile's opaque `/asb/` URL
+  (`=s0`; the tile itself shows a 512-px preview), videos once no pending tile is left, with the clip id taken from the agent's reply when the grid tile has
+  none. Live-verified on an AI Pro account: 3:4 × 2 images, and a 4 s 9:16 clip downloaded.
+  Other forms on that composer exit 36 before anything is clicked.
+- **`GFLOW_CLI_AGENT_CONFIRM=account|always|never`** — the agent-only composer's "Confirm before
+  generating" choice, applied before a run and kept. `account` (default) leaves the account's
+  setting alone. With a confirmation step gflow approves exactly one that its own submit
+  produced, and stops without approving a second. Only that second confirmation is stopped
+  before billing: one confirmation can cover several clips, and an over-count under it is caught
+  after the fact. A video run also refuses to start while another clip is still generating in the project, and stops if more clips are queued than were requested.
+- **`gflow auth renew` refreshes saved sessions without signing in again.** It opens each
+  profile (`--profile`, or `--all`) in a headless browser and loads Flow, so Google and Flow
+  rotate the saved cookies. It then verifies the session like `gflow auth status`. No credits
+  are spent. A revoked session still needs `gflow auth login`, and a profile in use by another
+  gflow process is skipped. It reports a profile as renewed only when it saw it renewed: an
+  account Flow holds at its public `/about` page is `public_landing`; a labs.google session that
+  stayed expired, or never answered readably, is `labs_stale` / `labs_unverified`; a browser
+  that cannot start (the profile is open in your own Chrome) is a `launch_error` row, and the
+  rest of an `--all` run carries on. `--json` prints JSON on every path, including errors.
+- **`gflow credits user|list --refresh` renews expired sessions again.** Since #802, an expired
+  session fails the credits read without opening a browser. That is the right default, because
+  re-asking aisandbox-pa with the same Bearer cannot change its answer. It also removed the only
+  automatic renewal that `credits list` used to give stale profiles. `--refresh` brings it back as
+  an opt-in. A profile whose fast path raises an expired-session error is renewed through
+  `auth renew` and asked again, while the others are untouched. A failed renewal keeps the
+  original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`. The credits 401 hint
+  now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
+  account whose labs session issues no token at all is not helped by renewal, and says so.
+
+### Changed
+
+- **The agent-only composer is recognised after 5 s**, not after the full 30 s readiness wait.
+- **Image downloads accept `flow.google.com` URLs, and now check where redirects end.** The
+  agent-only composer's `/asb/` image URLs redirect to `lh3.google.com`; a download whose
+  redirects end on a host outside Google's allowlist (or on plain `http`) is refused before
+  anything is written.
+- **A run on the agent-only composer that times out after submit is `retryable: false`.** The
+  request was already sent, so an automatic retry would submit (and for a video, bill) again.
+- **Refusals before the page opens now require that neither composer supports the request.**
+  `--aspect 3:4` was refused up front because the classic settings pane has no 3:4 option; the
+  agent-only pane does.
+
+### Fixed
+
+- **`gflow video extend --json` prints one JSON document.** The human plan preamble no
+  longer precedes it on stdout, and the payload now carries the same `video_result` fields
+  as `t2v`/`i2v` (`status`, `succeeded`, `media_id`, `local_path`, `request.mode`). On
+  flow.google.com `--output` saves the new extension clip; on labs.google it still renders
+  the whole scene.
+  (#882, @stgmt)
+
 ## [0.85.0] — 2026-10-14
 
 ### Added
@@ -6058,7 +6134,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...HEAD
+[0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0
 [0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0
 [0.84.0]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...v0.84.0
 [0.83.2]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...v0.83.2

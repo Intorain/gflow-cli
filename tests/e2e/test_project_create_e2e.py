@@ -141,7 +141,7 @@ def _abort_video_submits(monkeypatch: pytest.MonkeyPatch, captured: list[str]) -
 
         async def block(route: Any, request: Any) -> None:
             body = getattr(request, "post_data", None) or ""
-            rpcid = migrated_composer._rpcid(str(request.url)) or migrated_composer._body_rpcid(  # noqa: SLF001
+            rpcid = migrated_composer.url_rpcid(str(request.url)) or migrated_composer.body_rpcid(
                 body
             )
             if rpcid in migrated_composer.SUBMIT_RPCS:

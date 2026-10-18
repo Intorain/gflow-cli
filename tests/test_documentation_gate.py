@@ -137,3 +137,25 @@ def test_spike_skill_forbids_killing_browsers_on_an_unheld_profile() -> None:
     # The alternatives must stay named: a prohibition with no cheap next step
     # is the kind an operator under pressure talks itself out of.
     assert "wait, or spike on a different profile" in text
+
+
+# PR #982 (2026-10-15): the council posted three must-fix items about what a live
+# profile would do — a false success on `/about`, a traceback on a held profile, a
+# doc sentence "disproved" by someone else's run — all inferred from reading code.
+# The spike skill already says a guess is not a finding; the council never loaded it.
+def test_council_review_routes_live_behaviour_findings_through_spike() -> None:
+    council = (ROOT / "skills/pr-council-review/SKILL.md").read_text(encoding="utf-8")
+    spike = (ROOT / "skills/spike/SKILL.md").read_text(encoding="utf-8")
+
+    assert "### Spike gate" in council
+    assert "[`spike`](../spike/SKILL.md)" in council
+    # The two honest outcomes; there is no third one called "likely".
+    assert "**CONFIRMED**" in council
+    assert "**PLAUSIBLE — unmeasured**" in council
+    # Agents must tag how they know, so the synthesizer can find the guesses.
+    assert "`evidence: read | ran | spiked`" in council
+    # The cap must live in the consensus rule itself; prose after the tally is too late.
+    consensus = council.split("3. **Consensus rule:**", 1)[1].split("4. **Deduplicate", 1)[0]
+    assert "PLAUSIBLE — unmeasured live-behaviour findings" in consensus
+    # And the spike skill must name the council as a consumer.
+    assert "[`pr-council-review`](../pr-council-review/SKILL.md)" in spike

@@ -33,8 +33,8 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     MigratedComposer,
     _image_body_problem,
     _image_body_references,
-    _post_data,
-    _rpcid,
+    request_body,
+    url_rpcid,
 )
 
 from _spike_common import build_client, default_out_path, resolve_profile_dir, step  # noqa: E402, isort: skip
@@ -98,11 +98,11 @@ async def main() -> int:
         await composer.send_prompt(page, request.prompt, append=True)
 
         async def capture(route: Any, req: Any) -> None:
-            bodies.append(_post_data(req))
+            bodies.append(request_body(req))
             await route.abort()
 
         def is_submit(url: str) -> bool:
-            return _rpcid(url) == IMAGE_SUBMIT_RPC
+            return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
         await page.route(is_submit, capture)
         submit = await composer._pre_submit_gate(page)  # noqa: SLF001 - dev instrument

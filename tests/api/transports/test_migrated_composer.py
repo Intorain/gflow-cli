@@ -32,7 +32,6 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
-    FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
@@ -40,7 +39,6 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
-    is_retryable,
 )
 
 # --- a tiny DOM -------------------------------------------------------------
@@ -634,6 +632,9 @@ class FakePage:
             # Presence alone, independent of `agent_mode` — that is the whole point of
             # the second selector: #799's cohort renders no chip in any state.
             return FakeLocator(self, "agent_chip_any", ["chip"] if dom.agent_chip_present else [])
+        if css == migrated_composer.AGENT_ONLY_ANCHOR:
+            # The agent composer's own settings button: rendered on the agent panel.
+            return FakeLocator(self, "agent_settings", ["tune"] if dom.agent_mode else [])
         if css == "flow-agent-panel button":
             buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
             return FakeLocator(self, "agent_close", buttons)
@@ -1332,6 +1333,46 @@ async def test_submit_observes_submit_then_poll_then_result() -> None:
     assert page.dom.submit_clicked == 1
 
 
+async def test_submit_rpcs_lets_another_surface_reuse_the_observer() -> None:
+    """Extend (#882 takeover) submits on fZytfe; the same observer must read it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_rpcs=("fZytfe",)
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+
+
+async def test_a_request_check_verdict_fails_the_run_before_any_reply() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=wrong-clip")
+    seen: list[tuple[str, str]] = []
+
+    def check(rpcid: str, body: str) -> WireFormatError | None:
+        seen.append((rpcid, body))
+        return WireFormatError(detail="wrong clip") if "wrong" in body else None
+
+    with pytest.raises(WireFormatError, match="wrong clip"):
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert seen == [("fZytfe", "f.req=wrong-clip")]
+
+
 async def test_submit_waits_for_the_button_to_enable_after_insert_text() -> None:
     """#670: the button reads disabled for a tick after the prompt lands; wait, don't raise."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -1413,6 +1454,24 @@ async def test_a_missing_submit_with_no_credits_warning_is_still_drift() -> None
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
+
+
+async def test_a_missing_custom_submit_names_its_own_selector() -> None:
+    """Extend passes its own submit button; drift must name THAT, not arrow_forward."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    selector = "flow-edit-video-prompt-box button"
+    page = FakePage()
+    page.dom.credits_warning_present = False
+    modelled = page.locator
+    page.locator = lambda css, **kw: (  # type: ignore[method-assign]
+        FakeLocator(page, "submit", []) if css == selector else modelled(css, **kw)
+    )
+    with pytest.raises(UiSelectorDriftError, match="flow-edit-video-prompt-box") as caught:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_selector=selector
+        )
+    assert "arrow_forward" not in caught.value.detail
 
 
 async def test_a_submit_that_never_enables_also_checks_the_wallet_first(
@@ -2767,15 +2826,9 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
 ) -> None:
     """#799: the trigger is in the DOM under a bare `hidden` and there is NO chip.
 
-    This used to be ordinary selector drift, on the reasoning that with nothing to
-    click nothing may be promised. That was right about the recovery and wrong about
-    the diagnosis: #799 supplied the ground truth this state had been missing — a
-    third cohort whose composer is agent-only, with no classic arm to return to and
-    therefore no chip to un-press. The DOM is identical to a pressed chip's (#749),
-    which is why it read as drift, and why the chip's ABSENCE is what separates them.
-
-    Exit 25, not 23, and not retryable: a driver that does not exist will not appear
-    on a re-run.
+    The DOM is identical to a pressed chip's (#749), which is why it once read as drift,
+    and why the chip's ABSENCE is what separates them. Readiness now REPORTS the
+    composer kind instead of raising, so the caller can route to the agent-only driver.
     """
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2783,20 +2836,26 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
     page.dom.agent_mode = True
     page.dom.agent_chip_present = False
 
-    with pytest.raises(FlowAgentUiError) as exc:
-        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    kind = await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
 
+    assert kind == "agent_only"
     assert page.dom.agent_chip_clicks == 0
-    assert EXIT_CODE_MAP[FlowAgentUiError] == 25
-    assert is_retryable(exc.value) is False
-    assert "agent-only" in str(exc.value).casefold()
-    # The class default talks about an A/B cohort and suggests another Chrome profile;
-    # neither applies when the composer is a property of the Google account.
-    hint = exc.value.remediation_hint
-    assert "#799" in hint
-    assert "A/B" not in hint
     events = [e["event"] for e in install_log_capture.entries]
     assert "migrated.agent_only_composer" in events
+
+
+async def test_ensure_editor_reports_classic_on_a_healthy_composer() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    assert await MigratedComposer().ensure_editor(FakePage(), "p1", timeout_s=1.0) == "classic"
+
+
+async def test_ensure_editor_reports_classic_after_leaving_agent_mode() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    assert await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0) == "classic"
 
 
 async def test_ensure_editor_does_not_claim_the_cohort_from_an_unreadable_page(

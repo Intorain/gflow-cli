@@ -106,7 +106,7 @@ class TestRetryIsRequested:
 
     async def test_composer_download_requests_retries(self) -> None:
         page = FakePage(_Response())
-        await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+        await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert page.request.calls[0]["max_retries"] >= 1
 
     async def test_recovery_download_requests_retries(self) -> None:
@@ -124,7 +124,7 @@ class TestRetryIsRequested:
         through a CDN open redirect is the one shape that turns a transfer fix into a
         security regression."""
         page = FakePage(_Response())
-        await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+        await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert page.request.calls[0]["max_redirects"] == 0
 
 
@@ -135,7 +135,7 @@ class TestExhaustedTransferIsTyped:
     async def test_it_raises_network_error(self) -> None:
         page = FakePage(PlaywrightError())
         with pytest.raises(NetworkError):
-            await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+            await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
 
     async def test_it_names_the_generated_clip_for_the_recorder(self) -> None:
         """#896: the recorder marks THIS media id generated only because the error says
@@ -144,13 +144,13 @@ class TestExhaustedTransferIsTyped:
 
         page = FakePage(PlaywrightError())
         with pytest.raises(MediaDownloadError) as caught:
-            await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+            await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert caught.value.media_id == MEDIA_ID
 
     async def test_it_exits_6_and_is_marked_retryable(self) -> None:
         page = FakePage(PlaywrightError())
         with pytest.raises(NetworkError) as caught:
-            await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+            await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert EXIT_CODE_MAP[NetworkError] == 6
         assert is_retryable(caught.value) is True
 
@@ -159,7 +159,7 @@ class TestExhaustedTransferIsTyped:
         message embeds the request URL — so the exception text must never be forwarded."""
         page = FakePage(PlaywrightError())
         with pytest.raises(NetworkError) as caught:
-            await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+            await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         rendered = _rendered(caught.value)
         assert "Expires=" not in rendered
         assert "Signature=" not in rendered
@@ -170,7 +170,7 @@ class TestExhaustedTransferIsTyped:
         say so, with the id, sends the user to re-generate and pay twice."""
         page = FakePage(PlaywrightError())
         with pytest.raises(NetworkError) as caught:
-            await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+            await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         rendered = _rendered(caught.value)
         assert MEDIA_ID in rendered
         assert "gflow data download" in rendered
@@ -210,7 +210,7 @@ class TestWhatRetryMustNotChange:
         guard on the first attempt and fail there."""
         page = FakePage(_Response(body=b"", status=403))
         with pytest.raises((WireFormatError, NetworkError)):
-            await MigratedComposer._fetch_mp4(  # pyright: ignore[reportPrivateUsage]
+            await MigratedComposer.fetch_mp4(
                 page,  # pyright: ignore[reportArgumentType] - structural fake
                 _record(poster_url=None),
             )
@@ -239,7 +239,7 @@ class TestWhatRetryMustNotChange:
             _Response(body=b"\xff\xd8\xff\xe0JFIF"), _Response(body=b"\xff\xd8\xff\xe0")
         )
         with pytest.raises(WireFormatError):
-            await MigratedComposer._fetch_mp4(  # pyright: ignore[reportPrivateUsage]
+            await MigratedComposer.fetch_mp4(
                 page,  # pyright: ignore[reportArgumentType] - structural fake
                 _record(poster_url=POSTER),
             )
@@ -253,6 +253,6 @@ class TestRetryIsObservable:
         per-attempt ``url=`` would be a new leak, not a multiplied one."""
         page = FakePage(PlaywrightError())
         with caplog.at_level("DEBUG"), pytest.raises(NetworkError):
-            await MigratedComposer._fetch_mp4(page, _record())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+            await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert "Signature=" not in caplog.text
         assert "Expires=" not in caplog.text
