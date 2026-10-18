@@ -164,11 +164,12 @@ _ui_mode_option = click.option(
     type=click.Choice([m.value for m in UiMode], case_sensitive=False),
     default=None,
     help=(
-        "Which Flow UI arm to require. Video generation only has a classic "
+        "Which Flow UI arm to require. Labs video only has a classic "
         "driver: 'classic'/'auto' verify the classic editor pre-submit "
         "(best-effort DOM probe) and abort with exit 28 (no credits spent) "
         "if it is unreachable; 'agentic' is not yet supported for video and "
-        "is rejected. Overrides GFLOW_CLI_UI_MODE."
+        "is rejected. An agent-only flow.google.com composer (#799) is routed "
+        "to its own driver first, so t2v runs there. Overrides GFLOW_CLI_UI_MODE."
     ),
 )
 

@@ -44,6 +44,23 @@ async def test_flow_google_com_uploads_through_the_composer(
     t._park_composer_page.assert_awaited()  # type: ignore[attr-defined]  # noqa: SLF001
 
 
+async def test_an_agent_only_composer_refuses_the_upload_before_clicking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#799: the agent-only composer has no upload toolbar; driving on would click blind."""
+    from gflow_cli.errors import FlowHostMigratedError
+
+    t = _transport("https://flow.google.com/project/p", monkeypatch)
+    monkeypatch.setattr(
+        migrated_composer.MigratedComposer,
+        "ensure_editor",
+        AsyncMock(return_value="agent_only"),
+    )
+    with pytest.raises(FlowHostMigratedError, match="image-to-image"):
+        await t.upload_reference(project_id="p", path=tmp_path / "photo.png")
+    migrated_composer.MigratedComposer.upload.assert_not_awaited()  # type: ignore[attr-defined]
+
+
 async def test_labs_routing_leaves_the_upload_to_rest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

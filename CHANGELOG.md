@@ -22,6 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report one before submitting. Thanks to @stgmt, whose wire research in #882 (the
   workflow-id slot, the frame window, the `as29s` record) mapped this surface.
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639), [#882](https://github.com/ffroliva/gflow-cli/pull/882))
+- **Text-to-image and text-to-video on Flow's agent-only composer
+  ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).** Accounts `flow.google.com` serves
+  with no classic composer exited 25; `gflow image t2i` and `gflow video t2v` (and their MCP
+  twins) now run there. gflow sets aspect, count and model in Agent settings, saves, asks the
+  agent in plain language, and restores those defaults afterwards — also when the run fails
+  with an error. A run killed between Save and restore leaves the run's defaults in place; the
+  `migrated.agent_only.defaults_restore_failed` log names the originals (KNOWN_ISSUES).
+  Completion is read from the page: images from new grid tiles, named by their
+  `img[data-media-id]` and downloaded at original size from the tile's opaque `/asb/` URL
+  (`=s0`; the tile itself shows a 512-px preview), videos once no pending tile is left, with the clip id taken from the agent's reply when the grid tile has
+  none. Live-verified on an AI Pro account: 3:4 × 2 images, and a 4 s 9:16 clip downloaded.
+  Other forms on that composer exit 36 before anything is clicked.
+- **`GFLOW_CLI_AGENT_CONFIRM=account|always|never`** — the agent-only composer's "Confirm before
+  generating" choice, applied before a run and kept. `account` (default) leaves the account's
+  setting alone. With a confirmation step gflow approves exactly one that its own submit
+  produced, and stops without approving a second. A video run also refuses to start while another clip is still generating in the project, and stops if more clips are queued than were requested.
 - **`gflow auth renew` refreshes saved sessions without signing in again.** It opens each
   profile (`--profile`, or `--all`) in a headless browser and loads Flow, so Google and Flow
   rotate the saved cookies. It then verifies the session like `gflow auth status`. No credits
@@ -40,6 +56,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   original diagnosis. The MCP twin is `gflow_get_credits(refresh=true)`. The credits 401 hint
   now points at `--refresh` / `gflow auth renew` instead of "check your balance in Flow"; an
   account whose labs session issues no token at all is not helped by renewal, and says so.
+
+### Changed
+
+- **The agent-only composer is recognised after 5 s**, not after the full 30 s readiness wait.
+- **Image downloads accept `flow.google.com` URLs, and now check where redirects end.** The
+  agent-only composer's `/asb/` image URLs redirect to `lh3.google.com`; a download whose
+  redirects end on a host outside Google's allowlist (or on plain `http`) is refused before
+  anything is written.
+- **A run on the agent-only composer that times out after submit is `retryable: false`.** The
+  request was already sent, so an automatic retry would submit (and for a video, bill) again.
+- **Refusals before the page opens now require that neither composer supports the request.**
+  `--aspect 3:4` was refused up front because the classic settings pane has no 3:4 option; the
+  agent-only pane does.
 
 ### Fixed
 
