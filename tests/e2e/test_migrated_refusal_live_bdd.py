@@ -68,7 +68,7 @@ def world(e2e_profile_dir: Path) -> dict[str, Any]:
 def _armed(world: dict[str, Any]) -> None:
     async def route(r: Any, req: Any) -> None:
         body = req.post_data or ""
-        if (mc.url_rpcid(req.url) or mc.body_rpcid(body)) != mc.IMAGE_SUBMIT_RPC:  # noqa: SLF001
+        if (mc.url_rpcid(req.url) or mc.body_rpcid(body)) != mc.IMAGE_SUBMIT_RPC:
             await r.continue_()
             return
         corrupted = _corrupt_token(body) if not world["submits"] else None

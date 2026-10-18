@@ -119,7 +119,7 @@ async def _arm(client: Any, arm: str) -> dict[str, Any]:
 
     async def route(r: Any, req: Any) -> None:
         body = req.post_data or ""
-        rpcid = mc.url_rpcid(req.url) or mc.body_rpcid(body)  # noqa: SLF001
+        rpcid = mc.url_rpcid(req.url) or mc.body_rpcid(body)
         if rpcid != mc.IMAGE_SUBMIT_RPC:
             await r.continue_()
             return
@@ -138,7 +138,7 @@ async def _arm(client: Any, arm: str) -> dict[str, Any]:
         await r.abort()
 
     async def on_response(resp: Any) -> None:
-        if mc.url_rpcid(resp.url) != mc.IMAGE_SUBMIT_RPC:  # noqa: SLF001
+        if mc.url_rpcid(resp.url) != mc.IMAGE_SUBMIT_RPC:
             return
         try:
             text = await resp.text()
@@ -149,7 +149,7 @@ async def _arm(client: Any, arm: str) -> dict[str, Any]:
                                  "parse_frames": repr(parse_frames(text))[:500]})
 
     def on_failed(req: Any) -> None:
-        if mc.url_rpcid(req.url) == mc.IMAGE_SUBMIT_RPC:  # noqa: SLF001
+        if mc.url_rpcid(req.url) == mc.IMAGE_SUBMIT_RPC:
             rec["failed"].append({"t": round(time.monotonic() - t0, 2),
                                   "failure": req.failure})
 
