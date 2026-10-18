@@ -132,7 +132,7 @@ No new options. `--help` unchanged. Verify exit-code mapping only.
 
 ## Task 8 — Gates, e2e, live-verify
 
-- [ ] `/gflow:check` green
+- [x] `/gflow:check` green
 - [x] `pytest -m e2e tests/e2e/test_agent_only_composer_bdd.py` with `GFLOW_CLI_E2E_RUN_VIDEO=1`,
       profile `burner`, 2026-09-15: **3 passed in 245.9 s** — CLI t2i 3:4 × 2, MCP
       `gflow_generate_image` (queued worker path), CLI t2v 4 s 9:16; each asserted restore
@@ -141,6 +141,6 @@ No new options. `--help` unchanged. Verify exit-code mapping only.
 - [x] Asked the user before opening the PR — approved 2026-09-15: fork, push, PR with `Refs #799`
 
 ## Definition of done
-- [ ] All tasks checked · `/gflow:check` green · CHANGELOG updated
-- [ ] BDD covers all Must-cover scenarios · e2e image + video + MCP run and pasted
-- [ ] No `# TODO` without an issue link
+- [x] All tasks checked · `/gflow:check` green · CHANGELOG updated
+- [ ] BDD covers all Must-cover scenarios · e2e image + video + MCP run and pasted (agent-only run external: no account in cohort; last run 2026-09-15, Task 8)
+- [x] No `# TODO` without an issue link

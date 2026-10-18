@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.0] — 2026-10-18
+
 ### Added
 
 - **`gflow video extend` runs on flow.google.com, one segment at a time.** gflow opens the
@@ -37,7 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GFLOW_CLI_AGENT_CONFIRM=account|always|never`** — the agent-only composer's "Confirm before
   generating" choice, applied before a run and kept. `account` (default) leaves the account's
   setting alone. With a confirmation step gflow approves exactly one that its own submit
-  produced, and stops without approving a second. A video run also refuses to start while another clip is still generating in the project, and stops if more clips are queued than were requested.
+  produced, and stops without approving a second. Only that second confirmation is stopped
+  before billing: one confirmation can cover several clips, and an over-count under it is caught
+  after the fact. A video run also refuses to start while another clip is still generating in the project, and stops if more clips are queued than were requested.
 - **`gflow auth renew` refreshes saved sessions without signing in again.** It opens each
   profile (`--profile`, or `--all`) in a headless browser and loads Flow, so Google and Flow
   rotate the saved cookies. It then verifies the session like `gflow auth status`. No credits
@@ -74,8 +78,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`gflow video extend --json` prints one JSON document.** The human plan preamble no
   longer precedes it on stdout, and the payload now carries the same `video_result` fields
-  as `t2v`/`i2v` (`status`, `succeeded`, `media_id`, `local_path`, `request.mode`). A
-  single-segment `--output` downloads the clip directly instead of a server-side join.
+  as `t2v`/`i2v` (`status`, `succeeded`, `media_id`, `local_path`, `request.mode`). On
+  flow.google.com `--output` saves the new extension clip; on labs.google it still renders
+  the whole scene.
   (#882, @stgmt)
 
 ## [0.85.0] — 2026-10-14
@@ -6129,7 +6134,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...HEAD
+[0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0
 [0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0
 [0.84.0]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...v0.84.0
 [0.83.2]: https://github.com/ffroliva/gflow-cli/compare/v0.83.1...v0.83.2
