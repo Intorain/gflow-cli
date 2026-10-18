@@ -369,6 +369,8 @@ Tell the user:
 - `develop` is now synced with `main` (back-merge done in step 15).
 - The release worktree is gone (step 14); if Windows held its `.venv`, name the directory
   that still needs a manual delete.
+- Leftovers swept: run `uv run python scripts/dev/cleanup.py` (dry run), then `--apply`
+  (add `--remote` to delete merged same-repo branches on origin), and paste its summary.
 - Message the sessions you announced to in step 5: the back-merge has landed, `develop` is
   open again.
 - Next development cycle starts on `develop` — open `## [Unreleased]` in CHANGELOG is ready.
