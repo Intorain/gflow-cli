@@ -1782,6 +1782,7 @@ _EXTEND_SEGMENT_SECONDS = 8
 _EXTEND_CONTENT_SECONDS = 7
 # labs.google's extend takes an aspect; flow.google.com keeps the source clip's.
 _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
+_EXTEND_COMMAND = "video extend"
 
 
 def _print_extend_plan(
@@ -1945,7 +1946,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
         json_output.emit(
             {
                 "status": "ok" if ok else "fail",
-                "command": "video extend",
+                "command": _EXTEND_COMMAND,
                 "media_id": record.media_id,
                 "generation_status": (
                     "MEDIA_GENERATION_STATUS_COMPLETED" if ok else "MEDIA_GENERATION_STATUS_FAILED"
@@ -2166,7 +2167,7 @@ async def _extend_session(  # noqa: PLR0913
             payload.update(
                 {
                     "status": "ok" if not result.aborted and result.error is None else "fail",
-                    "command": "video extend",
+                    "command": _EXTEND_COMMAND,
                     "media_id": last_media,
                     "generation_status": (
                         "MEDIA_GENERATION_STATUS_COMPLETED"
@@ -2351,7 +2352,7 @@ def extend(  # noqa: PLR0913
         async def _refuse() -> None:
             raise refusal
 
-        run_with_handlers(_refuse, cli_command="video extend", as_json=as_json)
+        run_with_handlers(_refuse, cli_command=_EXTEND_COMMAND, as_json=as_json)
         return
     # The cost gate runs before a client exists, so --dry-run cannot spend and
     # cannot even open a browser. Machine-readable output must not carry the
@@ -2387,7 +2388,7 @@ def extend(  # noqa: PLR0913
             as_json=as_json,
             migrated=migrated,
         ),
-        cli_command="video extend",
+        cli_command=_EXTEND_COMMAND,
         as_json=as_json,
     )
 
