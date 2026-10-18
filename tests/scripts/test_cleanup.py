@@ -302,6 +302,25 @@ def test_remote_branches_only_with_flag_and_only_safe_ones(repo: Path) -> None:
     assert "feature/merged" not in _git(repo, "ls-remote", "--heads", "origin")
 
 
+def test_a_merged_pr_branch_with_later_unmerged_commits_is_kept_on_origin(repo: Path) -> None:
+    """A merged PR says nothing about commits pushed to its branch afterwards; deleting
+    the branch would delete them."""
+    _git(repo, "switch", "-q", "-c", "feature/reused")
+    _commit(repo, "after-merge")
+    _git(repo, "push", "-q", "origin", "feature/reused")
+    _git(repo, "switch", "-q", "develop")
+    _git(repo, "fetch", "-q", "origin")
+    prs = [
+        {
+            "headRefName": "feature/reused",
+            "state": "MERGED",
+            "number": 5,
+            "isCrossRepository": False,
+        },
+    ]
+    assert _plan(repo, Recorder(prs=prs), remote=True).remote_branches == []
+
+
 # --- stray .env / basetemp / agentctl / flow ------------------------------------------
 
 

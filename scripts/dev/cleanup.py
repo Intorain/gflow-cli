@@ -170,8 +170,12 @@ def build_plan(
             for p in prs
             if p["state"] == "MERGED" and not p["isCrossRepository"]
         }
+        # A merged PR says nothing about commits pushed to its branch afterwards: the
+        # origin tip must itself be contained in the base, or deleting it loses them.
         plan.remote_branches = sorted(
-            (merged_heads & on_origin) - open_heads - PROTECTED - {"HEAD"}
+            name
+            for name in (merged_heads & on_origin) - open_heads - PROTECTED - {"HEAD"}
+            if _is_ancestor(run, repo, f"origin/{name}", base)
         )
 
     cutoff = time.time() - older_than_hours * 3600
