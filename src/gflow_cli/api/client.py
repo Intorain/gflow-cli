@@ -2522,7 +2522,8 @@ class FlowApiClient:
         await write_asset_async(target, video_bytes)
         return target
 
-    def _upscale_route(self, *, prefer_migrated: bool) -> str:
+    def served_route(self, *, prefer_migrated: bool) -> str:
+        """``migrated_route`` for the host this client's page was actually served."""
         return migrated_route(
             getattr(self._page, "url", None),
             self.settings.flow_host,
@@ -2610,7 +2611,7 @@ class FlowApiClient:
             target_resolution=target_resolution,
             out_path=out_path,
         )
-        route = self._upscale_route(prefer_migrated=False)
+        route = self.served_route(prefer_migrated=False)
         if route == "blocked":
             raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
         if route == "migrated":
@@ -2619,7 +2620,7 @@ class FlowApiClient:
         try:
             token = await self._mint_recaptcha_token(recaptcha_action)
         except FlowHostMigratedError:
-            if self._upscale_route(prefer_migrated=True) != "migrated":
+            if self.served_route(prefer_migrated=True) != "migrated":
                 raise
             return await migrated()
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
@@ -2705,7 +2706,7 @@ class FlowApiClient:
         """
         from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
 
-        if self._upscale_route(prefer_migrated=True) != "migrated":
+        if self.served_route(prefer_migrated=True) != "migrated":
             raise FlowHostMigratedError(
                 detail=(
                     "video upscale is driven only on flow.google.com (there is no "
@@ -2769,13 +2770,6 @@ class FlowApiClient:
         """
         from gflow_cli.api.transports.migrated_extend import run_extend
 
-        if self._upscale_route(prefer_migrated=True) != "migrated":
-            raise FlowHostMigratedError(
-                detail=(
-                    "the flow.google.com extend driver was asked for, and "
-                    "GFLOW_CLI_FLOW_HOST=labs.google switched that host off"
-                ),
-            )
         try:
             page = await self._checkout_page()
             try:

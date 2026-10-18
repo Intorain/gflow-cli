@@ -134,6 +134,8 @@ class _FakeClient:
         self.downloads: list[str] = []
         self.created_scene = False
         self.scene_clips: list[Any] = []
+        self.served = "labs"
+        self.listed = False
 
     async def __aenter__(self) -> _FakeClient:
         return self
@@ -141,7 +143,11 @@ class _FakeClient:
     async def __aexit__(self, *_exc: object) -> None:
         return None
 
+    def served_route(self, *, prefer_migrated: bool) -> str:
+        return self.served
+
     async def capability_listing(self, _project_id: str) -> dict[str, Any]:
+        self.listed = True
         return self._listing
 
     async def create_scene(self, *, project_id: str, workflow_ids: list[str]) -> _FakeScene:
@@ -254,11 +260,12 @@ async def test_session_refuses_when_the_balance_cannot_finish_the_run(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("segments", "concats", "downloads"), [(1, 0, 1), (2, 1, 0)])
+@pytest.mark.parametrize("segments", [1, 2])
 async def test_session_renders_when_output_is_given(
-    _patched_client: _FakeClient, tmp_path: Path, segments: int, concats: int, downloads: int
+    _patched_client: _FakeClient, tmp_path: Path, segments: int
 ) -> None:
-    # One segment is downloaded directly (no server-side join); more are joined.
+    # labs: the scene render is "original + N extensions" (KNOWN_ISSUES), even for N=1;
+    # downloading the lone new segment would drop the source clip from --output.
     from gflow_cli.cli_video import _extend_session
 
     await _extend_session(
@@ -276,8 +283,46 @@ async def test_session_renders_when_output_is_given(
         as_json=False,
         recorder=None,
     )
-    assert _patched_client.concat_calls == concats
-    assert len(_patched_client.downloads) == downloads
+    assert _patched_client.concat_calls == 1
+    assert _patched_client.downloads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("segments", "scene_id", "seed"), [(2, None, None), (1, MEDIA, None), (1, None, 7)]
+)
+async def test_an_unported_form_on_a_page_served_flow_google_com_is_exit_36(
+    _patched_client: _FakeClient,
+    tmp_path: Path,
+    segments: int,
+    scene_id: str | None,
+    seed: int | None,
+) -> None:
+    # Default host `auto` routes an unported form to the labs arm; if Flow then serves
+    # flow.google.com, the retired projectInitialData read would be exit 7. Refuse first.
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import FlowHostMigratedError
+    from gflow_cli.json_output import exit_code_for
+
+    _patched_client.served = "migrated"
+    with pytest.raises(FlowHostMigratedError, match="not ported") as info:
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=segments,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=None,
+            project_id=PROJECT,
+            scene_id=scene_id,
+            seed=seed,
+            as_json=False,
+            recorder=None,
+        )
+    assert exit_code_for(info.value) == 36
+    assert not _patched_client.listed and _patched_client.submitted == []
 
 
 @pytest.mark.asyncio
@@ -556,7 +601,9 @@ def test_unported_forms_exit_36_before_anything_on_flow_google_com(
         (None, [], True),  # auto: the default host serves a single segment
         ("flow.google.com", [], True),
         ("labs.google", [], False),  # the kill switch keeps the labs arm
-        (None, ["-n", "2"], False),  # auto + unported form: labs arm, as before
+        # auto + unported form: the labs arm, which refuses (exit 36) once the page
+        # shows Flow served flow.google.com — see the session test above.
+        (None, ["-n", "2"], False),
     ],
 )
 def test_the_arm_is_chosen_before_the_browser(

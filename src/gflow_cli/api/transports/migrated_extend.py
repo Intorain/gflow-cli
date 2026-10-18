@@ -47,7 +47,7 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Callable
 
     from playwright.async_api import Page
 
@@ -56,7 +56,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     #: Fired once Flow accepts the submit (it bills then): the accepted segment and the
     #: aspect the page put in the request.
-    ExtendStartedCallback = Callable[[ExtendStarted, str | None], Awaitable[None] | None]
+    ExtendStartedCallback = Callable[[ExtendStarted, str | None], None]
 
 log = structlog.get_logger(__name__)
 
@@ -99,18 +99,18 @@ class ExtendOutcome:
 # --- refusal matrix ----------------------------------------------------------
 
 
-def unported_extend_form(*, segments: int, scene_id: str | None, seed: int | None) -> str | None:
-    """The noun for what this request asks that the flow.google.com arm does not drive."""
+def unported_refusal(
+    *, segments: int, scene_id: str | None, seed: int | None
+) -> FlowHostMigratedError | None:
+    """Exit 36 naming what this request asks that the flow.google.com arm does not drive."""
     if segments > 1:
-        return "more than one segment"
-    if scene_id:
-        return "an existing scene"
-    if seed is not None:
-        return "a fixed --seed"
-    return None
-
-
-def unported_error(form: str) -> FlowHostMigratedError:
+        form = "more than one segment"
+    elif scene_id:
+        form = "an existing scene"
+    elif seed is not None:
+        form = "a fixed --seed"
+    else:
+        return None
     return FlowHostMigratedError(
         detail=(
             f"video extend on flow.google.com drives a single segment from a clip; {form} "
@@ -439,9 +439,7 @@ async def run_extend(  # noqa: PLR0913
                 workflow_id=info.workflow_id or "",
                 model_key=facts.get("model_key") or "unknown",
             )
-            maybe = on_started(accepted, facts.get("aspect"))
-            if asyncio.iscoroutine(maybe):
-                await maybe
+            on_started(accepted, facts.get("aspect"))
 
     def is_batchexecute(url: str) -> bool:
         return "batchexecute" in url
@@ -484,6 +482,5 @@ __all__ = [
     "run_extend",
     "source_record",
     "submit_facts",
-    "unported_error",
-    "unported_extend_form",
+    "unported_refusal",
 ]

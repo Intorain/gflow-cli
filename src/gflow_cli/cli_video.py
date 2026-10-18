@@ -49,6 +49,7 @@ from gflow_cli.storage import cloud_info_from_path
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.tools.invocation import AppliedTool
 
@@ -1913,7 +1914,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
     )
     async with FlowApiClient(profile_dir=profile_dir) as client:
 
-        def _on_started(started: Any, page_aspect: str | None) -> None:
+        def _on_started(started: ExtendStarted, page_aspect: str | None) -> None:
             if not as_json:
                 console.print(f"  submitted   : {started.media_id} ({started.model_key})")
             if recorder is not None:  # at SUBMIT: Flow bills on acceptance
@@ -2009,6 +2010,11 @@ async def _extend_session(  # noqa: PLR0913
     """The browser-bound half of `_run_extend`, split out so the caller can own
     the DataStore lifetime with a plain try/finally."""
     async with FlowApiClient(profile_dir=profile_dir) as client:
+        # `auto` sent an unported form here before any page existed; if Flow served
+        # flow.google.com, the labs read below is retired there (exit 7) -- say exit 36.
+        refusal = migrated_extend.unported_refusal(segments=segments, scene_id=scene_id, seed=seed)
+        if refusal is not None and client.served_route(prefer_migrated=False) != "labs":
+            raise refusal
         listing = await client.capability_listing(project_id)
         tier = video_extend.account_service_tier(listing)
         model_key, unit = video_extend.resolve_extend_model(
@@ -2123,18 +2129,18 @@ async def _extend_session(  # noqa: PLR0913
         rendered: str | None = None
         # Render even a partial chain: those segments are generated and billed,
         # and discarding them because the run did not finish wastes real money.
+        # The scene holds the source clip too, so even N=1 renders source + extension.
         if output_file is not None and result.completed_media_ids:
-            if len(result.completed_media_ids) == 1:
-                # One segment needs no server-side join: download it directly (#882).
-                await client.download_video(result.completed_media_ids[0], output_file)
-                rendered = str(output_file)
-            else:
-                scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
-                inputs = list(scene_state.to_concat_inputs())
-                if not as_json:
-                    console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
-                await client.concatenate_scene(inputs, out_path=output_file)
-                rendered = str(output_file)
+            scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
+            # Scene.to_concat_inputs owns the end_time>0 fallback (an omitted
+            # endTime parses to 0s and would render a zero-length clip) and
+            # raises on a missing media_id instead of silently dropping a paid
+            # segment. cli_scene.py uses it for the identical job.
+            inputs = list(scene_state.to_concat_inputs())
+            if not as_json:
+                console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
+            await client.concatenate_scene(inputs, out_path=output_file)
+            rendered = str(output_file)
 
         payload: dict[str, Any] = {
             "scene_id": target_scene,
@@ -2332,13 +2338,12 @@ def extend(  # noqa: PLR0913
     count = segments if segments is not None else len(prompts)
     # Which host drives this run is decided here, from settings and the request alone,
     # so an unported form is refused before the plan, the prompt or any browser.
-    unported = migrated_extend.unported_extend_form(segments=count, scene_id=scene_id, seed=seed)
+    refusal = migrated_extend.unported_refusal(segments=count, scene_id=scene_id, seed=seed)
     migrated = (
-        migrated_route(None, get_settings().flow_host, prefer_migrated=unported is None)
+        migrated_route(None, get_settings().flow_host, prefer_migrated=refusal is None)
         == "migrated"
     )
-    if migrated and unported is not None:
-        refusal = migrated_extend.unported_error(unported)
+    if migrated and refusal is not None:
 
         async def _refuse() -> None:
             raise refusal

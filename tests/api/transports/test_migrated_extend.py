@@ -83,20 +83,16 @@ def _rqzuuc(media: str = MEDIA) -> str:
         ({"segments": 1, "scene_id": None, "seed": 7}, "a fixed --seed"),
     ],
 )
-def test_unported_forms_are_named(kwargs: dict[str, Any], noun: str) -> None:
-    assert mx.unported_extend_form(**kwargs) == noun
+def test_unported_forms_are_refused_by_name_with_exit_36(kwargs: dict[str, Any], noun: str) -> None:
+    err = mx.unported_refusal(**kwargs)
+    assert isinstance(err, FlowHostMigratedError)
+    assert exit_code_for(err) == 36
+    assert noun in err.detail
+    assert "not ported" in err.detail
 
 
 def test_a_single_segment_is_ported() -> None:
-    assert mx.unported_extend_form(segments=1, scene_id=None, seed=None) is None
-
-
-def test_the_refusal_is_exit_36_and_names_the_form() -> None:
-    err = mx.unported_error("more than one segment")
-    assert isinstance(err, FlowHostMigratedError)
-    assert exit_code_for(err) == 36
-    assert "more than one segment" in err.detail
-    assert "not ported" in err.detail
+    assert mx.unported_refusal(segments=1, scene_id=None, seed=None) is None
 
 
 # --- Zzl0ze: media -> workflow + kind (mitigation 2) -------------------------
@@ -234,9 +230,11 @@ class _Keyboard:
 class _Page:
     """Just enough Page for ``run_extend``: listeners, goto, route, keyboard."""
 
-    def __init__(self, listing: Any, *, land: str = EDITOR, answer: bool = True) -> None:
+    def __init__(
+        self, listing: Any, *, land: str = EDITOR, answer: bool = True, then: Any = None
+    ) -> None:
         self.url = "about:blank"
-        self._listing = listing
+        self._listings = [listing] if then is None else [listing, then]
         self._land = land
         self._answer = answer
         self.listeners: dict[str, list[Any]] = {}
@@ -254,8 +252,9 @@ class _Page:
         assert "/edit/" in url
         self.url = self._land
         if self._answer:
-            for fn in list(self.listeners.get("response", [])):
-                await fn(_Resp("Zzl0ze", self._listing))
+            for listing in self._listings:
+                for fn in list(self.listeners.get("response", [])):
+                    await fn(_Resp("Zzl0ze", listing))
 
     async def route(self, _match: Any, handler: Any) -> None:
         self.routes.append(handler)
@@ -322,8 +321,9 @@ async def _run(page: _Page, media: str = MEDIA) -> Any:
 
 @pytest.mark.asyncio
 async def test_a_media_missing_from_the_project_is_refused_before_any_click(
-    driver: dict[str, Any],
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(mx, "LISTING_BUDGET_S", 0.01)  # a read was seen: exit 11, not 9
     page = _Page([[[_image_record()]]])
     with pytest.raises(ConfigurationError):
         await _run(page)
@@ -488,3 +488,30 @@ async def test_a_second_extend_after_a_released_one_is_aborted(
 def test_the_observer_check_judges_every_frame_of_a_batch() -> None:
     body = _BatchedRequest(("uwAyfb", [SCENE]), ("fZytfe", _fzytfe_inner(wf=OTHER_WF))).post_data
     assert mx.batch_request_problem(["uwAyfb"], body, **_IDS) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_missing_anchor_is_selector_drift_exit_23(monkeypatch: pytest.MonkeyPatch) -> None:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    from gflow_cli.errors import UiSelectorDriftError
+
+    class _Missing:
+        first: Any = None
+
+        async def wait_for(self, **_kw: Any) -> None:
+            raise PlaywrightTimeoutError("not visible")
+
+    missing = _Missing()
+    missing.first = missing
+    page = _Page(_zzl0ze(), land=EDITOR)
+    page.locator = lambda _sel: missing  # type: ignore[attr-defined]
+
+    async def not_a_landing(*_a: Any, **_kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(mx, "raise_if_known_landing", not_a_landing)
+    monkeypatch.setattr(mx, "ANCHOR_TIMEOUT_S", 0.01)
+    with pytest.raises(UiSelectorDriftError, match="add-clip") as info:
+        await mx._anchor(page, mx.ADD_CLIP_BUTTON, named="timeline add-clip button")  # type: ignore[arg-type]
+    assert exit_code_for(info.value) == 23
