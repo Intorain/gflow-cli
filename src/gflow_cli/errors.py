@@ -49,6 +49,7 @@ __all__ = [
     "QueueSchemaError",
     "RateLimitError",
     "RecaptchaError",
+    "RpcResponseUnavailableError",
     "SceneConcatError",
     "SecurityError",
     "SyncPartialError",
@@ -411,6 +412,17 @@ class WireFormatError(FlowApiError):
             remediation_hint=remediation_hint,
         )
         self.discovery = discovery or {}
+
+
+class RpcResponseUnavailableError(WireFormatError):
+    """An RPC response arrived but Playwright could not read its body.
+
+    The write may already have committed; callers must recover by readback,
+    never infer failure or automatically submit the write again.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/rpc-response-unavailable"
+    title = "Flow response body could not be read"
 
 
 class SceneConcatError(FlowApiError):

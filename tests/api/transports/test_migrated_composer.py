@@ -3241,3 +3241,44 @@ async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers
     assert page.dom.submit_clicked == 0
     assert page.listeners("request") == []
     assert page.listeners("response") == []
+
+
+async def test_upload_unreadable_reply_is_a_service_reply_not_a_bad_image(tmp_path: Path) -> None:
+    page = FakePage()
+
+    async def fail_upload(self: Any, files: Any) -> None:
+        response = FakeResponse(_batch_url("maseQ"), "", 200)
+        response.text = AsyncMock(side_effect=RuntimeError("response body unavailable"))
+        page._fire_response(response)
+
+    with patch.object(FakeFileChooser, "set_files", fail_upload):
+        with pytest.raises(WireFormatError, match="body was unavailable") as exc:
+            await migrated_composer.MigratedComposer().upload(page, PROJ, _png(tmp_path))
+    assert not is_retryable(exc.value)
+    assert exc.value.route == "batchexecute:maseQ"
+    assert "outcome" in exc.value.remediation_hint
+
+
+@pytest.mark.parametrize("count", [0, 1, 2])
+async def test_upload_recovers_only_one_exact_unique_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int
+) -> None:
+    page = FakePage()
+
+    async def fail_upload(self: Any, files: Any) -> None:
+        response = FakeResponse(_batch_url("maseQ"), "", 200)
+        response.text = AsyncMock(side_effect=RuntimeError("response body unavailable"))
+        page._fire_response(response)
+
+    monkeypatch.setattr(migrated_composer, "_unique_display_name", lambda p: "unique.png")
+    readback = AsyncMock(return_value=("title", [{"name": "unique.png", "id": MEDIA_UP}] * count))
+    monkeypatch.setattr(migrated_composer, "_project_snapshot", readback, raising=False)
+    with patch.object(FakeFileChooser, "set_files", fail_upload):
+        if count == 1:
+            assert await migrated_composer.MigratedComposer().upload(
+                page, PROJ, _png(tmp_path)
+            ) == (MEDIA_UP, "unique.png")
+        else:
+            with pytest.raises(WireFormatError, match="body was unavailable"):
+                await migrated_composer.MigratedComposer().upload(page, PROJ, _png(tmp_path))
+    readback.assert_awaited_once()

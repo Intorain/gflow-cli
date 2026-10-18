@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Recover migrated project create/rename and local uploads when Chrome cannot
+  retrieve an RPC response body. A separate tab verifies the persisted project,
+  title, or unique upload name without resubmitting the write. Unverified outcomes
+  remain explicit response-unavailable errors; renaming to the current title no
+  longer waits for an RPC Flow does not send.
+
 ### Added
 
 - **`gflow auth renew` refreshes saved sessions without signing in again.** It opens each

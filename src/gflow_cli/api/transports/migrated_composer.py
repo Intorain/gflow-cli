@@ -82,6 +82,7 @@ from gflow_cli.errors import (
     InsufficientCreditsError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
+    RpcResponseUnavailableError,
     TransportTimeoutError,
     UiSelectorDriftError,
     WafRejectionError,
@@ -793,6 +794,65 @@ def _body_rpcid(body: str) -> str | None:
     """
     m = re.search(r'f\.req=\[\[\["([A-Za-z0-9]+)"', body or "")
     return m.group(1) if m else None
+
+
+def _unreadable_rpc_error(rpcid: str, *, location: str) -> RpcResponseUnavailableError:
+    """The response arrived but its body could not be read; writes may have committed."""
+    return RpcResponseUnavailableError(
+        detail=f"{rpcid} response body was unavailable at {location}",
+        route=f"batchexecute:{rpcid}",
+        remediation_hint=(
+            "The operation outcome is unknown. Reload the existing project and check its "
+            "title or unique upload name before resubmitting. Do not create another "
+            "project or upload blindly."
+        ),
+    )
+
+
+async def _project_snapshot(
+    page: Page, project_id: str, *, upload_name: str | None = None
+) -> tuple[str, list[dict[str, str]]]:
+    """Read persisted project state in a fresh tab without resetting the composer."""
+    probe = await page.context.new_page()
+    try:
+        await probe.goto(
+            MIGRATED_PROJECT_URL.format(project_id=project_id),
+            wait_until="domcontentloaded",
+            timeout=45_000,
+        )
+        field = await _wait_anchor(
+            probe,
+            PROJECT_TITLE_INPUT,
+            named="project title input",
+            requested=project_id,
+            at="migrated.rpc_readback",
+            timeout_s=15,
+        )
+        deadline = time.monotonic() + 15.0
+        while True:
+            tiles = cast(
+                "list[dict[str, str]]",
+                await probe.evaluate(
+                    """() => [...document.querySelectorAll('flow-image-tile')]
+                .map(t => ({name: (t.querySelector('flow-tile-hover-footer .footer-title')
+                    ?.textContent || '').trim(), id: t.querySelector('img[data-media-id]')
+                    ?.getAttribute('data-media-id') || ''}))"""
+                ),
+            )
+            if upload_name is None or any(t["name"] == upload_name for t in tiles):
+                break
+            if time.monotonic() >= deadline:
+                raise ReferenceNotFoundError(
+                    detail="Unique upload absent from independent readback"
+                )
+            # The project grid is a load-time asset listing, not a live subscription.
+            # The upload's follow-up library write may finish after its response event.
+            await probe.wait_for_timeout(1000)
+            await probe.reload(wait_until="domcontentloaded", timeout=15_000)
+            await field.wait_for(state="visible", timeout=15_000)
+        return await field.input_value(), tiles
+    finally:
+        await probe.close()
 
 
 def _first_uuid(text: str) -> str | None:
@@ -2057,7 +2117,7 @@ class MigratedComposer:
         """
         display_name = _unique_display_name(image_path)
         loop = asyncio.get_running_loop()
-        reply: asyncio.Future[tuple[int, str]] = loop.create_future()
+        reply: asyncio.Future[tuple[int, str | None]] = loop.create_future()
         route = f"batchexecute:{UPLOAD_RPC}"
 
         async def on_response(response: Any) -> None:
@@ -2065,12 +2125,12 @@ class MigratedComposer:
             if "batchexecute" not in url or _rpcid(url) != UPLOAD_RPC or reply.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
-            text = ""
+            text: str | None = ""
             if status == 200:
                 try:
                     text = await response.text()
-                except Exception:  # noqa: BLE001 - an aborted body is a rejected upload
-                    text = ""
+                except Exception:  # noqa: BLE001 - the write may have persisted
+                    text = None
             if not reply.done():
                 reply.set_result((status, text))
 
@@ -2210,6 +2270,23 @@ class MigratedComposer:
                     status=status,
                     route=route,
                 )
+            if text is None:
+                service_error = _unreadable_rpc_error(
+                    UPLOAD_RPC, location=f"{safe_page_url(page.url)} (upload={display_name})"
+                )
+                try:
+                    _, tiles = await _project_snapshot(page, project_id, upload_name=display_name)
+                    matches = [t["id"] for t in tiles if t["name"] == display_name]
+                    if (
+                        len(matches) == 1
+                        and UUID_RE.fullmatch(matches[0])
+                        and matches[0] != project_id
+                    ):
+                        log.info("migrated.upload_recovered", media_id=matches[0])
+                        return matches[0], display_name
+                except Exception as exc:  # noqa: BLE001 - retain the original uncertain reply
+                    log.info("migrated.upload_readback_unverified", error_type=type(exc).__name__)
+                raise service_error
             media_id = _first_uuid(text)
             if media_id is None:
                 raise MediaUploadRejectedError(
@@ -3629,7 +3706,9 @@ async def _rpc_reply(
             return
         try:
             text = await response.text()
-        except Exception:  # noqa: BLE001 - an aborted body is not our frame
+        except Exception:  # noqa: BLE001 - a reply arrived, not a transport timeout
+            if _rpcid(str(getattr(response, "url", ""))) == rpcid and not reply.done():
+                reply.set_exception(_unreadable_rpc_error(rpcid, location=safe_page_url(page.url)))
             return
         for rid, payload in parse_frames(text):
             if rid == rpcid and not reply.done():
@@ -3665,9 +3744,29 @@ async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> 
         at="migrated.create_project",
         timeout_s=timeout_s,
     )
-    payload = await _rpc_reply(
-        page, CREATE_PROJECT_RPC, lambda: button.click(timeout=15_000), timeout_s=timeout_s
-    )
+    try:
+        payload = await _rpc_reply(
+            page, CREATE_PROJECT_RPC, lambda: button.click(timeout=15_000), timeout_s=timeout_s
+        )
+    except RpcResponseUnavailableError as original_error:
+        # The response event precedes Angular's navigation on a successful create.
+        # Observe that navigation; never click Create a second time.
+        try:
+            await page.wait_for_url(
+                re.compile(r"https://flow\.google\.com/project/[0-9a-f-]{36}(?:[/?#]|$)"),
+                timeout=int(min(timeout_s, 5.0) * 1000),
+            )
+        except Exception:  # noqa: BLE001 - no verified project means uncertain outcome
+            raise original_error from None
+        match = re.search(r"/project/([0-9a-f-]{36})(?:[/?#]|$)", str(page.url))
+        if match is None or not UUID_RE.fullmatch(match[1]):
+            raise
+        try:
+            persisted_title, _ = await _project_snapshot(page, match[1])
+        except Exception:  # noqa: BLE001 - no verified project means no recovery
+            raise original_error from None
+        payload = [match[1], [persisted_title]]
+        log.info("migrated.project_create_recovered", project_id=match[1])
     reply = _as_list_any(payload)
     project_id: object = reply[0] if reply else None
     if not isinstance(project_id, str) or not UUID_RE.fullmatch(project_id):
@@ -3701,11 +3800,27 @@ async def rename_project(
         timeout_s=timeout_s,
     )
 
+    if await field.input_value() == title:
+        persisted_title, _ = await _project_snapshot(page, project_id)
+        if persisted_title == title:
+            log.info("migrated.project_title_unchanged", project_id=project_id)
+            return
+
     async def submit() -> None:
         await field.fill(title)
         await field.press("Enter")
 
-    payload = await _rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s)
+    try:
+        payload = await _rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s)
+    except RpcResponseUnavailableError as original_error:
+        try:
+            persisted_title, _ = await _project_snapshot(page, project_id)
+        except Exception:  # noqa: BLE001 - retain the original uncertain reply
+            raise original_error from None
+        if persisted_title != title:
+            raise
+        payload = [persisted_title]
+        log.info("migrated.project_rename_recovered", project_id=project_id)
     echo = _as_list_any(payload)
     echoed: object = echo[0] if echo else None
     if echoed != title:

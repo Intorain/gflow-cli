@@ -32,6 +32,8 @@ class _Response:
         self.url, self._text = url, text
 
     async def text(self) -> str:
+        if self._text is None:
+            raise RuntimeError("response body unavailable")
         return self._text
 
 
@@ -50,6 +52,9 @@ class _Loc:
     async def click(self, **_: Any) -> None:
         self.page.clicks.append(self.sel)
         await self.page.fire(self.page.on_click.get(self.sel))
+
+    async def input_value(self) -> str:
+        return self.page.current_title
 
     async def fill(self, value: str, **_: Any) -> None:
         self.page.filled = value
@@ -71,12 +76,16 @@ class FakePage:
         self.gotos: list[str] = []
         self.clicks: list[str] = []
         self.filled: str | None = None
+        self.current_title = ""
         self.present: dict[str, bool] = {mc.NEW_PROJECT_BUTTON: True, mc.PROJECT_TITLE_INPUT: True}
         self.on_click: dict[str, tuple[str, str] | None] = {}
         self.on_enter: tuple[str, str] | None = None
         self.navigate_on_create: str | None = None
         self._handlers: list[Any] = []
         self.keyboard = self
+
+    async def wait_for_url(self, pattern: Any, **_: Any) -> None:
+        assert pattern.search(self.url)
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
@@ -211,3 +220,84 @@ def test_anchors_are_structural_not_labels() -> None:
     assert "flow-projects-page" in mc.NEW_PROJECT_BUTTON
     assert "'add'" in mc.NEW_PROJECT_BUTTON or '"add"' in mc.NEW_PROJECT_BUTTON
     assert mc.PROJECT_TITLE_INPUT.startswith("flow-editable-text")
+
+
+@pytest.mark.parametrize("rpcid", [mc.CREATE_PROJECT_RPC, mc.RENAME_PROJECT_RPC])
+async def test_unreadable_reply_reply_is_not_misreported_as_a_timeout(rpcid: str) -> None:
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+
+    async def action() -> None:
+        await page.fire((_batch(rpcid), None))
+
+    with pytest.raises(WireFormatError, match="body was unavailable") as exc:
+        await mc._rpc_reply(page, rpcid, action, timeout_s=0.02)  # type: ignore[arg-type]
+    assert exc.value.route == f"batchexecute:{rpcid}"
+    assert not is_retryable(exc.value)
+    assert "outcome" in exc.value.remediation_hint
+    assert not page._handlers
+
+
+async def test_rename_recovers_persisted_title_without_resubmitting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.on_enter = (_batch(mc.RENAME_PROJECT_RPC), None)
+    readback = AsyncMock(return_value=("wanted", []))
+    monkeypatch.setattr(mc, "_project_snapshot", readback, raising=False)
+    await mc.rename_project(page, PID, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+    readback.assert_awaited_once_with(page, PID)
+    assert page.filled == "wanted"
+
+
+async def test_create_recovers_created_url_without_another_click(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    page = _page_creating()
+    page.on_click[mc.NEW_PROJECT_BUTTON] = (_batch(mc.CREATE_PROJECT_RPC), None)
+    readback = AsyncMock(return_value=("wanted", []))
+    monkeypatch.setattr(mc, "_project_snapshot", readback, raising=False)
+    got = await mc.create_project(page, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+    assert got.project_id == PID and got.title == "wanted"
+    assert page.clicks == [mc.NEW_PROJECT_BUTTON]
+    readback.assert_awaited_once_with(page, PID)
+
+
+async def test_rename_does_not_guess_success_when_readback_disagrees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.on_enter = (_batch(mc.RENAME_PROJECT_RPC), None)
+    monkeypatch.setattr(mc, "_project_snapshot", AsyncMock(return_value=("old", [])), raising=False)
+    with pytest.raises(WireFormatError, match="body was unavailable"):
+        await mc.rename_project(page, PID, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+
+
+async def test_rename_to_the_current_title_needs_no_rpc(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(mc, "_project_snapshot", AsyncMock(return_value=("already saved", [])))
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.current_title = "already saved"
+    await mc.rename_project(page, PID, "already saved", timeout_s=0.01)  # type: ignore[arg-type]
+    assert page.filled is None and not page._handlers
+
+
+async def test_local_title_alone_does_not_prove_rename_saved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.current_title = "wanted"
+    monkeypatch.setattr(mc, "_project_snapshot", AsyncMock(return_value=("old", [])))
+    page.on_enter = (_batch(mc.RENAME_PROJECT_RPC), _frame(mc.RENAME_PROJECT_RPC, ["wanted"]))
+    await mc.rename_project(page, PID, "wanted", timeout_s=0.01)  # type: ignore[arg-type]
+    assert page.filled == "wanted"

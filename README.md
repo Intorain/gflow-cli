@@ -222,3 +222,12 @@ No sponsors yet. <a href="https://github.com/sponsors/ffroliva/sponsorships?freq
 </picture>
 
 If `gflow-cli` saves you time, please ⭐ the repo. It is the cheapest way to support the project.
+
+### Recovering an unreadable Flow response
+
+When Chrome cannot retrieve a create, rename, or upload RPC's response body,
+gflow reads the persisted result from a separate project tab. Recovery requires
+the newly navigated project ID, the exact saved title, or one uploaded media ID
+with the run's unique filename. It does not submit the write again. If readback
+cannot prove the result, `RpcResponseUnavailableError` (exit 7, not automatically
+retryable) preserves the existing project and upload name for inspection.
