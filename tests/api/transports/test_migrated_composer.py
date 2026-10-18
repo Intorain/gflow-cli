@@ -3244,6 +3244,8 @@ async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers
 
 
 async def test_upload_unreadable_reply_is_a_service_reply_not_a_bad_image(tmp_path: Path) -> None:
+    from gflow_cli.errors import is_retryable
+
     page = FakePage()
 
     async def fail_upload(self: Any, files: Any) -> None:
