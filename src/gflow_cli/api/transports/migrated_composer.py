@@ -78,6 +78,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     ContentPolicyError,
     FlowHostMigratedError,
+    GFlowError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
@@ -791,16 +792,16 @@ async def _raise_if_out_of_credits(page: Any) -> None:
         )
 
 
-def _rpcid(url: str) -> str | None:
+def url_rpcid(url: str) -> str | None:
     m = re.search(r"[?&]rpcids=([A-Za-z0-9]+)", url)
     return m.group(1) if m else None
 
 
-def _body_rpcid(body: str) -> str | None:
+def body_rpcid(body: str) -> str | None:
     """The rpc name inside a ``batchexecute`` POST body, or ``None``.
 
     The interpolation submit (``nprQif``) carries no ``rpcids`` query param — the
-    name lives at the head of ``f.req``. ``_post_data`` form-decodes first, so the
+    name lives at the head of ``f.req``. ``request_body`` form-decodes first, so the
     match runs on plain text either way.
     """
     m = re.search(r'f\.req=\[\[\["([A-Za-z0-9]+)"', body or "")
@@ -819,7 +820,7 @@ def _first_uuid(text: str) -> str | None:
     return None
 
 
-def _post_data(request: Any) -> str:
+def request_body(request: Any) -> str:
     """The POST body as text, or ``""`` when Playwright cannot decode it —
     a listener must not raise.
 
@@ -1063,7 +1064,7 @@ async def _guard_image_submit(
     such a run: by then Flow has generated it, spent quota and added an image (#913,
     SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
     """
-    problem = _image_body_problem(_post_data(request), reference_ids, model, entity_ids)
+    problem = _image_body_problem(request_body(request), reference_ids, model, entity_ids)
     if problem is not None:
         await route.abort()
         return problem
@@ -2091,7 +2092,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            if "batchexecute" not in url or _rpcid(url) != UPLOAD_RPC or reply.done():
+            if "batchexecute" not in url or url_rpcid(url) != UPLOAD_RPC or reply.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
             text = ""
@@ -2112,7 +2113,7 @@ class MigratedComposer:
         def on_request(request: Any) -> None:
             nonlocal sent
             url = str(getattr(request, "url", ""))
-            if "batchexecute" in url and _rpcid(url) == UPLOAD_RPC:
+            if "batchexecute" in url and url_rpcid(url) == UPLOAD_RPC:
                 sent = True
 
         page.on("response", on_response)
@@ -2826,10 +2827,17 @@ class MigratedComposer:
         expect_media_id: str | None = None,
         expect_end_media_id: str | None = None,
         expect_reference_ids: tuple[str, ...] = (),
+        submit_rpcs: tuple[str, ...] = SUBMIT_RPCS,
+        submit_selector: str | None = None,
+        request_check: Callable[[str, str], GFlowError | None] | None = None,
     ) -> GenerationRecord:
         """Click submit, then read the page's own submit / ``jwpduf`` / ``as29s``
         replies until the record is terminal. Fires ``on_started`` as soon as the
         submit reply names the media id — before the poll, as the labs path does.
+
+        ``submit_rpcs``, ``submit_selector`` and ``request_check`` let another surface
+        reuse this observer (extend: ``fZytfe``, the editor's own submit button, and a
+        verdict on every outgoing ``batchexecute`` request that fails the run at once).
 
         ``expect_media_id`` (i2v) and ``expect_reference_ids`` (r2v) inspect the
         submit *request* the app sends: its body must carry those ids and the
@@ -2840,7 +2848,7 @@ class MigratedComposer:
         URL; that body must carry the interpolation key and both frame ids."""
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
-        route_error: asyncio.Future[WireFormatError] = loop.create_future()
+        route_error: asyncio.Future[GFlowError] = loop.create_future()
 
         def on_request(request: Any) -> None:
             url = str(getattr(request, "url", ""))
@@ -2851,15 +2859,20 @@ class MigratedComposer:
             # without that param; on the account measured 2026-09-17 it DID carry it
             # (`nprQif` in the URL, key `omni_flash_i2v_8s_first_last`), so treat the
             # body as a second carrier rather than the rule — cohorts differ here.
-            body = _post_data(request)
-            rpcid = _rpcid(url) or _body_rpcid(body)
+            body = request_body(request)
+            rpcid = url_rpcid(url) or body_rpcid(body)
             # Record request rpcids too: at timeout the set shows both what went
             # out and what answered (issue #639).
             if rpcid is not None:
                 seen_submit_rpcs.add(rpcid)
             if rpcid is None:
                 return
-            if rpcid in SUBMIT_RPCS:
+            if request_check is not None:
+                verdict = request_check(rpcid, body)
+                if verdict is not None:
+                    route_error.set_result(verdict)
+                    return
+            if rpcid in submit_rpcs:
                 if rpcid == INTERPOLATION_SUBMIT_RPC:
                     problem = _interpolation_body_problem(
                         body, rpcid, expect_media_id, expect_end_media_id
@@ -2915,7 +2928,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            rpcid = _rpcid(url) if "batchexecute" in url else None
+            rpcid = url_rpcid(url) if "batchexecute" in url else None
             if rpcid is not None:
                 seen_submit_rpcs.add(rpcid)
             if "batchexecute" not in url:
@@ -2923,13 +2936,13 @@ class MigratedComposer:
             # `rpcid is None` falls through on purpose: the interpolation reply is a
             # bare `batchexecute` with no `rpcids` param, and `parse_frames` recovers
             # its id from the frame itself (measured 2026-09-17).
-            if rpcid is not None and rpcid not in SUBMIT_RPCS and rpcid not in STATUS_RPCS:
+            if rpcid is not None and rpcid not in submit_rpcs and rpcid not in STATUS_RPCS:
                 return
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
                 return
-            refusal = _submit_refusal(text, SUBMIT_RPCS)
+            refusal = _submit_refusal(text, submit_rpcs)
             # An envelope arriving after an accepted submit is ignored: that run's outcome
             # is already decided, and it now belongs to the terminal wait.
             if refusal is not None and not submitted.done():
@@ -2941,7 +2954,7 @@ class MigratedComposer:
                 # URL-only diagnostic reports "rpcs seen: none" for the very reply shape
                 # whose absence it is trying to explain (#639).
                 seen_submit_rpcs.add(rid)
-                if rid in SUBMIT_RPCS and not submitted.done():
+                if rid in submit_rpcs and not submitted.done():
                     try:
                         rec = generation_record(rid, payload)
                     except WireFormatError as exc:
@@ -2976,7 +2989,12 @@ class MigratedComposer:
         # early for a t2v submit it has nothing to assert about.
         page.on("request", on_request)
         try:
-            submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+            submit = (
+                page.locator(submit_selector).first
+                if submit_selector
+                else page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+            )
+            submit_named = submit_selector or "arrow_forward"
             if not await submit.count():
                 # A credit shortfall and a moved frontend look identical here: both are
                 # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
@@ -2985,7 +3003,7 @@ class MigratedComposer:
                 await _raise_if_out_of_credits(page)
                 raise UiSelectorDriftError(
                     detail=(
-                        "migrated host: the submit button (arrow_forward) is missing "
+                        f"migrated host: the submit button ({submit_named}) is missing "
                         "after the prompt was typed (host=migrated)"
                     ),
                 )
@@ -2996,7 +3014,7 @@ class MigratedComposer:
                     await _raise_if_out_of_credits(page)
                     raise UiSelectorDriftError(
                         detail=(
-                            "migrated host: the submit button (arrow_forward) stayed disabled "
+                            f"migrated host: the submit button ({submit_named}) stayed disabled "
                             f"for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed "
                             "(host=migrated)"
                         ),
@@ -3019,7 +3037,7 @@ class MigratedComposer:
                 seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
                 raise TransportTimeoutError(
                     detail=(
-                        f"migrated host: no {'/'.join(SUBMIT_RPCS)} reply within "
+                        f"migrated host: no {'/'.join(submit_rpcs)} reply within "
                         f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                     ),
                 )
@@ -3186,10 +3204,10 @@ class MigratedComposer:
 
         def on_request(raw_request: Any) -> None:
             url = str(getattr(raw_request, "url", ""))
-            if _rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
                 return
             problem = _image_body_problem(
-                _post_data(raw_request), reference_ids, request.model, entity_ids
+                request_body(raw_request), reference_ids, request.model, entity_ids
             )
             if problem is not None:
                 route_error.set_result(
@@ -3198,7 +3216,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            if _rpcid(url) != IMAGE_SUBMIT_RPC or result.done():
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or result.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
             if status != 200:
@@ -3260,13 +3278,13 @@ class MigratedComposer:
             result.set_result(images)
 
         def is_image_submit(url: str) -> bool:
-            return _rpcid(url) == IMAGE_SUBMIT_RPC
+            return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
         async def guard(route: Any, raw_request: Any) -> None:
             problem = await _guard_image_submit(
                 route, raw_request, reference_ids, request.model, entity_ids
             )
-            found = _image_body_references(_post_data(raw_request))
+            found = _image_body_references(request_body(raw_request))
             log.info(
                 "migrated.image_submit_guarded",
                 outcome="aborted" if problem else "passed",
@@ -3358,7 +3376,7 @@ class MigratedComposer:
     # --- download ---------------------------------------------------------------
 
     @staticmethod
-    async def _fetch_mp4(page: Page, record: GenerationRecord) -> bytes:
+    async def fetch_mp4(page: Page, record: GenerationRecord) -> bytes:
         """GET the signed URL and prove it is an MP4 (``ftyp`` at offset 4); if it is
         not — the record carries a poster JPEG next to the clip, and a 2026-09-05
         run downloaded that one — try the other URL before giving up."""
@@ -3432,7 +3450,7 @@ class MigratedComposer:
                 ),
                 route="batchexecute:as29s",
             )
-        body = await self._fetch_mp4(page, record)
+        body = await self.fetch_mp4(page, record)
         target_dir = out_dir or Path.cwd()
         target_dir.mkdir(parents=True, exist_ok=True)
         path = target_dir / f"{record.media_id}.mp4"

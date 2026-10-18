@@ -1333,6 +1333,46 @@ async def test_submit_observes_submit_then_poll_then_result() -> None:
     assert page.dom.submit_clicked == 1
 
 
+async def test_submit_rpcs_lets_another_surface_reuse_the_observer() -> None:
+    """Extend (#882 takeover) submits on fZytfe; the same observer must read it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_rpcs=("fZytfe",)
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+
+
+async def test_a_request_check_verdict_fails_the_run_before_any_reply() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=wrong-clip")
+    seen: list[tuple[str, str]] = []
+
+    def check(rpcid: str, body: str) -> WireFormatError | None:
+        seen.append((rpcid, body))
+        return WireFormatError(detail="wrong clip") if "wrong" in body else None
+
+    with pytest.raises(WireFormatError, match="wrong clip"):
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert seen == [("fZytfe", "f.req=wrong-clip")]
+
+
 async def test_submit_waits_for_the_button_to_enable_after_insert_text() -> None:
     """#670: the button reads disabled for a tick after the prompt lands; wait, don't raise."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -1414,6 +1454,24 @@ async def test_a_missing_submit_with_no_credits_warning_is_still_drift() -> None
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
+
+
+async def test_a_missing_custom_submit_names_its_own_selector() -> None:
+    """Extend passes its own submit button; drift must name THAT, not arrow_forward."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    selector = "flow-edit-video-prompt-box button"
+    page = FakePage()
+    page.dom.credits_warning_present = False
+    modelled = page.locator
+    page.locator = lambda css, **kw: (  # type: ignore[method-assign]
+        FakeLocator(page, "submit", []) if css == selector else modelled(css, **kw)
+    )
+    with pytest.raises(UiSelectorDriftError, match="flow-edit-video-prompt-box") as caught:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_selector=selector
+        )
+    assert "arrow_forward" not in caught.value.detail
 
 
 async def test_a_submit_that_never_enables_also_checks_the_wallet_first(

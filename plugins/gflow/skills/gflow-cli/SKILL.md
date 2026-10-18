@@ -80,6 +80,8 @@ gflow run --config <batch.json> [--project ID]            # JSON image batch; a 
 # five aspects. Images take a character by name (@Name, or --reference-entity with
 # --reference-entity-name; #723). UUID references, an entity id without a name,
 # Imagen 4 (image4), image batch, and characters on video are refused there (exit 36).
+# `gflow video extend` runs there one segment per call (--project required); -n > 1,
+# --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 # An agent-only composer (#799) is different: t2i and t2v only;
 # i2i, i2v, r2v and character references exit 36 there.
 

@@ -129,6 +129,7 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -2523,7 +2524,8 @@ class FlowApiClient:
         await write_asset_async(target, video_bytes)
         return target
 
-    def _upscale_route(self, *, prefer_migrated: bool) -> str:
+    def served_route(self, *, prefer_migrated: bool) -> str:
+        """``migrated_route`` for the host this client's page was actually served."""
         return migrated_route(
             getattr(self._page, "url", None),
             self.settings.flow_host,
@@ -2611,7 +2613,7 @@ class FlowApiClient:
             target_resolution=target_resolution,
             out_path=out_path,
         )
-        route = self._upscale_route(prefer_migrated=False)
+        route = self.served_route(prefer_migrated=False)
         if route == "blocked":
             raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
         if route == "migrated":
@@ -2620,7 +2622,7 @@ class FlowApiClient:
         try:
             token = await self._mint_recaptcha_token(recaptcha_action)
         except FlowHostMigratedError:
-            if self._upscale_route(prefer_migrated=True) != "migrated":
+            if self.served_route(prefer_migrated=True) != "migrated":
                 raise
             return await migrated()
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
@@ -2706,7 +2708,7 @@ class FlowApiClient:
         """
         from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
 
-        if self._upscale_route(prefer_migrated=True) != "migrated":
+        if self.served_route(prefer_migrated=True) != "migrated":
             raise FlowHostMigratedError(
                 detail=(
                     "video upscale is driven only on flow.google.com (there is no "
@@ -2750,6 +2752,47 @@ class FlowApiClient:
                 self._checkin_page(page)
         except Exception as exc:
             await self._raise_with_incident(exc, phase="video_upscale")
+
+    async def extend_video_migrated(  # noqa: PLR0913
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        prompt: str,
+        aspect: str | None,
+        out_path: Path,
+        on_started: ExtendStartedCallback | None = None,
+        poll_timeout_s: float = 900.0,
+    ) -> tuple[ExtendOutcome, AnyPath | None]:
+        """One extend segment through Flow's own UI on flow.google.com. Costs credits.
+
+        The page mints and sends ``fZytfe`` itself; see
+        :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome and the
+        written mp4 (``None`` when the generation did not finish).
+        """
+        from gflow_cli.api.transports.migrated_extend import run_extend
+
+        try:
+            page = await self._checkout_page()
+            try:
+                outcome = await run_extend(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    prompt=prompt,
+                    aspect=aspect,
+                    poll_timeout_s=poll_timeout_s,
+                    on_started=on_started,
+                )
+            finally:
+                self._checkin_page(page)
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="video_extend")
+        if outcome.video is None:
+            return outcome, None
+        target = self._write_target(out_path)
+        await write_asset_async(target, outcome.video)
+        return outcome, target
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
