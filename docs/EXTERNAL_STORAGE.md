@@ -61,12 +61,12 @@ export AWS_DEFAULT_REGION=us-east-1
 gflow image t2i "blue product cube on a white sweep" -n 2
 ```
 
-For local MinIO development:
+For local development against the bundled `docker compose up -d` stack (RustFS):
 
 ```bash
 export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_ACCESS_KEY_ID=rustfsadmin
+export AWS_SECRET_ACCESS_KEY=rustfsadmin
 export AWS_ENDPOINT_URL=http://localhost:9000
 export AWS_DEFAULT_REGION=us-east-1
 ```
@@ -107,8 +107,9 @@ aws s3 ls s3://gflow-test/dev/images/2026-05-28/
 gsutil ls gs://my-gcs-bucket/gflow/videos/2026-05-28/
 ```
 
-For MinIO, the web console can also preview generated images and download
-videos from the configured bucket.
+For RustFS or MinIO, the web console (http://localhost:9001 on the bundled
+stack) can also preview generated images and download videos from the
+configured bucket.
 
 ## Security Notes
 
