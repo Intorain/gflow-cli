@@ -64,6 +64,7 @@ from gflow_cli.errors import (
     FlowAgentUiError,
     FlowAppError,
     FlowHostMigratedError,
+    MediaDownloadError,
     MediaUploadRejectedError,
     RateLimitError,
     ReferenceNotFoundError,
@@ -1317,7 +1318,18 @@ class VideoGenerationMixin:
             target: AnyPath = storage_path(storage_uri, output_dir, key)
         else:
             target = self._clip_dir(out_dir) / f"{media_id}.mp4"
-        await write_asset_async(target, body)
+        try:
+            await write_asset_async(target, body)
+        except Exception as exc:
+            # The clip is already billed and still in Flow: type it so the recorder marks
+            # the asset generated and the user is sent to the free recovery, not a re-run.
+            raise MediaDownloadError(
+                media_id=media_id,
+                # Class name only, like get_signed_media: no bucket URI or home path in a
+                # detail that is persisted to the catalog.
+                detail=f"storing clip {media_id} failed ({type(exc).__name__})",
+                remediation_hint=recoverable_clip_hint(media_id),
+            ) from exc
         log.info(
             "ui_automation_video.video_saved",
             path=str(target),

@@ -42,8 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `videos/<YYYY-MM-DD>/<media_id>.mp4` in the bucket on either host, and the result's
   `local_path` is that cloud URI. The `gflow video` commands and MCP video tasks (through
   the worker) share this transport path. Images, `video extend` and upscale already
-  honoured the setting on both hosts. Proven offline and against a RustFS bucket.
-  The paid live run has not been done yet.
+  honoured the setting on both hosts. A failed store (bad credentials, missing bucket)
+  now exits 6 with the media id and the free `gflow data download <media_id>` recovery,
+  and the catalog marks the billed clip generated, instead of surfacing a raw storage
+  exception. Proven offline and against a RustFS bucket. The paid live run has not been
+  done yet.
 
 - On flow.google.com, `gflow video t2v`/`i2v`/`r2v` without `--out-dir` saved the clip to
   the root of the working directory instead of the documented `tmp/`, and `gflow video chain`

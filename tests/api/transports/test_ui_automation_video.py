@@ -941,6 +941,30 @@ class TestDownloadVideo:
         assert not list(tmp_path.iterdir())
 
     @pytest.mark.asyncio
+    async def test_a_failed_store_is_typed_as_a_recoverable_billed_clip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#1003: once Flow has billed the clip, a bucket write that fails (bad creds,
+        missing bucket) must say so with the media id and the free recovery command —
+        MediaDownloadError is also what makes the recorder mark the asset generated."""
+        from gflow_cli.api.transports import ui_automation_video as uav
+        from gflow_cli.errors import MediaDownloadError
+
+        async def _denied(_target: object, _data: bytes) -> None:
+            raise PermissionError("AccessDenied")
+
+        monkeypatch.setattr(uav, "write_asset_async", _denied)
+        transport = UiAutomationTransport()
+        transport._storage_uri = "memory://b1003-denied/gflow/"
+
+        with pytest.raises(MediaDownloadError) as caught:
+            await transport._save_clip("m-1003", b"mp4", tmp_path)
+
+        assert caught.value.media_id == "m-1003"
+        assert "gflow data download m-1003" in str(caught.value.remediation_hint)
+        assert "PermissionError" in str(caught.value.detail)
+
+    @pytest.mark.asyncio
     async def test_download_video_refuses_bytes_from_an_unexpected_host(
         self, tmp_path: Path
     ) -> None:

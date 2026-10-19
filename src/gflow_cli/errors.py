@@ -367,9 +367,10 @@ class NetworkError(FlowApiError):
 class MediaDownloadError(NetworkError):
     """The signed-media GET failed AFTER Flow reported the generation done (#896).
 
-    Raised only by ``get_signed_media``, so catching it means the clip exists and was
-    billed — the recorder uses it to mark the asset generated instead of leaving it
-    ``pending`` forever. Exits 6 like its parent.
+    Raised by ``get_signed_media`` and by the clip writer when storing the bytes fails
+    (#1003), so catching it means the clip exists and was billed — the recorder uses it
+    to mark the asset generated instead of leaving it ``pending`` forever. Exits 6 like
+    its parent.
     """
 
     problem_type = "https://gflow-cli.dev/errors/media-download"
