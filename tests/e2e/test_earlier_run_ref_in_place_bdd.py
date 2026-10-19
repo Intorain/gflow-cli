@@ -136,6 +136,10 @@ def _in_place(world: dict[str, Any]) -> None:
         attached = [e for e in events if e.get("event") == _ATTACHED_IN_PLACE]
         assert attached, f"no {_ATTACHED_IN_PLACE}; observed: {sorted(set(names))}"
         assert list(attached[-1].get("media_ids") or []) == [world["media_id"]], attached[-1]
+        # The exact-set submit guard is what proves no other media rode along.
+        guarded = [e for e in events if e.get("event") == "migrated.image_submit_guarded"]
+        assert guarded and guarded[-1].get("outcome") == "passed", guarded
+        assert guarded[-1].get("body_media") == 1, guarded[-1]
     else:
         assert _SELECTED_EXISTING_EVENT in names, (
             f"labs: expected {_SELECTED_EXISTING_EVENT}; observed: {sorted(set(names))}"

@@ -7,4 +7,4 @@
 - [x] Green: `api.image.recorded_in_project`; wire it into `cli_image._enrich_uuid_refs`, `mcp.tools._ref_meta_entry`, `worker.codec.build_image_request`.
 - [x] Docs: REFERENCE_STRATEGIES (flow.google.com section), USAGE (i2i on the migrated host), KNOWN_ISSUES (#639 entry), CHANGELOG.
 - [x] Gates: ruff check + format check, pyright, pytest with coverage, CLI↔MCP parity tests, repo hygiene / doc links / website docs checks.
-- [ ] Live: one `image i2i --ref <uuid-from-earlier-t2i> --project P` on a flow.google.com account (no credits). Not run by the author.
+- [x] Live: one `image i2i --ref <uuid-from-earlier-t2i> --project P` on a flow.google.com account (no credits). Not run by the author. Run in the takeover (#1001): see `docs/superpowers/spikes/2026-10-19-earlier-run-ref-in-place.md` and `tests/e2e/test_earlier_run_ref_in_place_bdd.py`.
