@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Locked `aiohttp` 3.14.5 (CVE-2026-111063, CVE-2026-111064, GHSA-2g87-pp6c-29x5).**
+  Transitive only, via the `gcs` (`gcsfs`) and `s3` (`s3fs`/`aiobotocore`) extras; no gflow
+  code imports it. `yarl` moved to 1.25.1 with it. The advisories landed after the last
+  green CI and turned the `pip-audit` gate red on every open PR.
+
 ### Added
 
 - **flow.google.com: `image i2i --ref <uuid>` references an earlier image of the same
@@ -25,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branches (`--remote`), stray `.env` copies, old `bt*` pytest basetemps, and dead agentctl
   agents (reported only). Dry run unless `--apply`; never touches the main checkout, a dirty
   worktree, an unmerged branch, `develop` or `main`. The release skill's final report runs it.
+
+### Fixed
+
+- On flow.google.com, `gflow video t2v`/`i2v`/`r2v` without `--out-dir` saved the clip to
+  the root of the working directory instead of the documented `tmp/`, and `gflow video chain`
+  saved its links to the working directory instead of `--out-dir` (or the configured output
+  directory). Both hosts now share one rule — per-call directory, then the client's output
+  directory, then `tmp/` — and the classic and
+  agent-only composers no longer fall back to the working directory. Reported by @ziyedbe.
+  Fixes #986.
 
 ## [0.86.0] — 2026-10-18
 

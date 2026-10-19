@@ -803,7 +803,7 @@ async def _restore_quietly(
         )
 
 
-async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) -> Path:
+async def download_video(page: Page, src: str, uuid: str, out_dir: Path) -> Path:
     """Fetch a finished clip from its tile src and prove it is an MP4.
 
     The src is refused unless it is on an allowed Google host, and the response unless it
@@ -846,9 +846,8 @@ async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) 
             ),
             route=_VIDEO_ROUTE,
         )
-    target = out_dir or Path.cwd()
-    target.mkdir(parents=True, exist_ok=True)
-    path = target / f"{uuid}.mp4"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{uuid}.mp4"
     path.write_bytes(body)
     log.info("migrated.agent_only.video_downloaded", path=str(path), bytes=len(body))
     return path
@@ -946,7 +945,7 @@ async def run_agent_video(
     request: GenerateVideoRequest,
     *,
     project_id: str,
-    out_dir: Path | None,
+    out_dir: Path,
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
