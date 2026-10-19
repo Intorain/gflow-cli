@@ -297,6 +297,19 @@ def test_resolve_payload_refs_i2v_rejects_non_image_asset(tmp_path: Path) -> Non
     assert err["error"]["title"] == "Reference Not Usable"
 
 
+def test_resolve_payload_refs_i2v_project_alone_is_not_usable() -> None:
+    """A catalogued project id is a routing hint, not a frame: still refused (#995)."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    repo = _FakeRepo(asset=_Asset([], flow_project_id="proj-1"))
+    payload = {"start_image_ref": _A_UUID}
+
+    err = _resolve_payload_refs(repo, "default", payload, task_type="i2v")
+
+    assert err is not None
+    assert err["error"]["title"] == "Reference Not Usable"
+
+
 def test_resolve_payload_refs_r2v_refs_merge_into_reference_images(tmp_path: Path) -> None:
     """r2v: UUID refs resolve to local paths appended to reference_images; the raw
     'refs' key is consumed and no 'ref_names' is produced."""

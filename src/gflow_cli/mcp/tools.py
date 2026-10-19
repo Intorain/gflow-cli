@@ -555,6 +555,11 @@ def _enrich_image_refs(
         if asset is None:
             continue
         entry = _ref_meta_entry(asset)
+        # Image-only: lets the worker mark a ref of the task's own project
+        # in_project (#995). Kept out of _ref_meta_entry so it never makes an
+        # i2v frame look usable.
+        if asset.flow_project_id:
+            entry["flow_project_id"] = asset.flow_project_id
         if entry:
             meta[ref] = entry
     if meta:
@@ -562,17 +567,11 @@ def _enrich_image_refs(
 
 
 def _ref_meta_entry(asset: AssetLookup) -> dict[str, str]:
-    """Build the ``display_name``/``local_path`` metadata entry for one catalog asset.
-
-    ``flow_project_id`` lets the worker mark a ref of the task's own project
-    ``in_project`` (#995), mirroring the CLI's ``_enrich_uuid_refs``.
-    """
+    """Build the ``display_name``/``local_path`` metadata entry for one catalog asset."""
     entry: dict[str, str] = {}
     name = asset.metadata_json.get("display_name")
     if isinstance(name, str) and name:
         entry["display_name"] = name
-    if asset.flow_project_id:
-        entry["flow_project_id"] = asset.flow_project_id
     for local_file in asset.local_files:
         if (path := verified_local_path(local_file)) is not None:
             entry["local_path"] = str(path)
@@ -774,9 +773,11 @@ def _build_video_media_inputs(
         "docs/REFERENCE_STRATEGIES.md. "
         "On accounts served from flow.google.com, use an existing project and local "
         "reference files. A character attaches there by name (@Name, or "
-        "reference_entities paired with reference_entity_names); UUID media "
-        "references, an entity id without a name, and image4 are not ported to that "
-        "composer yet and fail before submit; retrying will not clear it. On an agent-only "
+        "reference_entities paired with reference_entity_names); a UUID media "
+        "reference the local catalog records in that same project is referenced in "
+        "place (#995), but any other UUID, an entity id without a name, and image4 "
+        "are not ported to that composer yet and fail before submit; retrying will not "
+        "clear it. On an agent-only "
         "composer (#799) only text-to-image runs, so reference_images and character "
         "references fail there too. "
         "Returns local file paths to the generated images."

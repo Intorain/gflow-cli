@@ -111,7 +111,7 @@ def test_unported_image_forms_are_named_and_refused_pre_submit() -> None:
     assert _unported_image_form(_request()) is None
     assert _unported_image_form(_request(ref_paths=(local,))) is None
     assert _unported_image_form(_request(refs=(ImageRef(REFERENCE),))) == (
-        "a reference given by Flow media UUID"
+        "a Flow media UUID the catalog does not record in this --project"
     )
     # #723: characters attach through the `@` picker and are verified as entity chips.
     assert (
