@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Locked `aiohttp` 3.14.5 (CVE-2026-111063, CVE-2026-111064, GHSA-2g87-pp6c-29x5).**
+  Transitive only, via the `gcs` (`gcsfs`) and `s3` (`s3fs`/`aiobotocore`) extras; no gflow
+  code imports it. `yarl` moved to 1.25.1 with it. The advisories landed after the last
+  green CI and turned the `pip-audit` gate red on every open PR.
+
 ### Added
 
 - `scripts/dev/cleanup.py` — sweeps what a release or takeover session leaves behind:
