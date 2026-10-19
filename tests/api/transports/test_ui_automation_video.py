@@ -954,8 +954,9 @@ class TestDownloadVideo:
             raise PermissionError("AccessDenied")
 
         monkeypatch.setattr(uav, "write_asset_async", _denied)
+        # Local target on purpose: one write call serves both branches, and this keeps the
+        # test running where the optional cloud extra (upath) is not installed, as in CI.
         transport = UiAutomationTransport()
-        transport._storage_uri = "memory://b1003-denied/gflow/"
 
         with pytest.raises(MediaDownloadError) as caught:
             await transport._save_clip("m-1003", b"mp4", tmp_path)
