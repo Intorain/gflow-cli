@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio  # noqa: F401 — ensures asyncio mode is registered
+from structlog.testing import capture_logs
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoResult, VideoStatus
@@ -145,11 +146,17 @@ async def test_t2v_without_out_dir_saves_under_tmp(
 
     monkeypatch.chdir(tmp_path)
     req = GenerateVideoRequest(prompt=_PROMPT, mode=Mode.T2V, aspect=_aspect())
-    async with FlowApiClient(profile_dir=e2e_profile_dir, out_dir=None) as client:
-        result = await client.generate_video(
-            req=req, project_id=project, poll_timeout_s=_POLL_TIMEOUT_S
-        )
+    with capture_logs() as logs:
+        async with FlowApiClient(profile_dir=e2e_profile_dir, out_dir=None) as client:
+            result = await client.generate_video(
+                req=req, project_id=project, poll_timeout_s=_POLL_TIMEOUT_S
+            )
     assert result.status.succeeded, result.status
+    # Labs already saved under tmp/, so only a flow.google.com download proves #986.
+    events = {e.get("event") for e in logs}
+    assert events & {"migrated.download", "migrated.agent_only.video_downloaded"}, (
+        f"Flow did not serve flow.google.com; #986's path was not exercised: {sorted(events)}"
+    )
     assert result.local_path is not None
     local = Path(str(result.local_path)).resolve()
     assert local.parent == (tmp_path / "tmp").resolve(), local
