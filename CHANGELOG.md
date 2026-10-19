@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - On flow.google.com, a configured cloud `GFLOW_CLI_STORAGE_URI` (`s3://`, `gs://`) was
   ignored for generated video: both composer arms wrote the clip to local disk while labs
-  uploaded it ([#1003](https://github.com/ffroliva/gflow-cli/issues/1003)). Both hosts now
+  uploaded it. Fixes [#1003](https://github.com/ffroliva/gflow-cli/issues/1003). Both hosts now
   store a clip through the transport's one writer, so it lands at
   `videos/<YYYY-MM-DD>/<media_id>.mp4` in the bucket on either host, and the result's
   `local_path` is that cloud URI. The `gflow video` commands and MCP video tasks (through
