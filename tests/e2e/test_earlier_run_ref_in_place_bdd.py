@@ -15,17 +15,25 @@ Flow served is read from the seed run's events (an i2i refused at $0 emits none)
 (``ui_automation_video.image_ref_selected_existing``) is asserted, so a labs-served run
 is checked rather than skipped.
 
-**Cost.** Two images of daily quota (seed + i2i), zero Veo credits. On a tree where the
-i2i is refused (exit 36) only the seed is spent.
+**Cost.** Two images of daily quota per scenario (seed + i2i), zero Veo credits. On a
+tree where the i2i is refused (exit 36) only the seed is spent. The MCP scenario drives
+``gflow_generate_image`` in-process (tool → worker codec → transport), the twin the CLI
+run does not prove; select one with ``-k mcp`` / ``-k "not mcp"``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+import structlog
 from pytest_bdd import given, scenarios, then, when
+
+from gflow_cli.config import reset_settings
+from gflow_cli.mcp import tools as mcp_tools
 
 from .test_image_uuid_ref_e2e import (
     _SELECTED_EXISTING_EVENT,
@@ -112,6 +120,45 @@ def _i2i(world: dict[str, Any]) -> None:
     world["proc"] = proc
     world["events"] = _event_records(proc.stderr)
     print(f"[995] host={world['host']} project={world['project_id']} media={world['media_id']}")
+
+
+@when("the MCP image tool runs i2i with that image's uuid as a reference in that project")
+def _mcp_i2i(
+    world: dict[str, Any],
+    e2e_profile_dir: Path,
+    install_log_capture: structlog.testing.LogCapture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del e2e_profile_dir  # selects the real authenticated gflow home
+    # The MCP twin is a separate surface (AGENTS.md second law): the tool reads the
+    # catalog row the seed subprocess wrote, so it must see the same isolated DB.
+    for key in ("GFLOW_CLI_DB_PATH", "GFLOW_CLI_OUTPUT_DIR", "GFLOW_CLI_HISTORY_PROMPTS"):
+        monkeypatch.setenv(key, world["env"][key])
+    reset_settings()
+    world["result"] = asyncio.run(
+        mcp_tools.gflow_generate_image(
+            prompt="the same compass, now under candlelight",
+            model="nano2",
+            reference_images=[world["media_id"]],
+            profile=world["env"]["GFLOW_CLI_PROFILE"],
+            project=world["project_id"],
+            wait=True,
+        )
+    )
+    world["events"] = list(install_log_capture.entries)
+    status = world["result"].get("status")
+    print(f"[995-mcp] host={world['host']} project={world['project_id']} status={status}")
+
+
+@then("the MCP task completes with one image on disk")
+def _mcp_succeeds(world: dict[str, Any]) -> None:
+    result = world["result"]
+    assert result.get("status") == "completed", (
+        f"MCP i2i of an earlier invocation's image in its own project failed on "
+        f"{world['host']}: {result}"
+    )
+    files = [Path(p) for p in result.get("files") or []]
+    assert len(files) == 1 and files[0].stat().st_size > 10_000, files
 
 
 @then("the invocation succeeds and saves one image")
