@@ -97,6 +97,10 @@ if TYPE_CHECKING:
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
 
+    # Stores a finished clip's bytes under its media id and returns where they went —
+    # the transport's one writer for both hosts, so a cloud storage_uri holds here too (#1003).
+    ClipSaver = Callable[[str, bytes], Awaitable[Path]]
+
 log = structlog.get_logger(__name__)
 
 MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
@@ -3483,11 +3487,12 @@ class MigratedComposer:
         self,
         page: Page,
         record: GenerationRecord,
-        out_dir: Path,
+        save: ClipSaver,
     ) -> Path | None:
-        """The clip from its signed CDN URL. The labs ``media.getMediaUrlRedirect``
-        route answers 404 for a migrated media id (measured 2026-09-05), so there is
-        no second source: a record with no URL is a wire-format failure."""
+        """The clip from its signed CDN URL, stored by ``save``. The labs
+        ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id
+        (measured 2026-09-05), so there is no second source: a record with no URL is a
+        wire-format failure."""
         if not record.video_url and not record.poster_url:
             raise WireFormatError(
                 detail=(
@@ -3497,9 +3502,7 @@ class MigratedComposer:
                 route="batchexecute:as29s",
             )
         body = await self.fetch_mp4(page, record)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{record.media_id}.mp4"
-        path.write_bytes(body)
+        path = await save(record.media_id, body)
         log.info("migrated.download", path=str(path), bytes=len(body))
         return path
 
@@ -3509,7 +3512,7 @@ async def run_video(
     request: GenerateVideoRequest,
     *,
     project_id: str | None,
-    out_dir: Path,
+    save: ClipSaver,
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
@@ -3555,7 +3558,7 @@ async def run_video(
             page,
             request,
             project_id=pid,
-            out_dir=out_dir,
+            save=save,
             poll_timeout_s=poll_timeout_s,
             download=download,
             on_started=on_started,
@@ -3617,10 +3620,11 @@ async def run_video(
     )
     local_path: Path | None = None
     if download and record.is_done:
-        local_path = await composer.download(page, record, out_dir)
+        local_path = await composer.download(page, record, save)
     return VideoResult(
         status=status,
-        local_path=Path(local_path) if local_path is not None else None,
+        # Not re-wrapped in Path(): a cloud UPath must reach the caller intact (#1003).
+        local_path=local_path,
         project_id=pid,
         flow_operation_id=record.workflow_id,
         workflow_id=record.workflow_id,

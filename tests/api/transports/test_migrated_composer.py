@@ -1555,6 +1555,17 @@ async def test_status_three_without_url_stands_after_the_grace(
     assert rec.is_done and rec.video_url is None
 
 
+def _saver(out_dir: Path) -> Any:
+    """A local stand-in for the transport's `_save_clip` (#1003)."""
+
+    async def save(media_id: str, body: bytes) -> Path:
+        path = out_dir / f"{media_id}.mp4"
+        path.write_bytes(body)
+        return path
+
+    return save
+
+
 async def test_download_uses_the_signed_url_before_the_redirect_route(tmp_path: Any) -> None:
     from gflow_cli.api.transports.batchexecute import GenerationRecord
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -1584,7 +1595,7 @@ async def test_download_uses_the_signed_url_before_the_redirect_route(tmp_path: 
     rec = GenerationRecord(
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
-    path = await MigratedComposer().download(page, rec, tmp_path)
+    path = await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert page.request.urls == [VIDEO_URL]
 
@@ -1626,7 +1637,7 @@ async def test_download_falls_back_to_the_other_url_when_the_first_is_a_jpeg(
         video_url="https://flow-content.google/p/x.jpg?Signature=a",  # mislabelled on purpose
         poster_url="https://flow-content.google/v/x.mp4?Signature=b",
     )
-    path = await MigratedComposer().download(page, rec, tmp_path)
+    path = await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert len(page.request.urls) == 2
 
@@ -1652,7 +1663,7 @@ async def test_download_refuses_a_foreign_host_before_any_request(tmp_path: Any)
         video_url="https://evil.example/v.mp4?Signature=s",
     )
     with pytest.raises(WireFormatError, match="evil.example"):
-        await MigratedComposer().download(page, rec, tmp_path)
+        await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert calls == []
 
 
@@ -1678,7 +1689,7 @@ async def test_download_never_follows_redirects(tmp_path: Any) -> None:
     rec = GenerationRecord(
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
-    await MigratedComposer().download(page, rec, tmp_path)
+    await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert seen.get("max_redirects") == 0
 
 
@@ -1702,7 +1713,7 @@ async def test_download_refuses_when_no_url_is_an_mp4(tmp_path: Any) -> None:
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
     with pytest.raises(WireFormatError, match="ftyp"):
-        await MigratedComposer().download(page, rec, tmp_path)
+        await MigratedComposer().download(page, rec, _saver(tmp_path))
 
 
 def test_migrated_can_serve_decides_what_the_new_host_takes() -> None:

@@ -208,26 +208,81 @@ async def test_bootstrap_page_already_on_the_migrated_host_routes_before_entry(
     assert len(harness["run_video"]) == 1
 
 
-async def test_agent_only_arm_gets_the_same_default_out_dir_as_labs(
-    harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+# --- #986 / #1003: a configured cloud storage_uri holds on both migrated arms ----------------
+
+_MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16
+
+
+def _stub_migrated_arm(monkeypatch: pytest.MonkeyPatch, harness: dict[str, Any], arm: str) -> None:
+    """Run the REAL run_video and the real download of `arm`, stubbing only the DOM
+    steps before the download, so the bytes reach whichever writer the arm uses."""
+    from gflow_cli.api.transports import agent_only_composer as aoc
+    from gflow_cli.api.transports import migrated_composer as mc
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+
+    monkeypatch.setattr(mc, "run_video", _real_run_video)
+
+    async def _ensure(*_: Any, **__: Any) -> str:
+        return arm
+
+    monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", _ensure)
+    if arm == "agent_only":
+        monkeypatch.setattr(aoc.AgentOnlyComposer, "apply_defaults", AsyncMock())
+        monkeypatch.setattr(aoc, "_restore_quietly", AsyncMock())
+        media = aoc.TileMedia(uuid="m1003", src="https://flow.google.com/asb/opaque")
+        monkeypatch.setattr(aoc.AgentOnlyComposer, "generate", AsyncMock(return_value=(media,)))
+        resp = MagicMock(url="https://rr2---sn-x.googlevideo.com/v", status=200)
+        resp.body = AsyncMock(return_value=_MP4)
+        harness["page"].request.get = AsyncMock(return_value=resp)
+        return
+    for step in ("apply_video_settings", "send_prompt"):
+        monkeypatch.setattr(mc.MigratedComposer, step, AsyncMock())
+    record = GenerationRecord(
+        workflow_id="wf1", project_id="p1", media_id="m1003", status=3, video_url="https://x"
+    )
+    monkeypatch.setattr(mc.MigratedComposer, "submit_and_observe", AsyncMock(return_value=record))
+    monkeypatch.setattr(mc.MigratedComposer, "fetch_mp4", AsyncMock(return_value=_MP4))
+
+
+@pytest.mark.parametrize("arm", ["classic", "agent_only"])
+async def test_migrated_clip_goes_to_the_configured_cloud_storage(
+    harness: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    arm: str,
+) -> None:
+    """#1003: labs uploads a clip to GFLOW_CLI_STORAGE_URI; both flow.google.com arms
+    wrote it to local disk instead. Same transport, same setting, same destination."""
+    pytest.importorskip("upath")
+    from gflow_cli.storage import is_cloud_path
+
+    monkeypatch.chdir(tmp_path)
+    _stub_migrated_arm(monkeypatch, harness, arm)
+    harness["transport"]._storage_uri = f"memory://b1003-{arm}/gflow/"  # noqa: SLF001
+    result = await harness["transport"].generate_video(request=_req(), project_id="p1")
+
+    assert result.local_path is not None
+    assert is_cloud_path(result.local_path), result.local_path
+    assert str(result.local_path).endswith("/m1003.mp4")
+    assert result.local_path.read_bytes() == _MP4
+    assert not (tmp_path / "tmp").exists()  # nothing left behind on local disk
+
+
+@pytest.mark.parametrize("arm", ["classic", "agent_only"])
+async def test_migrated_clip_without_storage_uri_stays_under_tmp(
+    harness: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    arm: str,
 ) -> None:
     """#986: with no --out-dir the agent-only composer saved the clip to the cwd root;
-    labs saves it under tmp/. The real run_video runs here, down to the agent arm."""
-    from gflow_cli.api.transports import agent_only_composer, migrated_composer
+    labs saves it under tmp/. #1003 keeps that local default on both arms."""
+    monkeypatch.chdir(tmp_path)
+    _stub_migrated_arm(monkeypatch, harness, arm)
+    result = await harness["transport"].generate_video(request=_req(), project_id="p1")
 
-    monkeypatch.setattr(migrated_composer, "run_video", _real_run_video)
-
-    async def _agent_only(*_: Any, **__: Any) -> str:
-        return "agent_only"
-
-    async def _run_agent_video(_p: Any, _r: Any, **kw: Any) -> VideoResult:
-        harness["run_video"].append((_r, kw))
-        return _result()
-
-    monkeypatch.setattr(migrated_composer.MigratedComposer, "ensure_editor", _agent_only)
-    monkeypatch.setattr(agent_only_composer, "run_agent_video", _run_agent_video)
-    await harness["transport"].generate_video(request=_req(), project_id="p1")
-    assert harness["run_video"][0][1]["out_dir"] == Path("tmp")
+    assert result.local_path == Path("tmp") / "m1003.mp4"
+    assert (tmp_path / "tmp" / "m1003.mp4").read_bytes() == _MP4
 
 
 # --- run_video guards (direct) ------------------------------------------------
@@ -244,7 +299,7 @@ async def _run(
         page,
         request,
         project_id=project_id,
-        out_dir=Path("."),
+        save=AsyncMock(),
         poll_timeout_s=1.0,
         download=False,
         on_started=None,

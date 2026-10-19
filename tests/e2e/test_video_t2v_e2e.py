@@ -161,3 +161,50 @@ async def test_t2v_without_out_dir_saves_under_tmp(
     local = Path(str(result.local_path)).resolve()
     assert local.parent == (tmp_path / "tmp").resolve(), local
     assert local.read_bytes()[4:8] == b"ftyp"
+
+
+# ---------------------------------------------------------------------------
+# #1003 — a configured cloud storage_uri holds for a flow.google.com clip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_t2v_on_flow_google_com_uploads_to_the_configured_storage_uri(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPENDS VEO CREDITS. With ``GFLOW_CLI_STORAGE_URI`` set, a clip Flow serves from
+    flow.google.com must land in that bucket, as it does on labs (#1003).
+
+    Env: ``GFLOW_CLI_E2E_RUN_VIDEO=1`` (owner consent), ``GFLOW_CLI_E2E_PROJECT``, and
+    ``GFLOW_CLI_E2E_STORAGE_URI`` -- e.g. ``s3://gflow-test/gflow/`` on a local RustFS
+    (``docker compose up``) with ``AWS_ENDPOINT_URL`` / ``AWS_ACCESS_KEY_ID`` /
+    ``AWS_SECRET_ACCESS_KEY`` exported for it.
+    """
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
+        pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
+    project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "").strip()
+    storage_uri = os.environ.get("GFLOW_CLI_E2E_STORAGE_URI", "").strip()
+    if not project or not storage_uri:
+        pytest.skip("GFLOW_CLI_E2E_PROJECT and GFLOW_CLI_E2E_STORAGE_URI must be set")
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.config import reset_settings
+    from gflow_cli.storage import is_cloud_path
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GFLOW_CLI_STORAGE_URI", storage_uri)
+    reset_settings()
+    req = GenerateVideoRequest(prompt=_PROMPT, mode=Mode.T2V, aspect=_aspect())
+    with capture_logs() as logs:
+        async with FlowApiClient(profile_dir=e2e_profile_dir, out_dir=None) as client:
+            result = await client.generate_video(
+                req=req, project_id=project, poll_timeout_s=_POLL_TIMEOUT_S
+            )
+    assert result.status.succeeded, result.status
+    events = {e.get("event") for e in logs}
+    assert events & {"migrated.download", "migrated.agent_only.video_downloaded"}, (
+        f"Flow did not serve flow.google.com; #1003's path was not exercised: {sorted(events)}"
+    )
+    assert result.local_path is not None and is_cloud_path(result.local_path), result.local_path
+    assert str(result.local_path).startswith(storage_uri.rstrip("/"))
+    assert result.local_path.read_bytes()[4:8] == b"ftyp"
+    assert not (tmp_path / "tmp").exists()
