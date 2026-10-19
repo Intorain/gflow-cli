@@ -22,10 +22,10 @@ import pytest
 from tests.integration.constants import (
     FAKE_GCS_IMAGE,
     GCS_BUCKET,
-    MINIO_ACCESS_KEY,
-    MINIO_BUCKET,
-    MINIO_IMAGE,
-    MINIO_SECRET_KEY,
+    S3_ACCESS_KEY,
+    S3_BUCKET,
+    S3_IMAGE,
+    S3_SECRET_KEY,
     STORAGE_PREFIX,
 )
 
@@ -53,13 +53,13 @@ def _free_tcp_port() -> int:
 
 
 # ---------------------------------------------------------------------------
-# S3 / MinIO
+# S3 / RustFS
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")
-def minio_storage_uri() -> Generator[str, None, None]:
-    """Start MinIO in Docker, configure AWS env vars, yield s3:// URI.
+def s3_storage_uri() -> Generator[str, None, None]:
+    """Start RustFS (S3-compatible) in Docker, configure AWS env vars, yield s3:// URI.
 
     The fixture is skipped when ``testcontainers`` or ``s3fs`` are not
     installed, or when Docker is unavailable.
@@ -73,31 +73,30 @@ def minio_storage_uri() -> Generator[str, None, None]:
 
     docker_container_cls = tc_container_mod.DockerContainer
 
-    container = docker_container_cls(MINIO_IMAGE)
-    container.with_command("server /data")
-    container.with_env("MINIO_ROOT_USER", MINIO_ACCESS_KEY)
-    container.with_env("MINIO_ROOT_PASSWORD", MINIO_SECRET_KEY)
+    container = docker_container_cls(S3_IMAGE)
+    container.with_env("RUSTFS_ACCESS_KEY", S3_ACCESS_KEY)
+    container.with_env("RUSTFS_SECRET_KEY", S3_SECRET_KEY)
     container.with_exposed_ports(9000)
 
     with container:
         host = container.get_container_host_ip()
         port = int(container.get_exposed_port(9000))
         endpoint_url = f"http://{host}:{port}"
-        _wait_http_200(f"{endpoint_url}/minio/health/live")
+        _wait_http_200(f"{endpoint_url}/health")
 
-        # Create the test bucket via s3fs (avoids an extra minio-py dependency).
+        # Create the test bucket via s3fs (avoids an extra S3 client dependency).
         fs = s3fs_mod.S3FileSystem(
-            key=MINIO_ACCESS_KEY,
-            secret=MINIO_SECRET_KEY,
+            key=S3_ACCESS_KEY,
+            secret=S3_SECRET_KEY,
             endpoint_url=endpoint_url,
             client_kwargs={"region_name": "us-east-1"},
         )
-        fs.mkdir(MINIO_BUCKET)
+        fs.mkdir(S3_BUCKET)
         s3fs_mod.S3FileSystem.clear_instance_cache()
 
         env_vars = {
-            "AWS_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
-            "AWS_SECRET_ACCESS_KEY": MINIO_SECRET_KEY,
+            "AWS_ACCESS_KEY_ID": S3_ACCESS_KEY,
+            "AWS_SECRET_ACCESS_KEY": S3_SECRET_KEY,
             "AWS_ENDPOINT_URL": endpoint_url,
             "AWS_DEFAULT_REGION": "us-east-1",
         }
@@ -106,7 +105,7 @@ def minio_storage_uri() -> Generator[str, None, None]:
         s3fs_mod.S3FileSystem.clear_instance_cache()
 
         try:
-            yield f"s3://{MINIO_BUCKET}/{STORAGE_PREFIX}"
+            yield f"s3://{S3_BUCKET}/{STORAGE_PREFIX}"
         finally:
             for k, v in saved.items():
                 if v is None:

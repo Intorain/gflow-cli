@@ -949,7 +949,7 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-For MinIO, also set:
+For a self-hosted S3-compatible store (RustFS, MinIO, ...), also set:
 
 ```bash
 export AWS_ENDPOINT_URL=http://localhost:9000

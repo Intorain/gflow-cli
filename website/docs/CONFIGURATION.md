@@ -103,14 +103,14 @@ Examples:
 # Choose one:
 export GFLOW_CLI_STORAGE_URI=gs://my-gcs-bucket/gflow/
 export GFLOW_CLI_STORAGE_URI=s3://my-s3-bucket/gflow/
-export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/   # MinIO local dev
+export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/   # local docker-compose stack (RustFS)
 ```
 
-S3 and MinIO use the standard AWS SDK environment variables:
+S3 and S3-compatible stores use the standard AWS SDK environment variables:
 
 ```bash
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_ACCESS_KEY_ID=rustfsadmin
+export AWS_SECRET_ACCESS_KEY=rustfsadmin
 export AWS_ENDPOINT_URL=http://localhost:9000   # omit for real AWS
 export AWS_DEFAULT_REGION=us-east-1
 ```

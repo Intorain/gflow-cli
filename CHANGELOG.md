@@ -52,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   @Ltwoz for the diagnosis and the fix. Their other symptom — the 4th picker not opening at
   all, on macOS — did not reproduce here and is not claimed fixed.
   ([#997](https://github.com/ffroliva/gflow-cli/issues/997))
+- The S3 storage container tests and the `docker-compose.yml` local stack now run
+  **RustFS 1.0.3** (pinned by tag and digest) instead of MinIO. MinIO removed its community
+  images from Docker Hub in Sep 2026, so the old pin no longer pulled and the S3 tests could
+  not start. Nothing ran them, so nobody noticed. A new `Storage container tests` CI job runs
+  `pytest -m containers tests/integration/` (S3 via RustFS, GCS via fake-gcs-server) and
+  fails if fewer than all 12 storage tests execute. The local-stack credentials are now
+  `rustfsadmin`/`rustfsadmin`. Any S3-compatible store, MinIO included, still works as a
+  `GFLOW_CLI_STORAGE_URI` target. See
+  `docs/superpowers/spikes/2026-10-19-minio-replacement.md`.
 
 ## [0.86.0] — 2026-10-18
 
