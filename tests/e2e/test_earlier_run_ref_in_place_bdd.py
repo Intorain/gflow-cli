@@ -9,10 +9,11 @@ an earlier process is still in the page's grid, offered by the ``@`` picker unde
 ``/asb/<token>``, and carried by the submit Flow accepts, only a live run can show.
 
 **Host-aware.** The seed and the i2i run in separate subprocesses, as in #995. The host
-Flow served is read from the run's own events: ``migrated.*`` events mean flow.google.com,
-where the contract is ``migrated.existing_references_attached`` naming the seed. Otherwise
-the labs contract (``ui_automation_video.image_ref_selected_existing``) is asserted, so a
-labs-served run is checked rather than skipped.
+Flow served is read from the seed run's events (an i2i refused at $0 emits none):
+``migrated.*`` events mean flow.google.com, where the contract is
+``migrated.existing_references_attached`` naming the seed. Otherwise the labs contract
+(``ui_automation_video.image_ref_selected_existing``) is asserted, so a labs-served run
+is checked rather than skipped.
 
 **Cost.** Two images of daily quota (seed + i2i), zero Veo credits. On a tree where the
 i2i is refused (exit 36) only the seed is spent.
@@ -76,7 +77,12 @@ def _seed(e2e_env: dict[str, str], tmp_path: Path) -> dict[str, Any]:
     assert images, f"seed run returned no images: {payload}"
     project_id = str(payload.get("project_id") or "")
     assert project_id, f"seed payload carried no project_id: {payload}"
+    # Read from the SEED, which always reaches a composer: an i2i refused before the page
+    # (exit 36) emits no host event of its own.
+    seed_events = {str(e.get("event", "")) for e in _event_records(seed.stderr)}
+    host = "flow.google.com" if any(n.startswith("migrated.") for n in seed_events) else "labs"
     return {
+        "host": host,
         "env": e2e_env,
         "out": out,
         "media_id": str(images[0]["media_name"]),
@@ -105,10 +111,6 @@ def _i2i(world: dict[str, Any]) -> None:
     )
     world["proc"] = proc
     world["events"] = _event_records(proc.stderr)
-    names = {str(e.get("event", "")) for e in world["events"]}
-    world["host"] = (
-        "flow.google.com" if any(n.startswith("migrated.") for n in names) else "labs.google"
-    )
     print(f"[995] host={world['host']} project={world['project_id']} media={world['media_id']}")
 
 
