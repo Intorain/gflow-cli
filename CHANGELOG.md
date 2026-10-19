@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory). Both hosts now share one rule — per-call directory, then the client's output
   directory, then `tmp/` — and the classic and
   agent-only composers no longer fall back to the working directory. Reported by @ziyedbe.
-  Refs #986.
+  Fixes #986.
 
 ## [0.86.0] — 2026-10-18
 
