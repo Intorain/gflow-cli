@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory, then `tmp/` — and the classic and
   agent-only composers no longer fall back to the working directory. Reported by @ziyedbe.
   Fixes #986.
+- **On flow.google.com, the 4th `@` reference no longer lands between the 2nd and 3rd.**
+  Before each mention gflow clicked the centre of the prompt box; with three chips on the
+  line that centre is chip 2, so reference 4 was inserted behind it and the prompt read
+  1, 2, 4, 3 (measured 3/3 at 1280×720). gflow now moves the caret to the end of the prompt
+  before every `@` (image references in place, uploaded `--ref` files, and `@Character`
+  mentions alike), and a mention that does not land after the chips already there now
+  fails with exit 32 before anything is submitted, instead of passing silently. Thanks to
+  @Ltwoz for the diagnosis and the fix. Their other symptom — the 4th picker not opening at
+  all, on macOS — did not reproduce here and is not claimed fixed.
+  ([#997](https://github.com/ffroliva/gflow-cli/issues/997))
 
 ## [0.86.0] — 2026-10-18
 
