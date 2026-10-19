@@ -112,6 +112,8 @@ unchanged:** video characters are still refused there: `--reference-entity` exit
   the page's project grid, so a stale row fails with exit 32 instead of attaching something
   else. A UUID from another project, or one without a recorded caption, still exits 36.
   Because nothing is uploaded, this path never meets Flow's one-time upload-terms dialog.
+  **Behaviour change:** a same-project image since deleted in Flow used to exit 36 at
+  once; it now spends up to ~90 s (`EXISTING_REF_WAIT_S`) reloading the grid, then exits 32.
 - **What to do on a refusal.**
   - **Exit 32:** no option, or several, carry the exact name. Rename the colliding asset in
     Flow, or give the character a unique one-word name.

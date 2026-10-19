@@ -571,9 +571,8 @@ def _ref_meta_entry(asset: AssetLookup) -> dict[str, str]:
     name = asset.metadata_json.get("display_name")
     if isinstance(name, str) and name:
         entry["display_name"] = name
-    project = getattr(asset, "flow_project_id", None)
-    if isinstance(project, str) and project:
-        entry["flow_project_id"] = project
+    if asset.flow_project_id:
+        entry["flow_project_id"] = asset.flow_project_id
     for local_file in asset.local_files:
         if (path := verified_local_path(local_file)) is not None:
             entry["local_path"] = str(path)

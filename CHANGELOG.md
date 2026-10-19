@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no upload, so a t2i → review → i2i pipeline split across invocations no longer needs
   Flow's upload-terms confirmation. MCP image tasks behave the same (`ref_meta` now carries
   the catalog's `flow_project_id`). Refs from another project, or without a recorded
-  caption, still exit 36.
+  caption, still exit 36. Behaviour change: a same-project image deleted in Flow since it
+  was catalogued now costs up to ~90 s of grid reloads and exits 32, instead of exiting 36
+  at once.
 
 - `scripts/dev/cleanup.py` — sweeps what a release or takeover session leaves behind:
   merged worktrees and branches, done `pr-<N>` fetch branches, merged same-repo origin
