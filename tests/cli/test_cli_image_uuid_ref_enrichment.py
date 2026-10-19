@@ -43,10 +43,12 @@ def _asset(
     display_name: str | None = None,
     recorded_bytes: int | None = None,
     recorded_sha256: str | None = None,
+    flow_project_id: str | None = None,
 ) -> SimpleNamespace:
     content = local_path.read_bytes() if local_path is not None and local_path.is_file() else None
     return SimpleNamespace(
         kind=kind,
+        flow_project_id=flow_project_id,
         metadata_json={"display_name": display_name} if display_name else {},
         local_files=(
             [
@@ -419,3 +421,75 @@ class TestBuildNameResolver:
         assert resolver is not None
         assert resolver("00000000-0000-4000-8000-000000000000") is None
         assert repo.writes == []
+
+
+_PROJECT = "11111111-2222-3333-4444-555555555555"
+_OTHER_PROJECT = "99999999-8888-7777-6666-555555555555"
+
+
+class TestEnrichUuidRefTargetProject:
+    """#995 — a catalogued image of the project being driven is marked ``in_project``.
+
+    On flow.google.com only an ``in_project`` ref is referenced in place (the migrated
+    composer's ``_unported_image_form``); the transport still proves the tile is in the
+    page's project grid before selecting it, so the catalog is a routing hint, never
+    the proof.
+    """
+
+    def test_same_project_marks_ref_in_project(self, patch_asset: Callable[[object], None]) -> None:
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        patch_asset(
+            _asset(local_path=None, display_name="Clay sun mascot", flow_project_id=_PROJECT)
+        )
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva", project_id=_PROJECT)[0]
+
+        assert enriched.in_project is True
+        assert enriched.display_name == "Clay sun mascot"
+
+    def test_other_project_stays_out_of_project(
+        self, patch_asset: Callable[[object], None]
+    ) -> None:
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        patch_asset(
+            _asset(local_path=None, display_name="Clay sun", flow_project_id=_OTHER_PROJECT)
+        )
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva", project_id=_PROJECT)[0]
+
+        assert enriched.in_project is False
+
+    def test_no_target_project_stays_out_of_project(
+        self, patch_asset: Callable[[object], None]
+    ) -> None:
+        """Without ``--project`` the run gets a fresh scratch project, which cannot
+        already hold the image."""
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        patch_asset(_asset(local_path=None, display_name="Clay sun", flow_project_id=_PROJECT))
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva", project_id=None)[0]
+
+        assert enriched.in_project is False
+
+    def test_uncatalogued_project_stays_out_of_project(
+        self, patch_asset: Callable[[object], None]
+    ) -> None:
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        patch_asset(_asset(local_path=None, display_name="Clay sun", flow_project_id=None))
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva", project_id=_PROJECT)[0]
+
+        assert enriched.in_project is False
+
+    def test_video_asset_is_never_marked(self, patch_asset: Callable[[object], None]) -> None:
+        from gflow_cli.cli_image import _enrich_uuid_refs
+
+        patch_asset(_asset(local_path=None, kind=AssetKind.VIDEO, flow_project_id=_PROJECT))
+
+        enriched = _enrich_uuid_refs([ImageRef(name=_UUID)], "ffroliva", project_id=_PROJECT)[0]
+
+        assert enriched == ImageRef(name=_UUID)

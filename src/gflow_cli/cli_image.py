@@ -46,6 +46,7 @@ from gflow_cli.api.image import (
     GenerateImageRequest,
     ImageRef,
     Model,
+    recorded_in_project,
     reference_cap_for,
 )
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
@@ -253,7 +254,9 @@ def _classify_ref(ref: str) -> ImageRef | Path:
         ) from exc
 
 
-def _enrich_uuid_refs(refs: list[ImageRef], profile_name: str) -> list[ImageRef]:
+def _enrich_uuid_refs(
+    refs: list[ImageRef], profile_name: str, *, project_id: str | None = None
+) -> list[ImageRef]:
     """Give bare ``--ref <UUID>`` values their catalog name and local file.
 
     ``_classify_ref`` sees a string, not the catalog, so it can only produce
@@ -267,6 +270,10 @@ def _enrich_uuid_refs(refs: list[ImageRef], profile_name: str) -> list[ImageRef]
     an unknown asset, an unavailable catalog, or a file since deleted leaves the
     ref untouched, and the transport still fails loud rather than generating
     without the reference.
+
+    ``project_id`` is the project the generation runs in. A ref the catalog records
+    in that same project is marked ``in_project`` (#995): flow.google.com references
+    it in place rather than refusing it as a foreign media UUID.
     """
     if not refs:
         return refs
@@ -299,6 +306,7 @@ def _enrich_uuid_refs(refs: list[ImageRef], profile_name: str) -> list[ImageRef]
             display_name=display_name,
             local_path=local_path,
             local_sha256=local_sha256,
+            in_project=ref.in_project or recorded_in_project(asset.flow_project_id, project_id),
         )
 
     try:
@@ -1844,6 +1852,7 @@ async def _run_i2i(
             uuid_refs_initial = _enrich_uuid_refs(
                 [r for r in params.classified_refs if isinstance(r, ImageRef)],
                 profile_name,
+                project_id=project.project_id,
             )
             local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
             req = GenerateImageRequest(

@@ -183,7 +183,9 @@ class _Asset:
         flow_media_id="m",
         metadata_json=None,
         kind: AssetKind = AssetKind.IMAGE,
+        flow_project_id=None,
     ):
+        self.flow_project_id = flow_project_id
         self.local_files = list(local_files)
         self.flow_media_id = flow_media_id
         self.metadata_json = metadata_json or {}
@@ -365,6 +367,22 @@ def test_resolve_payload_refs_image_enrich_partial_meta_only() -> None:
     err = _resolve_payload_refs(repo, "default", payload, task_type="i2i")
     assert err is None
     assert payload["ref_meta"] == {_A_UUID: {"display_name": "Named but pruned"}}
+
+
+def test_resolve_payload_refs_image_records_flow_project() -> None:
+    """#995: the catalog's project rides in ref_meta so the worker can mark a ref of the
+    target project ``in_project`` (referenced in place on flow.google.com)."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    repo = _FakeRepo(
+        asset=_Asset([], metadata_json={"display_name": "Clay sun"}, flow_project_id="proj-1")
+    )
+    payload = {"refs": [_A_UUID], "project_id": "proj-1"}
+    err = _resolve_payload_refs(repo, "default", payload, task_type="i2i")
+    assert err is None
+    assert payload["ref_meta"] == {
+        _A_UUID: {"display_name": "Clay sun", "flow_project_id": "proj-1"}
+    }
 
 
 def test_format_mcp_error_with_detail_and_remediation() -> None:
