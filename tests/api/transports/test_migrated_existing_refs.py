@@ -223,7 +223,10 @@ def test_only_an_in_project_captioned_reference_is_ported(tmp_path: Any) -> None
     # A catalog/MCP UUID ref carries a caption too, but is not from this run's project:
     # it stays unported on flow.google.com (exit 36), as before #913.
     catalog = ImageRef(name=PARENT, display_name="a single red apple")
-    assert _unported_image_form(_req(refs=(catalog,))) == "a reference given by Flow media UUID"
+    assert (
+        _unported_image_form(_req(refs=(catalog,)))
+        == "a Flow media UUID the catalog does not record in this --project"
+    )
     no_caption = ImageRef(name=PARENT, in_project=True)
     assert "without a caption" in (_unported_image_form(_req(refs=(no_caption,))) or "")
     local = tmp_path / "x.png"

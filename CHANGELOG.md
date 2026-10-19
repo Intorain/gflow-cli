@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **flow.google.com: `image i2i --ref <uuid>` references an earlier image of the same
+  project in place** ([#995](https://github.com/ffroliva/gflow-cli/issues/995)). When the
+  local catalog records the image in the `--project` being generated in (and kept its Flow
+  caption), the ref is marked `in_project` and goes through the existing #913 picker path:
+  no upload, so a t2i → review → i2i pipeline split across invocations no longer needs
+  Flow's upload-terms confirmation. MCP image tasks behave the same (`ref_meta` now carries
+  the catalog's `flow_project_id`). Refs from another project, or without a recorded
+  caption, still exit 36. Behaviour change: a same-project image deleted in Flow since it
+  was catalogued now costs up to ~90 s of grid reloads and exits 32, instead of exiting 36
+  at once.
+
 - `scripts/dev/cleanup.py` — sweeps what a release or takeover session leaves behind:
   merged worktrees and branches, done `pr-<N>` fetch branches, merged same-repo origin
   branches (`--remote`), stray `.env` copies, old `bt*` pytest basetemps, and dead agentctl
