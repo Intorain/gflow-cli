@@ -19,15 +19,22 @@ load per run (image mode bound first, as the in-place path does):
 Per mention it records, BEFORE typing ``@``: the click point and ``elementFromPoint``
 there; the selection (anchor node, offset, whether the node immediately before the caret
 is a chip, chips before/after the caret, text after the caret, caret rect); chip line
-tops (how many visual lines). AFTER ``@``: picker option count and the composer tail.
-A picker that opened is committed with option i (ArrowDown i-1, Enter) and followed by a
-space, as production does. A picker that did NOT open is closed with Escape and the run
-stops there — Enter is never pressed without an open picker, because Enter in the
-composer is the submit key.
+tops (how many visual lines). AFTER ``@`` (when production types its query): picker
+option count and the composer tail. The commit is production's own (see AMENDED below);
+it presses Enter only when the target option is offered, and a run stops at its first
+failed mention.
 
 COST: navigation, the settings pane, DOM reads and typing only. NOTHING IS SUBMITTED;
 the composer is cleared at the end of every run and the page reloaded before the next,
 which also drops any client-side request state the chips left behind.
+
+AMENDED after two invalid runs (2026-10-19 17:00, 17:03; the reading below is unchanged):
+a hand-rolled commit (bare-picker Enter, then a caption query + token pick) added no chip
+even for mention 1, so it measured the spike, not #997. Each mention now calls
+production ``MigratedComposer._mention_by_token`` UNCHANGED, with ``page.keyboard.type``
+wrapped: the hook fires after production's composer click and before its ``@``, records
+the caret, and (fix arms only) moves it. Targets are project grid images
+(``img[data-media-id]``) with their picker caption as the query — the in-place path.
 
 Pre-registered reading (written before the first run, 2026-10-19):
 
@@ -44,6 +51,13 @@ Pre-registered reading (written before the first run, 2026-10-19):
       -> the proposed fix is supported by a controlled comparison.
   end_key arm fails like control -> the reporter's "End does not help" holds.
   The failing mention number need not be 4: it is wherever line 1 fills at THIS width.
+
+Added 2026-10-19 ~17:12, before any --send-prompt run (run 1 of the matrix had shown the
+control arm inserting chip 4 BEFORE chip 3): with --send-prompt and exactly 4 mentions,
+  control arm sequence has PROMPT anywhere but last, R/R -> the wedged caret also splits
+      the user's prompt around chips (a second, silent consequence); range_end arm PROMPT
+      last -> the proposed fix also covers it.
+  PROMPT last in the control arm -> no prompt-placement consequence observed.
 
     uv run python scripts/dev/spike_997_fourth_ref_caret.py \
         --profile denon82 --project <uuid> [--mentions 5] [--runs 3] [--arms click range_end]
@@ -63,6 +77,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gflow_cli.api.image import GenerateImageRequest  # noqa: E402
 from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
+    _OPTION_TITLES_JS,
+    _OPTION_TOKENS_JS,
     COMPOSER,
     MENTION_CHIP,
     PICKER_OPTION,
@@ -137,6 +153,26 @@ _CARET_JS = """([sel, chipSel]) => {
   return out;
 }"""
 
+_GRID_JS = r"""() => [...document.querySelectorAll('img[data-media-id]')].map(e => {
+  const m = (e.getAttribute('src') || '').match(/\/asb\/([A-Za-z0-9_-]+)/);
+  return [e.getAttribute('data-media-id'), m ? m[1] : ''];
+}).filter(x => x[1])"""
+
+_PROMPT_MARK = "SPIKE997PROMPT"
+
+# Document order of chips (by their text) and the prompt marker.
+_SEQUENCE_JS = """([sel, chipSel]) => {
+  const ce = document.querySelector(sel); if (!ce) return null;
+  const out = [];
+  const walk = (n) => {
+    if (n.nodeType === 1 && n.matches(chipSel)) { out.push('chip:' + (n.textContent || '').trim()); return; }
+    if (n.nodeType === 3 && n.data.includes('SPIKE997PROMPT')) { out.push('PROMPT'); return; }
+    for (const c of n.childNodes) walk(c);
+  };
+  walk(ce);
+  return out;
+}"""
+
 _POINT_JS = """([x, y, chipSel]) => {
   const e = document.elementFromPoint(x, y);
   if (!e) return null;
@@ -145,17 +181,17 @@ _POINT_JS = """([x, y, chipSel]) => {
 }"""
 
 
-async def _place_caret(page: Any, arm: str) -> dict[str, Any]:
+async def _hook_state(page: Any, arm: str) -> dict[str, Any]:
+    """Runs AFTER production's composer click and BEFORE its ``@`` keystroke."""
     box = await page.locator(COMPOSER).first.bounding_box()
     pt = None
-    if box:
+    if box:  # Playwright clicks the centre of the box; the click has just happened there
         x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
         pt = {
             "x": round(x),
             "y": round(y),
             "element": await page.evaluate(_POINT_JS, [x, y, MENTION_CHIP]),
         }
-    await page.locator(COMPOSER).first.click(timeout=5000)  # production gesture
     after_click = await page.evaluate(_CARET_JS, [COMPOSER, MENTION_CHIP])
     if arm == "range_end":
         await page.evaluate(_RANGE_END_JS, COMPOSER)
@@ -172,9 +208,36 @@ async def _place_caret(page: Any, arm: str) -> dict[str, Any]:
     return {"click_point": pt, "after_click": after_click, "before_at": before_at}
 
 
+async def _targets(page: Any, n: int) -> list[tuple[str, str, str]]:
+    """(media_id, /asb/ token, picker caption) for n distinct project images, $0."""
+    grid = await page.evaluate(_GRID_JS)
+    await page.locator(COMPOSER).first.click(timeout=5000)
+    await page.keyboard.type("@", delay=120)
+    await page.wait_for_timeout(2500)
+    titles = [str(t) for t in await page.evaluate(_OPTION_TITLES_JS, PICKER_OPTION)]
+    tokens = [str(t) for t in await page.evaluate(_OPTION_TOKENS_JS, PICKER_OPTION)]
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(800)
+    caption = {tok: t for tok, t in zip(tokens, titles, strict=False) if tok and t}
+    out: list[tuple[str, str, str]] = []
+    seen_caps: set[str] = set()
+    for media_id, token in grid:
+        cap = caption.get(token, "")
+        if cap and cap not in seen_caps and "\n" not in cap and "@" not in cap and len(cap) <= 120:
+            seen_caps.add(cap)
+            out.append((media_id, token, cap))
+    return out[:n]
+
+
 async def _run(
-    page: Any, composer: MigratedComposer, project: str, arm: str, mentions: int
+    page: Any,
+    composer: MigratedComposer,
+    project: str,
+    arm: str,
+    targets: list[tuple[str, str, str]],
+    send_prompt: bool = False,
 ) -> dict[str, Any]:
+    """Production ``_mention_by_token`` per target, unchanged; the arm acts at the hook."""
     await page.reload(wait_until="domcontentloaded", timeout=45_000)
     kind = await composer.ensure_editor(page, project)
     await composer.apply_image_settings(page, GenerateImageRequest(prompt="spike-997"))
@@ -185,34 +248,44 @@ async def _run(
         "viewport": page.viewport_size,
         "mentions": [],
     }
-    for i in range(1, mentions + 1):
-        rec: dict[str, Any] = {"i": i, **await _place_caret(page, arm)}
-        await page.keyboard.type("@", delay=120)
-        await page.wait_for_timeout(2200)
-        opts = await page.locator(PICKER_OPTION).count()
-        rec["picker_options"] = opts
-        rec["after_at"] = await page.evaluate(_CARET_JS, [COMPOSER, MENTION_CHIP])
-        if opts == 0:
-            rec["outcome"] = "picker_did_not_open"
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(800)
-            run["mentions"].append(rec)
-            break
-        for _ in range(min(i - 1, opts - 1)):
-            await page.keyboard.press("ArrowDown")
-            await page.wait_for_timeout(250)
-        await page.wait_for_timeout(400)
-        await page.keyboard.press("Enter")  # picker is open: Enter commits the option
-        await page.wait_for_timeout(2500)
-        chips = await composer.read_chips(page)
-        rec["chips_after_commit"] = len(chips)
-        rec["chip_kinds"] = [c.get("reference_type") for c in chips]
-        rec["outcome"] = "attached" if len(chips) == i else "commit_did_not_add_chip"
-        await page.keyboard.type(" ", delay=80)  # production types a space after a chip
-        run["mentions"].append(rec)
-        if rec["outcome"] != "attached":
-            break
-    await composer.clear_composer(page)
+    kb = page.keyboard
+    orig_type = kb.type
+    pending: dict[str, Any] = {}
+
+    async def hooked(text: str, **kw: Any) -> None:
+        if text == "@":
+            pending.update(await _hook_state(page, arm))
+        elif text not in (" ",) and "before_at" in pending and "picker_options" not in pending:
+            # production has waited 2200 ms after '@': did the picker open?
+            pending["picker_options"] = await page.locator(PICKER_OPTION).count()
+            pending["after_at"] = await page.evaluate(_CARET_JS, [COMPOSER, MENTION_CHIP])
+        await orig_type(text, **kw)
+
+    kb.type = hooked  # type: ignore[method-assign]
+    try:
+        for i, (media_id, token, cap) in enumerate(targets, start=1):
+            pending.clear()
+            try:
+                await composer._mention_by_token(page, cap, token, media_id, expect_chips=i)  # noqa: SLF001
+                outcome = "attached"
+            except Exception as exc:  # noqa: BLE001 - the outcome under test
+                outcome = f"{type(exc).__name__}: {exc}"[:240]
+            chips = await composer.read_chips(page)
+            run["mentions"].append(
+                {"i": i, **pending, "outcome": outcome, "chips_after": len(chips)}
+            )
+            if outcome != "attached":
+                break
+        if send_prompt and run["mentions"] and run["mentions"][-1]["outcome"] == "attached":
+            # Production follows the mentions with send_prompt(append=True), which types
+            # wherever the last mention left the caret. Where does the prompt land?
+            kb.type = orig_type  # type: ignore[method-assign]
+            await composer.send_prompt(page, _PROMPT_MARK, append=True)
+            await page.wait_for_timeout(500)
+            run["sequence"] = await page.evaluate(_SEQUENCE_JS, [COMPOSER, MENTION_CHIP])
+    finally:
+        kb.type = orig_type  # type: ignore[method-assign]
+        await composer.clear_composer(page)
     run["attached"] = sum(1 for m in run["mentions"] if m["outcome"] == "attached")
     return run
 
@@ -224,6 +297,11 @@ async def main() -> int:
     ap.add_argument("--mentions", type=int, default=5)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--arms", nargs="+", choices=ARMS, default=list(ARMS))
+    ap.add_argument(
+        "--send-prompt",
+        action="store_true",
+        help="after the mentions, call production send_prompt(append=True) and record order",
+    )
     args = ap.parse_args()
     composer = MigratedComposer()
     out = default_out_path("spike_997_fourth_ref_caret")
@@ -236,10 +314,22 @@ async def main() -> int:
         page = client._page  # noqa: SLF001 - dev instrument
         assert page is not None
         await composer.ensure_editor(page, args.project)
+        targets = await _targets(page, args.mentions)
+        findings["targets"] = [(m[:8], t[:8], len(c)) for m, t, c in targets]
+        step("targets", f"{len(targets)} distinct captioned images in grid+picker")
+        if len(targets) < 4:
+            step("abort", "need >= 4 referenceable images in this project")
+            save()
+            return 2
         for r in range(1, args.runs + 1):
             for arm in args.arms:  # interleaved, so drift over time hits every arm alike
                 try:
-                    run = await _run(page, composer, args.project, arm, args.mentions)
+                    run = await _run(page, composer, args.project, arm, targets, args.send_prompt)
+                    if "sequence" in run:  # chip captions -> requested order (1-based)
+                        order = {c: k for k, (_, _, c) in enumerate(targets, start=1)}
+                        run["sequence"] = [
+                            s if s == "PROMPT" else order.get(s[5:], "?") for s in run["sequence"]
+                        ]
                 except Exception as exc:  # noqa: BLE001 - record and keep measuring
                     run = {"arm": arm, "error": f"{type(exc).__name__}: {exc}"[:300]}
                     try:
@@ -255,9 +345,10 @@ async def main() -> int:
                     f"run{r} {arm}",
                     f"attached={run.get('attached')} "
                     + (
-                        f"FAIL@{f['i']} before_caret={f['before_at'].get('selection', {}) and f['before_at']['selection'].get('before_caret')} "
-                        f"after_caret={f['before_at'].get('selection', {}) and f['before_at']['selection'].get('text_after_caret')} "
-                        f"lines={f['before_at'].get('chip_line_tops')}"
+                        f"FAIL@{f['i']} picker={f.get('picker_options')} "
+                        f"prev={((f.get('before_at') or {}).get('selection') or {}).get('before_caret')} "
+                        f"after={((f.get('before_at') or {}).get('selection') or {}).get('text_after_caret')} "
+                        f"lines={(f.get('before_at') or {}).get('chip_line_tops')} {f['outcome'][:90]}"
                         if f
                         else ""
                     )
