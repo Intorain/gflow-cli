@@ -3437,7 +3437,7 @@ class MigratedComposer:
         self,
         page: Page,
         record: GenerationRecord,
-        out_dir: Path | None,
+        out_dir: Path,
     ) -> Path | None:
         """The clip from its signed CDN URL. The labs ``media.getMediaUrlRedirect``
         route answers 404 for a migrated media id (measured 2026-09-05), so there is
@@ -3451,9 +3451,8 @@ class MigratedComposer:
                 route="batchexecute:as29s",
             )
         body = await self.fetch_mp4(page, record)
-        target_dir = out_dir or Path.cwd()
-        target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{record.media_id}.mp4"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{record.media_id}.mp4"
         path.write_bytes(body)
         log.info("migrated.download", path=str(path), bytes=len(body))
         return path
@@ -3464,7 +3463,7 @@ async def run_video(
     request: GenerateVideoRequest,
     *,
     project_id: str | None,
-    out_dir: Path | None,
+    out_dir: Path,
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,

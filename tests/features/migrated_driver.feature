@@ -34,6 +34,18 @@ Feature: migrated-host driver
     Then the migrated composer applies the settings and submits
     And the result reports success with that workflow id
 
+  Scenario: a clip downloaded with no --out-dir is saved under tmp/, as on labs (#986)
+    Given the editor hands the session to flow.google.com after entering the project
+    And no output directory was given
+    When gflow video t2v runs with an 8 s request and downloads the clip
+    Then the clip is saved under tmp/ in the working directory
+
+  Scenario: a client opened with --out-dir saves the clip there, as video chain does (#986)
+    Given the editor hands the session to flow.google.com after entering the project
+    And the client was opened with an output directory
+    When gflow video t2v runs with an 8 s request and downloads the clip
+    Then the clip is saved in that output directory
+
   Scenario: the requested axis has no control on this host
     Given the settings pane renders no duration radiogroup
     When a 10 s duration is requested

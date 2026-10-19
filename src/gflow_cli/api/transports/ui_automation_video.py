@@ -1242,6 +1242,11 @@ class VideoGenerationMixin:
             msg,
         )
 
+    def _clip_dir(self, out_dir: Path | None) -> Path:
+        """Where a downloaded clip goes on either host: per-call, then the client's
+        ``--out-dir``, then the documented ``tmp/`` (#986)."""
+        return out_dir or self._out_dir or Path("tmp")
+
     async def _download_video(
         self,
         media_id: str,
@@ -1306,8 +1311,7 @@ class VideoGenerationMixin:
             output_dir = getattr(self, "_output_dir", None) or Path("tmp")
             target: AnyPath = storage_path(storage_uri, output_dir, key)
         else:
-            effective_dir = out_dir or self._out_dir or Path("tmp")
-            target = effective_dir / f"{media_id}.mp4"
+            target = self._clip_dir(out_dir) / f"{media_id}.mp4"
         await write_asset_async(target, body)
         log.info(
             "ui_automation_video.video_saved",
@@ -4037,7 +4041,7 @@ class VideoGenerationMixin:
                     page,
                     request,
                     project_id=project_id,
-                    out_dir=out_dir,
+                    out_dir=self._clip_dir(out_dir),
                     poll_timeout_s=poll_timeout_s,
                     download=download,
                     on_started=on_started,

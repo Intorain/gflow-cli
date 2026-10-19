@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio  # noqa: F401 — ensures asyncio mode is registered
+from structlog.testing import capture_logs
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoResult, VideoStatus
@@ -119,3 +120,44 @@ async def test_t2v_generates_video(e2e_profile_dir: Path, tmp_path: Path) -> Non
     assert result.local_path is not None and result.local_path.exists(), (
         f"VideoResult.local_path must point to a downloaded mp4; got {result.local_path!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# #986 — with no --out-dir, the clip lands under tmp/ on flow.google.com too
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_t2v_without_out_dir_saves_under_tmp(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPENDS VEO CREDITS. The CLI entry with no ``--out-dir`` (client and call both
+    ``None``) must save under ``tmp/`` like labs, not the working-directory root (#986).
+
+    Env: ``GFLOW_CLI_E2E_RUN_VIDEO=1`` (owner consent) and ``GFLOW_CLI_E2E_PROJECT``
+    (a project on the account Flow serves).
+    """
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
+        pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
+    project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "").strip()
+    if not project:
+        pytest.skip("GFLOW_CLI_E2E_PROJECT must be set")
+    from gflow_cli.api.client import FlowApiClient
+
+    monkeypatch.chdir(tmp_path)
+    req = GenerateVideoRequest(prompt=_PROMPT, mode=Mode.T2V, aspect=_aspect())
+    with capture_logs() as logs:
+        async with FlowApiClient(profile_dir=e2e_profile_dir, out_dir=None) as client:
+            result = await client.generate_video(
+                req=req, project_id=project, poll_timeout_s=_POLL_TIMEOUT_S
+            )
+    assert result.status.succeeded, result.status
+    # Labs already saved under tmp/, so only a flow.google.com download proves #986.
+    events = {e.get("event") for e in logs}
+    assert events & {"migrated.download", "migrated.agent_only.video_downloaded"}, (
+        f"Flow did not serve flow.google.com; #986's path was not exercised: {sorted(events)}"
+    )
+    assert result.local_path is not None
+    local = Path(str(result.local_path)).resolve()
+    assert local.parent == (tmp_path / "tmp").resolve(), local
+    assert local.read_bytes()[4:8] == b"ftyp"
