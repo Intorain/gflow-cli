@@ -253,6 +253,16 @@ _OPTION_TITLES_JS = (
     " const t = o.querySelector('.asset-title');"
     " return ((t && t.textContent) || '').trim(); })"
 )
+#: Collapse the selection to the END of the composer (#997). A click lands wherever the
+#: composer's centre is, which with three chips on the line is chip 2 (measured,
+#: docs/superpowers/spikes/2026-10-19-fourth-ref-caret.md). Not the End key: per the
+#: reporter it stops at the end of the visual line once the chips wrap.
+_CARET_TO_END_JS = (
+    "(sel) => { const ce = document.querySelector(sel); if (!ce) return;"
+    " ce.focus(); const r = document.createRange(); r.selectNodeContents(ce);"
+    " r.collapse(false); const s = window.getSelection();"
+    " s.removeAllRanges(); s.addRange(r); }"
+)
 #: Budget for a just-generated image to become mentionable, across editor reloads
 #: (#913). Checked after each attempt, so a row can overrun it by one attempt.
 EXISTING_REF_WAIT_S = 90.0
@@ -265,6 +275,23 @@ ARROW_SETTLE_MS = 3500
 ARROW_STEP_MS = 150
 #: Flow writes captions with its own model; they reach the composer by typing.
 _CAPTION_MAX = 120
+
+
+def _require_appended(before: list[dict[str, str]], chips: list[dict[str, str]]) -> None:
+    """Refuse a mention that did not land after every chip already in the prompt (#997).
+
+    A count cannot see a chip inserted mid-prompt; the earlier chips staying a prefix can.
+    shortcut: chips that read identically (same caption and kind) cannot be told apart.
+    Retryability is the class default, unmeasured for this condition (Bug Lane).
+    """
+    if chips[: len(before)] != before:
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: a reference attached out of order — it did not land after "
+                f"the {len(before)} reference(s) already in the prompt, so the prompt is no "
+                "longer the one requested. Refusing to submit"
+            ),
+        )
 
 
 def _picker_query(ref: ImageRef) -> str:
@@ -2352,7 +2379,7 @@ class MigratedComposer:
         over 30 s), while a fresh editor load offers it at once. So retrying belongs to
         :meth:`reference_existing`, which reloads.
         """
-        await page.locator(COMPOSER).first.click(timeout=5000)
+        before = await self._caret_to_end(page)
         await page.keyboard.type("@", delay=120)
         await page.wait_for_timeout(2200)
         await page.keyboard.type(query, delay=100)
@@ -2369,6 +2396,7 @@ class MigratedComposer:
             chips = await self.read_chips(page)
             # A query can also match a character; only a media chip is this image.
             if len(chips) == expect_chips and chips[-1].get("reference_type") == "media":
+                _require_appended(before, chips)
                 await page.keyboard.type(" ", delay=80)
                 return
         else:
@@ -2512,8 +2540,9 @@ class MigratedComposer:
         too (the caller aborts the run before submit, so that chip never reaches Flow).
         """
         titles: list[str] = []
+        before: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            await page.locator(COMPOSER).first.click(timeout=5000)
+            before = await self._caret_to_end(page)
             # Real keystrokes: see `_mention_by_name`.
             await page.keyboard.type("@", delay=120)
             await page.wait_for_timeout(2200)
@@ -2569,8 +2598,18 @@ class MigratedComposer:
                     f"{offered}"
                 ),
             )
+        _require_appended(before, chips)
         # The kind check lives in `attach_character_entities`: a media chip here is
         # refused there, before any submit.
+
+    async def _caret_to_end(self, page: Page) -> list[dict[str, str]]:
+        """Focus the composer with the caret at its END; return the chips already there.
+
+        Every ``@`` mention starts here, so a new chip can only be appended (#997).
+        """
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.evaluate(_CARET_TO_END_JS, COMPOSER)
+        return await self.read_chips(page)
 
     async def clear_composer(self, page: Page) -> None:
         await page.locator(COMPOSER).first.click(timeout=5000)
@@ -2600,10 +2639,10 @@ class MigratedComposer:
         someone already attached.
         """
         offered: list[str] = []
-        chips = await self.read_chips(page)
+        chips: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            before = len(chips)
-            await page.locator(COMPOSER).first.click(timeout=5000)
+            prior = await self._caret_to_end(page)
+            before = len(prior)
             # `keyboard.type`, never `insert_text`: the latter dispatches input events with
             # no key events, so the mention plugin opens a picker with no query behind it
             # and every later gesture is a no-op. `send_prompt` keeps insert_text on
@@ -2618,6 +2657,7 @@ class MigratedComposer:
             await page.wait_for_timeout(2500)
             chips = await self.read_chips(page)
             if len(chips) == expect_chips:
+                _require_appended(prior, chips)
                 await page.keyboard.type(" ", delay=80)
                 return
             log.info(
