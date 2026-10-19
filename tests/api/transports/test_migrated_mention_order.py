@@ -112,5 +112,8 @@ async def test_a_mention_that_lands_mid_prompt_is_refused(path: str, chip_kind: 
     page = _CaretPage(chip_kind, caret_js_works=False)
     for n, name in enumerate(NAMES[:3], start=1):
         await _mention(page, path, name, n)
-    with pytest.raises(ReferenceNotFoundError, match="out of order"):
+    with pytest.raises(ReferenceNotFoundError, match="out of order") as caught:
         await _mention(page, path, NAMES[3], 4)
+    # The chip WAS found; the class default ("not in this project's picker") would mislead.
+    assert "not in this project" not in caught.value.remediation_hint
+    assert "order" in caught.value.remediation_hint

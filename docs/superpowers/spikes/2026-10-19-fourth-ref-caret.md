@@ -7,8 +7,8 @@ click in `MigratedComposer._mention_by_token` / `_mention_by_name`: Playwright c
 centre of the editor, which (once line 1 fills) puts the caret directly behind chip 3.
 
 **Script.** [`scripts/dev/spike_997_fourth_ref_caret.py`](../../../scripts/dev/spike_997_fourth_ref_caret.py)
-(reading pre-registered in its docstring, commit `2226b2ca`, before the first run; the
-method amendment and the `--send-prompt` reading were added in `4943dcf6`, before any run
+(reading pre-registered in its docstring, commit `cdf757b7`, before the first run; the
+method amendment and the `--send-prompt` reading were added in `83e4ebae`, before any run
 that used them. Two earlier runs with a hand-rolled commit gesture attached nothing,
 not even mention 1, so they measured the spike rather than #997, and they are discarded).
 Profile `denon82` (classic composer, served flow.google.com), project `2ddc3a33…` (8

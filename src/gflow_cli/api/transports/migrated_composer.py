@@ -291,6 +291,12 @@ def _require_appended(before: list[dict[str, str]], chips: list[dict[str, str]])
                 f"the {len(before)} reference(s) already in the prompt, so the prompt is no "
                 "longer the one requested. Refusing to submit"
             ),
+            # The chip WAS found, so the class default ("not in the picker") would mislead.
+            remediation_hint=(
+                "The reference was found but attached out of order, so nothing was "
+                "submitted. Re-run the command; if it repeats, report it with the "
+                "number of references and your window size."
+            ),
         )
 
 
