@@ -1253,6 +1253,46 @@ class TestImageProjectFlag:
         assert call is not None
         assert call.kwargs["project_id"] == "PROJ123"
 
+    def test_i2i_scopes_catalog_refs_to_the_given_project(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """#995: UUID refs are looked up against the project being generated in, so a
+        catalogued image of that project can be referenced in place on flow.google.com."""
+        uuid = "11111111-1111-1111-1111-111111111111"
+        client = _make_i2i_client()
+        seen: dict[str, object] = {}
+
+        def _spy(refs: list[object], profile_name: str, *, project_id: str | None = None):
+            seen["project_id"] = project_id
+            return refs
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image._enrich_uuid_refs", side_effect=_spy),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                [
+                    "image",
+                    "i2i",
+                    "stylize",
+                    "--ref",
+                    uuid,
+                    "--project",
+                    "PROJ123",
+                    "--out",
+                    str(tmp_path / "o"),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert seen["project_id"] == "PROJ123"
+
     def test_t2i_uses_given_project(self, runner: CliRunner, tmp_path: Path) -> None:
         client = _make_t2i_client()
         out_dir = tmp_path / "out"

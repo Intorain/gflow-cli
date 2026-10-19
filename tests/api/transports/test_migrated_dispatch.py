@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gflow_cli.api.transports import ui_automation_video
+from gflow_cli.api.transports.migrated_composer import run_video as _real_run_video
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 from gflow_cli.api.video import (
@@ -205,6 +206,28 @@ async def test_bootstrap_page_already_on_the_migrated_host_routes_before_entry(
     await harness["transport"].generate_video(request=_req(), project_id="p1")
     assert "entered" not in harness
     assert len(harness["run_video"]) == 1
+
+
+async def test_agent_only_arm_gets_the_same_default_out_dir_as_labs(
+    harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#986: with no --out-dir the agent-only composer saved the clip to the cwd root;
+    labs saves it under tmp/. The real run_video runs here, down to the agent arm."""
+    from gflow_cli.api.transports import agent_only_composer, migrated_composer
+
+    monkeypatch.setattr(migrated_composer, "run_video", _real_run_video)
+
+    async def _agent_only(*_: Any, **__: Any) -> str:
+        return "agent_only"
+
+    async def _run_agent_video(_p: Any, _r: Any, **kw: Any) -> VideoResult:
+        harness["run_video"].append((_r, kw))
+        return _result()
+
+    monkeypatch.setattr(migrated_composer.MigratedComposer, "ensure_editor", _agent_only)
+    monkeypatch.setattr(agent_only_composer, "run_agent_video", _run_agent_video)
+    await harness["transport"].generate_video(request=_req(), project_id="p1")
+    assert harness["run_video"][0][1]["out_dir"] == Path("tmp")
 
 
 # --- run_video guards (direct) ------------------------------------------------
