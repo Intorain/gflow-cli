@@ -562,11 +562,18 @@ def _enrich_image_refs(
 
 
 def _ref_meta_entry(asset: AssetLookup) -> dict[str, str]:
-    """Build the ``display_name``/``local_path`` metadata entry for one catalog asset."""
+    """Build the ``display_name``/``local_path`` metadata entry for one catalog asset.
+
+    ``flow_project_id`` lets the worker mark a ref of the task's own project
+    ``in_project`` (#995), mirroring the CLI's ``_enrich_uuid_refs``.
+    """
     entry: dict[str, str] = {}
     name = asset.metadata_json.get("display_name")
     if isinstance(name, str) and name:
         entry["display_name"] = name
+    project = getattr(asset, "flow_project_id", None)
+    if isinstance(project, str) and project:
+        entry["flow_project_id"] = project
     for local_file in asset.local_files:
         if (path := verified_local_path(local_file)) is not None:
             entry["local_path"] = str(path)
