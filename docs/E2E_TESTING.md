@@ -601,6 +601,13 @@ but on the migrated t2v and i2v tests an unset value sends **no** duration, so t
 keeps the length it currently holds. Cohorts whose settings pane shows no duration row for the default model
 refuse a forced length with a $0 exit 11 (#650, #948).
 
+`tests/e2e/test_video_t2v_e2e.py::test_t2v_on_flow_google_com_uploads_to_the_configured_storage_uri`
+(`e2e_video`, 1 clip, `GFLOW_CLI_E2E_RUN_VIDEO=1`) also needs
+`GFLOW_CLI_E2E_STORAGE_URI`. Point it at a bucket you control, for example
+`s3://gflow-test/gflow/` on the local RustFS stack with `AWS_ENDPOINT_URL`,
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` exported. The test checks that a
+flow.google.com clip lands in that bucket (#1003).
+
 ## See also
 
 - [CONTRIBUTING.md § Test categories](../CONTRIBUTING.md#test-categories)

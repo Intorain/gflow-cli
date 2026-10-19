@@ -20,6 +20,7 @@ import random
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1299,7 +1300,11 @@ class VideoGenerationMixin:
                 ),
                 route="media.getMediaUrlRedirect",
             )
-        body = await resp.body()
+        return await self._save_clip(media_id, await resp.body(), out_dir)
+
+    async def _save_clip(self, media_id: str, body: bytes, out_dir: Path | None) -> AnyPath:
+        """Store a downloaded clip on either host (#1003): under the configured cloud
+        ``storage_uri`` when set, otherwise in ``_clip_dir(out_dir)``."""
         storage_uri: str | None = getattr(self, "_storage_uri", None)
         if storage_uri:
             from datetime import date
@@ -4041,7 +4046,7 @@ class VideoGenerationMixin:
                     page,
                     request,
                     project_id=project_id,
-                    out_dir=self._clip_dir(out_dir),
+                    save=partial(self._save_clip, out_dir=out_dir),
                     poll_timeout_s=poll_timeout_s,
                     download=download,
                     on_started=on_started,

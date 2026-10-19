@@ -335,10 +335,10 @@ jobs:
       - name: Container tests
         run: uv run --no-sync python -m pytest -m containers tests/integration/ -q --junitxml=pytest-containers.xml
 
-      # 8 S3 + 4 GCS. The expander-gateway tests share the marker but skip
-      # without an LLM endpoint; skips do not count toward the floor.
+      # 9 S3 (incl. the #1003 migrated-clip upload) + 4 GCS. The expander-gateway
+      # tests share the marker but skip without an LLM endpoint; skips do not count.
       - name: Test-count guard (all storage tests executed, none skipped)
-        run: uv run --no-sync python scripts/ci/check_test_count.py pytest-containers.xml 12
+        run: uv run --no-sync python scripts/ci/check_test_count.py pytest-containers.xml 13
 
   # ── SonarCloud analysis ───────────────────────────────────────────────────
   sonar:

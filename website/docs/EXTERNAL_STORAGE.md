@@ -43,6 +43,9 @@ local layout:
 └── videos/<YYYY-MM-DD>/<media_id>.mp4
 ```
 
+The layout is the same whichever host Flow serves (labs.google or flow.google.com).
+Before #1003, a flow.google.com video ignored the storage URI and was written locally.
+
 `<ext>` is corrected from the actual bytes before upload. For example, if Flow
 returns JPEG bytes for an image request originally planned as `.png`, the object
 key is adjusted to `.jpg` before it is written.

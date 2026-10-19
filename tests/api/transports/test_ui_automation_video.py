@@ -918,6 +918,29 @@ class TestDownloadVideo:
         assert "getMediaUrlRedirect" in call_url
 
     @pytest.mark.asyncio
+    async def test_download_video_uploads_to_a_configured_storage_uri(self, tmp_path: Path) -> None:
+        """#1003 control: the labs arm writes to the cloud ``storage_uri`` when set —
+        the behaviour the migrated arms now share through ``_save_clip``."""
+        pytest.importorskip("upath")
+        from gflow_cli.storage import is_cloud_path
+
+        transport = UiAutomationTransport()
+        transport._storage_uri = "memory://b1003-labs/gflow/"
+        fake_page = MagicMock()
+        fake_resp = AsyncMock()
+        fake_resp.status = 200
+        fake_resp.url = "https://flow-content.google/video/abc.mp4?Expires=1&Signature=x"
+        fake_resp.body = AsyncMock(return_value=b"fake-mp4-content")
+        fake_page.request.get = AsyncMock(return_value=fake_resp)
+
+        out_path = await transport._download_video("test-uuid-1003", tmp_path, fake_page)
+
+        assert is_cloud_path(out_path)
+        assert str(out_path).endswith("/test-uuid-1003.mp4")
+        assert out_path.read_bytes() == b"fake-mp4-content"
+        assert not list(tmp_path.iterdir())
+
+    @pytest.mark.asyncio
     async def test_download_video_refuses_bytes_from_an_unexpected_host(
         self, tmp_path: Path
     ) -> None:
