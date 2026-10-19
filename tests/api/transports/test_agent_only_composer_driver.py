@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -692,7 +693,7 @@ async def test_run_agent_video_reports_the_clip_early_and_returns_it(
         page,
         video_api.GenerateVideoRequest(prompt="x"),
         project_id="p1",
-        out_dir=None,
+        out_dir=Path("tmp"),
         poll_timeout_s=10,
         download=False,
         on_started=on_started,
@@ -756,7 +757,7 @@ async def test_run_images_and_run_video_route_the_agent_only_composer_here(
         page,
         video_api.GenerateVideoRequest(prompt="x"),
         project_id="p1",
-        out_dir=None,
+        out_dir=Path("tmp"),
         poll_timeout_s=5,
         download=False,
         on_started=None,
@@ -845,7 +846,7 @@ async def test_unported_video_forms_are_refused(changes: dict[str, Any]) -> None
             page,
             request,
             project_id="p1",
-            out_dir=None,
+            out_dir=Path("tmp"),
             poll_timeout_s=5,
             download=False,
             on_started=None,
@@ -877,7 +878,7 @@ async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
             page,
             video_api.GenerateVideoRequest(prompt="x", reference_entity_names=("Ada",)),
             project_id="p1",
-            out_dir=None,
+            out_dir=Path("tmp"),
             poll_timeout_s=5,
             download=False,
             on_started=None,

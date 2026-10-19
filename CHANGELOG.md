@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agents (reported only). Dry run unless `--apply`; never touches the main checkout, a dirty
   worktree, an unmerged branch, `develop` or `main`. The release skill's final report runs it.
 
+### Fixed
+
+- On flow.google.com, `gflow video t2v`/`i2v`/`r2v` without `--out-dir` saved the clip to
+  the root of the working directory instead of the documented `tmp/`, and `gflow video chain
+  --out-dir DIR` saved its links to the working directory instead of `DIR`. Both hosts now
+  share one rule — per-call directory, then `--out-dir`, then `tmp/` — and the classic and
+  agent-only composers no longer fall back to the working directory. Reported by @ziyedbe.
+  Refs #986.
+
 ## [0.86.0] — 2026-10-18
 
 ### Added
