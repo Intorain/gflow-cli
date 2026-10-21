@@ -169,34 +169,33 @@ def _unavailable_error(scale_norm: str) -> UpscaleUnavailableError:
 def _export_refusal_listener(
     failed: asyncio.Future[None],
 ) -> Callable[[Response], Awaitable[None]]:
-    """A response listener that fails ``failed`` on an export RPC refusal or bad reply."""
+    """A response listener that fails ``failed`` on an export RPC refusal.
+
+    An unreadable body is skipped, not treated as a failure: Chrome routinely evicts
+    unrelated batchexecute bodies (``as29s`` polls) mid-export (#1014). An export that
+    never arrives is still caught by the capture timeout.
+    """
 
     async def on_response(response: Response) -> None:
         if "batchexecute" not in response.url:
             return
         try:
             text = await response.text()
-            for err in rpc_errors(text):
-                if err.rpcid in _EXPORT_RPCIDS:
-                    settle_exception(
-                        failed,
-                        WireFormatError(
-                            detail=(
-                                f"Video export RPC {err.rpcid} refused: code={err.code} "
-                                f"reasons={err.reasons}"
-                            ),
-                            route="video_upscale",
+        except Exception as exc:  # noqa: BLE001 - evicted body (Network.getResponseBody)
+            log.debug("migrated_video_upscale.body_unreadable", url=response.url, error=str(exc))
+            return
+        for err in rpc_errors(text):
+            if err.rpcid in _EXPORT_RPCIDS:
+                settle_exception(
+                    failed,
+                    WireFormatError(
+                        detail=(
+                            f"Video export RPC {err.rpcid} refused: code={err.code} "
+                            f"reasons={err.reasons}"
                         ),
-                    )
-        except Exception as exc:  # noqa: BLE001 - any unreadable reply fails the export
-            log.warning("migrated_video_upscale.parse_error", error=str(exc))
-            settle_exception(
-                failed,
-                WireFormatError(
-                    detail=f"Failed to read a video export response: {exc}",
-                    route="video_upscale",
-                ),
-            )
+                        route="video_upscale",
+                    ),
+                )
 
     return on_response
 
