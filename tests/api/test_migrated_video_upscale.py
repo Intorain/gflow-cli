@@ -198,21 +198,25 @@ async def test_migrated_video_upscale_rpc_refusal_fails_fast() -> None:
     assert time.monotonic() - started < 5.0
 
 
-async def test_migrated_video_upscale_unreadable_response_fails_with_wireformat() -> None:
+async def test_migrated_video_upscale_unreadable_response_is_not_a_refusal() -> None:
+    """#1014: Chrome evicts unrelated bodies (`as29s` polls) mid-export; that is not a failure."""
     holder: list = []
 
     async def broken() -> None:
         res = MagicMock()
-        res.url = "https://flow.google.com/_/x/data/batchexecute?rpcids=p0UkFb"
-        res.text = AsyncMock(side_effect=RuntimeError("body gone"))
+        res.url = "https://flow.google.com/_/x/data/batchexecute?rpcids=as29s"
+        res.text = AsyncMock(
+            side_effect=RuntimeError(
+                "Protocol error (Network.getResponseBody): No data found for resource"
+            )
+        )
         for handler in list(holder[0].response_handlers):
             await handler(res)
 
-    page = fake_page([FakeItem("1080p", on_click=broken)])
+    page = fake_page([FakeItem("1080p", on_click=broken)], captured_b64=_b64(_MP4_1080))
     holder.append(page)
 
-    with pytest.raises(WireFormatError, match="body gone"):
-        await _run(page, timeout_s=30.0)
+    assert await _run(page, timeout_s=30.0) == _MP4_1080
 
 
 async def test_migrated_video_upscale_timeout_raises_transport_timeout() -> None:
