@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Transitive only, via the `gcs` (`gcsfs`) and `s3` (`s3fs`/`aiobotocore`) extras; no gflow
   code imports it. `yarl` moved to 1.25.1 with it. The advisories landed after the last
   green CI and turned the `pip-audit` gate red on every open PR.
+- **Pillow 13.0.0 (eight CVEs, CVE-2026-112395 … CVE-2026-112899) and `certifi`
+  2026.10.19 (PYSEC-2026-4320).** Pillow is a direct dependency (it writes the seed frame of
+  `gflow video chain` and reads image dimensions); its floor is now `>=13.0.0`. `certifi` is
+  transitive. Both advisories landed on 2026-10-21 and turned `pip-audit` red on every open PR.
 
 ### Added
 
