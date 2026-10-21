@@ -37,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agents (reported only). Dry run unless `--apply`; never touches the main checkout, a dirty
   worktree, an unmerged branch, `develop` or `main`. The release skill's final report runs it.
 
+- **MCP generation results report the catalogued seed** ([#1013](https://github.com/ffroliva/gflow-cli/issues/1013)).
+  A completed `gflow_generate_image` / `gflow_generate_video` result now carries `seed`:
+  the value catalogued for its `flow_media_id` (`null` when none was recorded) — the MCP
+  twin of `gflow image t2i --json`'s `images[].seed`. On the classic image paths that is
+  the seed Flow chose; the agentic and agent-only arms observe no seed and record `0`;
+  for video it is the seed the caller requested, not one read back from Flow. Reported by
+  @Chapax.
+
+### Removed
+
+- **Breaking for MCP callers: `gflow_generate_image` no longer takes `seed`**
+  ([#1013](https://github.com/ffroliva/gflow-cli/issues/1013)). The image request never
+  carried it — Flow picks its own seed — yet the tool advertised it "for reproducibility"
+  and echoed it back in `params.seed`, so a caller could not tell it was dropped. The CLI's
+  `--seed` went from `image t2i` in v0.8.0 for the same reason. The parameter is gone from
+  the tool schema; a call that still passes `seed` is not rejected (the MCP server ignores
+  unknown arguments) and it is no longer echoed back — read the result's `seed` for the
+  value Flow chose (classic image paths). The video tool's seed is unchanged. Reported by @Chapax.
+
 ### Fixed
 
 - On Flow's agent-only composer, an image result's `model_name_type` echoed the requested

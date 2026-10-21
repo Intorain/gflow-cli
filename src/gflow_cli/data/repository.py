@@ -41,7 +41,7 @@ def _coerce_utc(dt: datetime) -> datetime:
 
 
 _ASSET_LOOKUP_COLUMNS = (
-    "id, profile_name, flow_project_id, flow_media_id, flow_workflow_id, metadata_json, kind"
+    "id, profile_name, flow_project_id, flow_media_id, flow_workflow_id, metadata_json, kind, seed"
 )
 
 
@@ -491,6 +491,7 @@ class DataRepository:
             kind=AssetKind(row["kind"]),
             local_files=local_files,
             metadata_json=_decode_metadata_json(row["metadata_json"]),
+            seed=row["seed"],
         )
 
     def candidate_image_exists(self, profile_name: str, flow_media_id: str) -> bool:

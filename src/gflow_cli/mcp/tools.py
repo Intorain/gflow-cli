@@ -430,6 +430,7 @@ async def _run_generation_task(
             file_paths: list[str] = []
             flow_project_id: str | None = None
             flow_workflow_id: str | None = None
+            seed: int | None = None
             if completed_task.flow_media_id:
                 asset = DataRepository(store).get_asset_by_flow_media_id(
                     profile,
@@ -438,6 +439,9 @@ async def _run_generation_task(
                 if asset:
                     flow_project_id = asset.flow_project_id
                     flow_workflow_id = asset.flow_workflow_id
+                    # The catalogued seed (#1013): Flow's own on the classic image paths, the
+                    # requested one for video, a 0 placeholder on the agentic/agent-only arms.
+                    seed = asset.seed
                     if asset.local_files:
                         file_paths = [
                             str(lf.path) for lf in asset.local_files if lf.path is not None
@@ -457,6 +461,7 @@ async def _run_generation_task(
             "flow_project_id": flow_project_id,
             "flow_media_id": completed_task.flow_media_id,
             "flow_workflow_id": flow_workflow_id,
+            "seed": seed,
             "files": file_paths,
         }
 
@@ -789,7 +794,6 @@ async def gflow_generate_image(
     model: str = "nano2",
     aspect: str = "1:1",
     count: int = 1,
-    seed: int | None = None,
     reference_images: list[str] | None = None,
     reference_entities: list[str] | None = None,
     reference_entity_names: list[str] | None = None,
@@ -813,7 +817,6 @@ async def gflow_generate_image(
         model: Model to use — 'nano2', 'nano2-lite', 'nano-pro', or 'image4'.
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
-        seed: Optional random seed for reproducibility.
         reference_images: Optional list of reference images for image-to-image generation.
             Can be local file paths or UUIDs of previously uploaded assets.
         reference_entities: Saved Flow CHARACTER entity **ids** to attach
@@ -849,6 +852,9 @@ async def gflow_generate_image(
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
+        'seed' is the catalogued seed of 'flow_media_id': the seed Flow chose on the
+        classic image paths; 0 on the agentic / agent-only arms, which observe none;
+        null when none was recorded. It cannot be requested.
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
     if (proj_err := _validate_project(project)) is not None:
@@ -903,8 +909,6 @@ async def gflow_generate_image(
         payload["instructions"] = list(instructions)
     if ui_mode is not None:
         payload["ui_mode"] = ui_mode
-    if seed is not None:
-        payload["seed"] = seed
     if project is not None:
         payload["project_id"] = project
     if project_name is not None:
@@ -944,7 +948,6 @@ async def gflow_generate_image(
         "model": model,
         "aspect": aspect,
         "count": count,
-        "seed": seed,
         "reference_images": reference_images,
         "tools": tools or [],
         "tool_specs": list(tool_specs),
@@ -1125,6 +1128,8 @@ async def gflow_generate_video(  # NOSONAR
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
+        'seed' is the catalogued seed of 'flow_media_id' — for video, the requested
+        seed, not one observed from Flow (null when none was recorded).
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
     if (proj_err := _validate_project(project)) is not None:
