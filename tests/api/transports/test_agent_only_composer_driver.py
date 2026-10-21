@@ -351,6 +351,25 @@ async def test_an_opaque_asb_image_is_named_by_its_data_media_id_and_fetched_ful
 
 
 @pytest.mark.asyncio
+async def test_an_image_does_not_report_the_requested_model_as_the_rendered_one(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1012: asked for nano-pro, Flow rendered Nano Banana 2.1, gflow reported GEM_PIX_2.
+    Nothing on this composer observes the rendered model, so none is reported (as #789)."""
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_AGENT_CONFIRM", "account")
+    reset_settings()
+    await _load(page, kind="image", asbImages=True)
+    (image,) = await aoc.run_agent_images(
+        page,
+        image_api.GenerateImageRequest(prompt="x", model=image_api.Model.GEM_PIX_2),
+        project_id="p1",
+    )
+    assert image.model_name_type is None
+
+
+@pytest.mark.asyncio
 async def test_an_image_reports_the_size_of_the_file_it_downloads_not_of_the_grid_preview(
     page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1807,7 +1807,8 @@ use. When set:
   multi-prompt batches with a Click usage error.
   **`model_name_type` is `null` when Flow served the account from
   `flow.google.com`** — that host's reply carries no model field, and gflow
-  reports what it observed rather than echoing your `--model` back (#789). It is
+  reports what it observed rather than echoing your `--model` back (#789; on
+  the agent-only composer too, #1012). It is
   also `null` in the `model` column of `gflow data` for those assets. On
   `labs.google` it is Flow's own value, e.g. `"NARWHAL"`.
 - `video t2v/i2v/r2v` emits the `VideoResult` (`status`, `command`, `media_id`,

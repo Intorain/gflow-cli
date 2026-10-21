@@ -895,7 +895,9 @@ async def run_agent_images(
                 workflow_id="",
                 seed=0,
                 prompt=request.prompt,
-                model_name_type=request.model.value,
+                # #789/#1012: nothing here observes which model rendered, and the agent can
+                # ignore the Agent-settings default, so echoing the request would be a guess.
+                model_name_type=None,
                 aspect_ratio=request.aspect.value,
                 fife_url=src,
                 dimensions=size,
