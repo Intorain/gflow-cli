@@ -439,7 +439,8 @@ async def _run_generation_task(
                 if asset:
                     flow_project_id = asset.flow_project_id
                     flow_workflow_id = asset.flow_workflow_id
-                    # The seed Flow actually used, as catalogued — never a requested one (#1013).
+                    # The catalogued seed (#1013): Flow's own on the classic image paths, the
+                    # requested one for video, a 0 placeholder on the agentic/agent-only arms.
                     seed = asset.seed
                     if asset.local_files:
                         file_paths = [
@@ -851,8 +852,9 @@ async def gflow_generate_image(
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
-        'seed' is the seed Flow used for 'flow_media_id', read from the asset
-        catalog (null when none was recorded); Flow picks it, it cannot be requested.
+        'seed' is the catalogued seed of 'flow_media_id': the seed Flow chose on the
+        classic image paths; 0 on the agentic / agent-only arms, which observe none;
+        null when none was recorded. It cannot be requested.
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
     if (proj_err := _validate_project(project)) is not None:
@@ -1126,7 +1128,8 @@ async def gflow_generate_video(  # NOSONAR
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
-        'seed' is the catalogued seed of 'flow_media_id' (null when none was recorded).
+        'seed' is the catalogued seed of 'flow_media_id' — for video, the requested
+        seed, not one observed from Flow (null when none was recorded).
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
     if (proj_err := _validate_project(project)) is not None:
