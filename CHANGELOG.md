@@ -58,6 +58,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Flow's agent-only composer, an image result's `model_name_type` echoed the requested
+  `--model`, so a `--model nano-pro` run that Flow rendered with Nano Banana 2.1 still
+  reported `GEM_PIX_2`. Nothing on that composer observes which model rendered, so it is
+  now `null`, as on the classic flow.google.com arm since #789. This fixes the attribution
+  half of [#1012](https://github.com/ffroliva/gflow-cli/issues/1012) only: the agent can
+  still render a model other than the requested one; that is not proven fixed (no
+  agent-only profile to test on). Reported by
+  @dev1abz.
+
+- On flow.google.com, `gflow video upscale` (and its MCP twin) no longer reports a working
+  export as failed with `Failed to read a video export response: ... Network.getResponseBody
+  ... No data found`. The export watcher read every `batchexecute` reply during the export
+  and treated any body Chrome had already evicted, usually an unrelated `as29s` poll, as a
+  failed export, while the 1080p file was being delivered. An unreadable reply is now
+  skipped; a real refusal of the export RPC still fails fast, and an export that never
+  arrives still times out. Fixes [#1014](https://github.com/ffroliva/gflow-cli/issues/1014).
+  Diagnosed and measured by @buiminhhieu-svg. Live-verified on flow.google.com: 3 of 3
+  exports passed, against 2 of 2 failing on the previous `develop`.
 - On flow.google.com, a configured cloud `GFLOW_CLI_STORAGE_URI` (`s3://`, `gs://`) was
   ignored for generated video: both composer arms wrote the clip to local disk while labs
   uploaded it. Fixes [#1003](https://github.com/ffroliva/gflow-cli/issues/1003). Both hosts now
