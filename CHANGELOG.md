@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Commands no longer print about ten info log lines before their result, and
+  `GFLOW_CLI_LOG_LEVEL` works** ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
+  Every command logged at `INFO` to stderr regardless of `GFLOW_CLI_LOG_LEVEL`, which was
+  documented but read by nothing. The default is now `WARNING`, so a command prints its
+  result plus warnings and errors. `GFLOW_CLI_LOG_LEVEL=INFO` restores the old output, and
+  `-v` still shows everything. A long-running `gflow mcp run` / `gflow serve` now also logs
+  only warnings by default (uvicorn's own startup and access lines under `serve` are
+  separate); set `INFO` there to keep progress events. `gflow data sync` now echoes its
+  per-project progress itself unless INFO text logs already narrate it. `--json` stdout is
+  unchanged (it was already only the result).
 - **`gflow auth login --browser internal` no longer waits until its timeout**
   ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)). With labs.google's session
   URL answering 410 (#1023), a bundled-Chromium login (`--browser internal`, or

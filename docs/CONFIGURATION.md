@@ -267,16 +267,19 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 
 ### `GFLOW_CLI_LOG_LEVEL`
 
-**What:** Logging verbosity.
+**What:** Logging verbosity. Logs go to stderr; stdout carries only the command's output.
 **Values:** `DEBUG` | `INFO` | `WARNING` | `ERROR`
-**Default:** `INFO`
+**Default:** `WARNING` — a command prints its result plus any warnings and errors. Set `INFO`
+to see progress events (engine, cookies, locale, page setup), for example on a long-running
+`gflow mcp run` / `gflow serve`.
 **CLI override:** `-v` / `--verbose` flag flips to `DEBUG`.
+Until the #1041 fix this setting was ignored and every command logged at `INFO` ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
 
 ### `GFLOW_CLI_LOG_FORMAT`
 
 **What:** Output format for log lines.
 **Values:**
-- `auto` (default) — text on TTY, JSON when stdout is piped/redirected
+- `auto` (default) — text when stderr is a terminal, JSON when stderr is piped/redirected
 - `text` — always pretty (Rich-styled, colours)
 - `json` — always machine-readable (one JSON object per line)
 

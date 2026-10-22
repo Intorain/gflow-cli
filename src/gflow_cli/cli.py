@@ -157,7 +157,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
         )
         console.print("[dim]Set a valid value, or unset it to use the default.[/dim]")
         sys.exit(11)
-    configure_logging(settings.log_format)
+    configure_logging(settings.log_format, settings.log_level)
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(
         cli_version=__version__,
