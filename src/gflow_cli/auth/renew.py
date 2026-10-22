@@ -152,7 +152,12 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewRes
     from playwright.async_api import Error as PlaywrightError
 
     from gflow_cli.api.transports._common import FLOW_URL, flow_host_kind, flow_landing_kind
-    from gflow_cli.browser_manager import channel_for_profile, ensure_profile_engine_compatible
+    from gflow_cli.browser_manager import (
+        browser_proxy_kwargs,
+        channel_for_profile,
+        ensure_profile_engine_compatible,
+    )
+    from gflow_cli.config import get_settings
 
     # Through the strategies module so tests patch one seam for every auth launch.
     from .strategies import async_playwright
@@ -178,6 +183,7 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewRes
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
                 ],
+                **browser_proxy_kwargs(get_settings().browser_proxy),
             )
             try:
                 await ctx.add_init_script(

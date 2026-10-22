@@ -7,6 +7,7 @@ import structlog
 from playwright.async_api import Error as PlaywrightError
 from rich.console import Console
 
+from gflow_cli.browser_manager import browser_proxy_kwargs
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     AuthBrowserRejectedError,
@@ -28,6 +29,8 @@ from .verification import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from pydantic import SecretStr
 
     from .verification import FlowSessionStatus
 
@@ -78,6 +81,7 @@ def login_launch_kwargs(
     headless: bool,
     *,
     channel: str | None = None,
+    proxy: SecretStr | None = None,
 ) -> dict[str, Any]:
     """Launch kwargs for a browser a HUMAN signs into — shared by both strategies.
 
@@ -115,6 +119,7 @@ def login_launch_kwargs(
             # keychain, which api/client.py also depends on (#222).
             "--password-store=basic",
         ],
+        **browser_proxy_kwargs(proxy),
     }
 
 
@@ -431,7 +436,7 @@ class InternalChromiumStrategy(AuthStrategy):
             # Bundled Chromium: no channel. Everything else — the stealth set,
             # the real-window geometry — is the shared, measured configuration.
             ctx = await pw.chromium.launch_persistent_context(
-                **login_launch_kwargs(profile_dir, headless),
+                **login_launch_kwargs(profile_dir, headless, proxy=settings.browser_proxy),
             )
             try:
                 page = ctx.pages[0] if ctx.pages else await ctx.new_page()

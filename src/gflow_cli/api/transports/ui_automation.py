@@ -1078,6 +1078,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             import os
 
             from gflow_cli.browser_manager import (
+                browser_proxy_kwargs,
                 channel_for_profile,
                 ensure_profile_engine_compatible,
                 window_position_args,
@@ -1106,6 +1107,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "--disable-dev-shm-usage",
                     *window_position_args(get_settings().browser_window_position),
                 ],
+                **browser_proxy_kwargs(get_settings().browser_proxy),
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
             # the session as a bot — navigator.webdriver=true causes low-score

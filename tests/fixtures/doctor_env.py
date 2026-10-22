@@ -31,6 +31,7 @@ CHECK_IDS = (
     "queue.stuck_processing",
     "env.deprecated_vars",
     "env.browsers_missing",
+    "env.browser_proxy",
     "auth.files_present",
 )
 

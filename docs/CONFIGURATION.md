@@ -402,6 +402,45 @@ Measurement script: `scripts/dev/spike_offscreen_window.py`.
 
 **Malformed values** (`100`, `1,2,3`, `a,b`) fail at startup with a validation error.
 
+### `GFLOW_CLI_BROWSER_PROXY`
+
+**What:** A proxy for every browser gflow launches: generation (CLI and MCP),
+`gflow auth login`, `auth renew` and the session check behind `auth status`
+([#1036](https://github.com/ffroliva/gflow-cli/issues/1036)).
+**Values:** `http://host:port` | `https://host:port` | `socks5://host:port` |
+`http://user:pass@host:port` (percent-encode `@` or `:` inside the password)
+**Default:** unset. The browser then connects as it always has: on Windows that means
+through the system proxy (Settings → Network → Proxy), if one is on.
+
+Use it when Google is reachable only through a proxy, for example a local Clash or
+v2ray client on `http://127.0.0.1:7897` with its *System Proxy* switch off.
+
+**Two proxies, one exit.** gflow's own HTTP calls (httpx, the LLM client) follow
+`HTTPS_PROXY`; the browser follows this setting and ignores `HTTPS_PROXY` (Chromium reads
+proxy env vars only on Linux). gflow never copies one into the other. Point both at the
+same proxy so Google sees one IP per session, and sign in through it. See
+[ACCOUNT_SAFETY](ACCOUNT_SAFETY.md#what-it-deliberately-does-not-do).
+
+| Situation | What happens |
+|---|---|
+| unset | no change from earlier versions |
+| set | every browser launch routes through it; `gflow doctor` shows `scheme://host:port (auth: yes/no)` |
+| `socks5://` with credentials, a missing host, a bad port, a path or an unknown scheme | refused at startup, exit 11, naming the setting and never repeating the value |
+| with credentials, on the plain-Chrome `auth login` fallback | refused, exit 11: that window cannot carry proxy credentials. Use a credential-less local proxy for sign-in |
+| the proxy is down or refuses the tunnel | the run stops at its first page load, exit 11, with a hint naming this setting |
+
+**Credentials** are split out of the address before the browser starts, so they never
+appear in Chrome's command line, the launch log, `gflow doctor` or an incident bundle.
+
+**Long-running servers** (`gflow mcp run`, `gflow serve`) read it once at start; restart
+them after changing it. For MCP, set it in `$GFLOW_CLI_HOME/.env` or the client's `env`
+block, since a client does not load a `.env` from your shell's directory
+([MCP setup](MCP.md#4-setup-instructions)).
+
+**Not supported:** a bypass list (Chromium already sends loopback addresses direct),
+per-command `--proxy` flags (the setting covers one-off runs:
+`GFLOW_CLI_BROWSER_PROXY=... gflow ...`), and the opt-in experimental transports.
+
 ### `GFLOW_CLI_BROWSER_ENGINE`
 
 **What:** Selects the browser-automation engine backing the Playwright API.
@@ -638,6 +677,7 @@ gflow image t2i "test idea" --profile experiments
 | `FileNotFoundError: $GFLOW_CLI_HOME/profile_default not found` | First run, no auth yet | `gflow auth login` |
 | `AuthExpiredError` | Cookies expired or revoked | `gflow auth login --profile <name>` |
 | A run stops on an account chooser, consent or verification screen (`FlowAccountChooserError`, exit 38) | Google wants a person to answer that screen | `gflow auth login --profile <name>` and clear it there; the login window is always visible. Making the generation window visible does not help: the run gives up within 30 s. See [`GFLOW_CLI_BROWSER_WINDOW_POSITION`](#gflow_cli_browser_window_position) |
+| Every browser step times out, while `curl` and `HTTPS_PROXY` work | Google is reachable only through a proxy, and the browser ignores `HTTPS_PROXY` | Set [`GFLOW_CLI_BROWSER_PROXY`](#gflow_cli_browser_proxy) to the same proxy, then `gflow auth renew` |
 | `ProfileAccessError` (exit code 11) | Chrome cannot write the profile directory (Windows access denied) | Grant write access to the whole profile directory, or use a writable profile. See [Profile-directory permissions](#profile-directory-permissions-at-browser-launch) |
 | Output files don't appear where I expect | Flag > env > .env > default — check actual resolved path | `gflow image t2i ... --verbose` shows the resolved output path |
 | `ProfileLockedError` (exit code 11) | Two concurrent calls against the same profile — the cross-process `ProfileLease` fails fast (never waits) on same-profile contention, whether the second holder is another `gflow` process, the `gflow serve` daemon, or an MCP call | Wait for the first call to finish, or use `--profile other` — different profiles run fully in parallel, each with its own lease |

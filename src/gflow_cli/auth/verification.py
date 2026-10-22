@@ -291,7 +291,10 @@ async def verify_flow_session(
     status_code: int
     body: str
     try:
-        from gflow_cli.browser_manager import ensure_profile_engine_compatible
+        from gflow_cli.browser_manager import (
+            browser_proxy_kwargs,
+            ensure_profile_engine_compatible,
+        )
 
         # Own the profile for this headless probe context (D3). Lease is the
         # OUTER context so it releases only after the driver stops. Contention
@@ -309,6 +312,7 @@ async def verify_flow_session(
                     channel=channel,
                     headless=True,
                     args=["--password-store=basic"],
+                    **browser_proxy_kwargs(get_settings().browser_proxy),
                 )
                 try:
                     cookies = await ctx.cookies()
@@ -458,7 +462,11 @@ async def _verify_migrated_host_fallback(
     GOOGLE_SESSION_ONLY. On the bundled path the #477 engine-downgrade guard
     runs first; a refusal is a probe that cannot run and maps to None.
     """
-    from gflow_cli.browser_manager import channel_for_profile, ensure_profile_engine_compatible
+    from gflow_cli.browser_manager import (
+        browser_proxy_kwargs,
+        channel_for_profile,
+        ensure_profile_engine_compatible,
+    )
 
     from .strategies import async_playwright
 
@@ -471,6 +479,7 @@ async def _verify_migrated_host_fallback(
                 channel=channel,
                 headless=True,
                 args=["--password-store=basic"],
+                **browser_proxy_kwargs(get_settings().browser_proxy),
             )
             try:
                 if not has_migrated_app_session(await ctx.cookies()):
