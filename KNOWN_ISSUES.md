@@ -745,12 +745,14 @@ When this happens, the next API call returns 401/403 and `gflow-cli` raises `Aut
 **Workaround, stale session (the common case):**
 ```bash
 gflow auth renew --profile <name>        # or: gflow auth renew --all
-gflow credits list --refresh             # renews only the expired profiles, then reads them
 ```
 
-A profile that has just sat unused has a lapsed labs.google token, not a dead Google session.
-`auth renew` loads Flow and labs.google in a headless browser and waits for labs to sign in
-again on its own, with no prompt. Measured 2026-10-14: 7 of 10 stale profiles recovered.
+A profile that has just sat unused usually has rotated-out cookies, not a dead Google session.
+`auth renew` loads Flow in a headless browser, which rotates them with no prompt, then verifies
+the result like `auth status`. Its labs.google step (measured 2026-10-14: 7 of 10 stale profiles
+recovered a credits token) is a no-op since 2026-10-22, when labs' session URL started answering
+HTTP 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so `credits --refresh`
+cannot bring a balance back either ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
 
 **Workaround, revoked session:**
 ```bash
@@ -869,9 +871,14 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ---
 
-### No in-CLI quota visibility — resolved on labs, still open on the migrated host
+### No in-CLI quota visibility — open on every account since 2026-10-22
 
-- **Status:** Resolved 2026-09-05 for `labs.google` accounts · **Open** on accounts Google has migrated to `flow.google.com` · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+- **Status:** **Open** on every account since 2026-10-22 (resolved 2026-09-05 for `labs.google` accounts, until labs' session URL went) · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+
+**Since 2026-10-22 no account can read a balance.** labs.google's session URL, which minted
+the token below, answers HTTP 410 Gone for everyone
+([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so every account now fails the
+first way listed below. The rest of this section is the history of how it got there.
 
 Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
 profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
@@ -1505,7 +1512,7 @@ here, because the run gives up within 30 s (see [CONFIGURATION](docs/CONFIGURATI
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
-- **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15
+- **Status:** Mitigated for real-Chrome profiles; **open** for `gflow credits` and for logins with `--browser internal` · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 `gflow auth login` verifies a real Flow sign-in by calling
 `https://labs.google/fx/api/auth/session` (see `src/gflow_cli/auth/verification.py`)
@@ -1517,6 +1524,17 @@ success. The expected authenticated response shape is pinned by the
 `AUTHENTICATED_BODY` fixture in `tests/auth/test_verification.py` — a Google
 change surfaces there as a failing test. Start any investigation of a sudden
 `gflow auth login` verification failure at that fixture and `verification.py`.
+
+**Since 2026-10-22 that endpoint answers HTTP 410 Gone** for every account, with or
+without cookies ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023),
+[spike](docs/superpowers/spikes/2026-10-22-labs-session-oracle-gone.md)). A 410 is now
+read as "no labs session": a profile without Google cookies is `NO_SESSION`, and one with
+them is checked by the server-attested migrated-host probe (#791), which needs the Google
+SSO and flow.google.com session cookies, then reads `myaccount.google.com`. **Still open:**
+the access-token consumers that read the same URL are not ported, so `gflow credits`
+cannot read a balance on any account (#795). And a login with `--browser internal` (bundled
+Chromium, also what `--browser auto` picks when Chrome is missing) cannot finish: it has no
+on-disk check to hand the verdict to, so it waits until its timeout. Use `--browser chrome`.
 
 Since PR #168 the production entry point is `verify_flow_profile`, which reads
 the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`
