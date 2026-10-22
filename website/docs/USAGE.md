@@ -1450,6 +1450,16 @@ generation succeeded but its download did not.
 > immediately with exit 11 and a message saying so — it does not open a browser or wait.
 > Tracked in [#877](https://github.com/ffroliva/gflow-cli/issues/877).
 
+**An image whose download fails is still recorded**
+([#1035](https://github.com/ffroliva/gflow-cli/issues/1035)). Flow generates the image,
+and spends that model's daily quota, before gflow writes it. When the write then fails
+(an `--out` directory it cannot write to, a locked file, a dropped transfer), `image t2i`,
+`image i2i`, `image batch` and `gflow run` keep the image's media id in the catalog with no
+local copy, under one FAILED operation in its project, and `t2i` / `i2i` print the media
+id(s) and the project URL on stderr (also under `--json`). The exit code is the error's own,
+unchanged: a write refused by the OS is still exit 1. To get the file, open the project in
+Flow; `gflow data list images` shows the row with `copy_count` 0.
+
 That case is real and costs money: on `flow.google.com` a generation whose signed media
 URL is not observed within the grace window exits 7 (`WireFormatError`) **after the
 credit has been spent**. The clip is in the Flow project, the catalog has a row for it,

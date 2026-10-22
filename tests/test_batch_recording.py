@@ -95,8 +95,12 @@ def test_a_recorder_failure_does_not_fail_the_row(tmp_path: Path) -> None:
 def test_a_failed_download_is_recorded_as_a_failure_not_a_success(tmp_path: Path) -> None:
     recorder = MagicMock()
     _run(tmp_path, recorder, fail_download={"a"})
-    recorded = [c.kwargs["request"].prompt for c in recorder.record_generated_images.call_args_list]
-    assert recorded == ["b"]
+    calls = recorder.record_generated_images.call_args_list
+    succeeded = [c.kwargs["request"].prompt for c in calls if "status" not in c.kwargs]
+    assert succeeded == ["b"]
+    # #1035: the failed row's images are still kept, as a STARTED operation.
+    started = [c.kwargs["request"].prompt for c in calls if c.kwargs.get("status") == "started"]
+    assert started == ["a"]
     assert recorder.record_failed_operation.called
 
 

@@ -38,6 +38,7 @@ from gflow_cli._cli_helpers import (
     slugify_project_name,
     tool_option,
 )
+from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import (
@@ -58,6 +59,7 @@ from gflow_cli.data.recorder import (
     OperationRecorder,
     escalate_asset_collision,
     record_failed_operation_safe,
+    record_undownloaded_images_safe,
 )
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
@@ -104,11 +106,12 @@ from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
 from gflow_cli.paths import image_output_path, resolve_batch_output_dir
+from gflow_cli.profile_store import account_locale_for
 from gflow_cli.services import catalog_sync
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from typing import Any
 
     from gflow_cli.api.dto import GeneratedImage
@@ -1224,9 +1227,14 @@ async def _download_images(
     out: Path | None,
     output_root: Path,
     output_file: Path | None = None,
+    saved_paths: list[Path] | None = None,
 ) -> list[Path]:
-    """Download each generated image to its resolved target path."""
-    saved_paths: list[Path] = []
+    """Download each generated image to its resolved target path.
+
+    Appends to ``saved_paths`` when given, so the caller keeps the files written
+    before a failure (#1035).
+    """
+    saved_paths = [] if saved_paths is None else saved_paths
     for i, img in enumerate(images, start=1):
         if output_file is not None:
             if len(images) == 1:
@@ -1247,15 +1255,27 @@ async def _generate_verify_download(
     *,
     recorder: OperationRecorder,
     profile_name: str,
-    project_id: str,
+    profile_dir: Path,
+    project: ProjectInfo,
+    project_created: bool,
     req: GenerateImageRequest,
     count: int,
     out: Path | None,
     output_root: Path,
     output_file: Path | None,
+    operation_kind: str,
+    undownloaded: list[str],
+    input_media_ids: Sequence[str] = (),
     name_resolver: Callable[[str], str | None] | None = None,
 ) -> tuple[list[GeneratedImage], list[Path]]:
-    """Generate ``count`` images, verify attribution, and download them (t2i/i2i shared tail)."""
+    """Generate ``count`` images, verify attribution, and download them (t2i/i2i shared tail).
+
+    #1035: when the download fails, the images Flow returned are recorded as a
+    STARTED operation and their ids land in ``undownloaded``; the caller's failure
+    funnel passes them on so that row ends FAILED. Generation and attribution
+    errors raise before the download and keep their own path.
+    """
+    project_id = project.project_id
     # Kwarg passed only when a resolver exists (#546) — duck-typed client
     # fakes in tests keep their pre-#546 signatures.
     resolver_kw: dict[str, Any] = {} if name_resolver is None else {"name_resolver": name_resolver}
@@ -1269,8 +1289,56 @@ async def _generate_verify_download(
             **resolver_kw,
         )
     recorder.verify_media_attribution(profile_name=profile_name, images=images)
-    saved_paths = await _download_images(client, images, out, output_root, output_file=output_file)
+    saved_paths: list[Path] = []
+    try:
+        saved_paths = await _download_images(
+            client, images, out, output_root, output_file=output_file, saved_paths=saved_paths
+        )
+    except BaseException:  # Ctrl-C mid-download must keep the ids too
+        undownloaded.extend(
+            record_undownloaded_images_safe(
+                recorder,
+                logger=logger,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=project,
+                project_created=project_created,
+                request=req,
+                images=images,
+                saved_paths=saved_paths,
+                input_media_ids=input_media_ids,
+                operation_kind=operation_kind,
+            )
+        )
+        _print_undownloaded_hint(client, profile_name, project_id, undownloaded)
+        raise
     return images, saved_paths
+
+
+def _print_undownloaded_hint(
+    client: FlowApiClient, profile_name: str, project_id: str, media_ids: list[str]
+) -> None:
+    """Tell the user where the generated images still are (#1035). stderr only.
+
+    Media ids and the project URL only, never ``fife_url`` (a signed URL). The URL
+    is on the host this run's image was generated on; the page is already parked,
+    so its URL cannot say.
+    """
+    try:
+        url = routes.project_editor_url_or_none(account_locale_for(profile_name), project_id)
+        if url is not None and getattr(client.transport, "last_image_route", None) == "migrated":
+            from gflow_cli.api.transports.migrated_composer import MIGRATED_PROJECT_URL
+
+            url = MIGRATED_PROJECT_URL.format(project_id=project_id)
+    except Exception:  # noqa: BLE001 - a hint must never replace the real error
+        url = None
+    click.echo(
+        f"Flow generated {len(media_ids)} image(s), but the download failed. They are "
+        "still in the Flow project, and `gflow data list images` keeps their ids.",
+        err=True,
+    )
+    click.echo(f"  media id(s): {', '.join(media_ids)}", err=True)
+    click.echo(f"  project: {url or project_id}", err=True)
 
 
 def _record_generated_images_safe(
@@ -1344,6 +1412,8 @@ async def _run_t2i(
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
+    project: ProjectInfo | None = None
+    undownloaded: list[str] = []
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
@@ -1377,12 +1447,16 @@ async def _run_t2i(
                 client,
                 recorder=recorder,
                 profile_name=profile_name,
-                project_id=project.project_id,
+                profile_dir=profile_dir,
+                project=project,
+                project_created=project_created,
                 req=req,
                 count=count,
                 out=out,
                 output_root=output_root,
                 output_file=output_file,
+                operation_kind="t2i",
+                undownloaded=undownloaded,
             )
 
             if as_json:
@@ -1411,8 +1485,8 @@ async def _run_t2i(
                 operation_kind="t2i",
             )
     except Exception as exc:
-        # #341: persist the failure before re-raising (images have no STARTED
-        # pre-insert, so this is always a fresh FAILED row).
+        # #341: persist the failure before re-raising. A failed download already
+        # left a STARTED row for `undownloaded` (#1035); this turns it FAILED.
         record_failed_operation_safe(
             recorder,
             logger=logger,
@@ -1422,6 +1496,8 @@ async def _run_t2i(
             mode=OperationKind.T2I,
             exc=exc,
             request=req,
+            flow_project_id=project.project_id if project is not None else None,
+            flow_media_ids=undownloaded,
         )
         raise
     finally:
@@ -1825,6 +1901,8 @@ async def _run_i2i(
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     req: GenerateImageRequest | None = None
+    project: ProjectInfo | None = None
+    undownloaded: list[str] = []
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
@@ -1892,12 +1970,17 @@ async def _run_i2i(
                 client,
                 recorder=recorder,
                 profile_name=profile_name,
-                project_id=project.project_id,
+                profile_dir=profile_dir,
+                project=project,
+                project_created=project_created,
                 req=req,
                 count=count,
                 out=out,
                 output_root=output_root,
                 output_file=output_file,
+                operation_kind="i2i",
+                undownloaded=undownloaded,
+                input_media_ids=[ref.name for ref in req.refs],
                 # #546 rename self-healing: on a picker miss for a UUID ref the
                 # transport re-fetches the project listing for the CURRENT name.
                 name_resolver=wire_refresh_resolver(
@@ -1948,6 +2031,8 @@ async def _run_i2i(
             mode=OperationKind.I2I,
             exc=exc,
             request=req,
+            flow_project_id=project.project_id if project is not None else None,
+            flow_media_ids=undownloaded,
         )
         raise
     finally:

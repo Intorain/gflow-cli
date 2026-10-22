@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A generated image whose download fails is no longer lost**
+  ([#1035](https://github.com/ffroliva/gflow-cli/issues/1035), reported by @error-Sench).
+  Flow generated the image and spent the quota, then a failed local write (for example an
+  `--out` directory gflow cannot write to) left only a FAILED row with no project and no
+  asset, and the media id went with the traceback. `image t2i`, `image i2i`, `image batch`,
+  `gflow run` and the MCP `gflow_generate_image` tool now keep the media id in the catalog,
+  with no local copy, under one FAILED operation in its project. The CLI prints the media
+  id(s) and the project URL on stderr; the MCP failed reply carries `flow_media_id` and
+  `flow_project_id`. Exit codes are unchanged (a write refused by the OS is still exit 1).
+  `gflow data download` stays video-only, so the image is recovered from the Flow project.
+
 - **`gflow auth login --browser internal` no longer waits until its timeout**
   ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)). With labs.google's session
   URL answering 410 (#1023), a bundled-Chromium login (`--browser internal`, or

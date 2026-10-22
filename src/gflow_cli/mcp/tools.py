@@ -419,12 +419,22 @@ async def _run_generation_task(
                     status=completed_task.status,
                     error=completed_task.error,
                 )
-                return {
+                failed: dict[str, Any] = {
                     "status": "failed",
                     "task_id": task_id,
                     "error": completed_task.error
                     or {"detail": f"Task ended in unexpected status {completed_task.status!r}"},
                 }
+                # #1035/#895: media Flow generated before the failure (a lost
+                # download) is still reachable by these ids.
+                if completed_task.flow_media_id:
+                    failed["flow_media_id"] = completed_task.flow_media_id
+                    asset = DataRepository(store).get_asset_by_flow_media_id(
+                        profile, completed_task.flow_media_id
+                    )
+                    if asset is not None:
+                        failed["flow_project_id"] = asset.flow_project_id
+                return failed
 
             # Resolve local file paths from the asset catalog.
             file_paths: list[str] = []
