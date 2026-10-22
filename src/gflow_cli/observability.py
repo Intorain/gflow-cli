@@ -64,7 +64,7 @@ def resolves_to_json(fmt: LogFormat) -> bool:
 
     ``LogFormat.AUTO`` renders TEXT only on a stderr TTY (logs go to stderr).
     Single point of truth for the AUTO resolution — shared by
-    :func:`configure_logging` and ``cli_data._logs_emit_json``.
+    :func:`configure_logging` and ``cli_data._logs_narrate_progress``.
     """
     if fmt == LogFormat.AUTO:
         return not bool(getattr(sys.stderr, "isatty", lambda: False)())
