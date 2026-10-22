@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-v` still shows everything. A long-running `gflow mcp run` / `gflow serve` now also logs
   only warnings by default; set `INFO` there to keep progress events. `--json` stdout is
   unchanged (it was already only the result).
+- **`gflow auth login --browser internal` no longer waits until its timeout**
+  ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)). With labs.google's session
+  URL answering 410 (#1023), a bundled-Chromium login (`--browser internal`, or
+  `--browser auto` on a machine without Chrome) never saw a signed-in session and waited
+  until its timeout. It now ends the wait once the flow.google.com session cookies appear,
+  then verifies the saved profile with the same server-attested check `--browser chrome`
+  and `auth status` use, so a sign-in that did not complete says why instead of timing
+  out. Generation still needs a `--browser chrome` profile. Verified live on Windows
+  (2026-10-22: a fresh bundled-Chromium sign-in finished on its own and `auth status`
+  reported the session verified). Not measured on macOS, where the saved-cookie read is
+  expected to fail; the login then ends with "re-run with `--browser chrome`".
 
 ## [0.87.1] — 2026-10-22
 
