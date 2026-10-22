@@ -991,3 +991,101 @@ class TestFindEmails:
 
         local = "x" * (_MAX_LOCAL_PART + 10)
         assert find_emails(f"{local}@example.com") == ["x" * _MAX_LOCAL_PART + "@example.com"]
+
+
+class TestLabsSessionGone:
+    """#1023: since 2026-10-22 labs answers ``410 Gone`` on its session URL for every
+    account (spike 2026-10-22, with and without cookies). That was VERIFICATION_ERROR
+    ("check your network"), the #791 fallback never ran, and ``auth login`` rolled its
+    marker back on a session flow.google.com served fine."""
+
+    @pytest.fixture
+    def gflow_home(self, tmp_path: Path) -> Path:
+        home = tmp_path / "gflow_home"
+        home.mkdir()
+        return home
+
+    @staticmethod
+    def _labs(
+        monkeypatch: pytest.MonkeyPatch, status: int, gflow_home: Path, *, google: bool = True
+    ) -> Path:
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        monkeypatch.setattr(
+            "gflow_cli.auth.verification.fetch_flow_session_httpx",
+            AsyncMock(return_value=(status, '{"error":"gone"}', google)),
+        )
+        settings = MagicMock()
+        settings.home = gflow_home
+        monkeypatch.setattr("gflow_cli.auth.verification.get_settings", lambda: settings)
+        return profile
+
+    @pytest.mark.asyncio
+    async def test_a_gone_labs_oracle_defers_to_the_migrated_host_probe(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        profile = self._labs(monkeypatch, 410, gflow_home)
+        attested = FlowSessionStatus(
+            outcome=FlowSessionOutcome.AUTHENTICATED, user_email="a@b.co", source="t"
+        )
+        probe = AsyncMock(return_value=attested)
+        monkeypatch.setattr("gflow_cli.auth.verification._verify_migrated_host_fallback", probe)
+
+        status = await verify_flow_profile(profile, source="t")
+
+        assert status is attested
+        probe.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_gone_labs_oracle_is_still_fail_closed(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Google cookies, but the server-attested probe declines: never AUTHENTICATED,
+        and the advice is to sign in again, not to check the network."""
+        profile = self._labs(monkeypatch, 410, gflow_home)
+        monkeypatch.setattr(
+            "gflow_cli.auth.verification._verify_migrated_host_fallback",
+            AsyncMock(return_value=None),
+        )
+        status = await verify_flow_profile(profile, source="t")
+        assert status.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY
+
+    @pytest.mark.asyncio
+    async def test_a_gone_labs_oracle_without_google_cookies_is_no_session(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The e2e `no_session` case: an empty profile read as a network problem."""
+        profile = self._labs(monkeypatch, 410, gflow_home, google=False)
+        probe = AsyncMock(return_value=None)
+        monkeypatch.setattr("gflow_cli.auth.verification._verify_migrated_host_fallback", probe)
+        status = await verify_flow_profile(profile, source="t")
+        assert status.outcome is FlowSessionOutcome.NO_SESSION
+        probe.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_transient_labs_error_does_not_launch_the_probe(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        profile = self._labs(monkeypatch, 503, gflow_home)
+        probe = AsyncMock(return_value=None)
+        monkeypatch.setattr("gflow_cli.auth.verification._verify_migrated_host_fallback", probe)
+        status = await verify_flow_profile(profile, source="t")
+        assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
+        probe.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("google_session", "expected"),
+    [(False, FlowSessionOutcome.NO_SESSION), (True, FlowSessionOutcome.GOOGLE_SESSION_ONLY)],
+)
+def test_a_gone_labs_session_reads_as_no_labs_user(
+    google_session: bool, expected: FlowSessionOutcome
+) -> None:
+    """#1023, at the shared classifier: the login poll, `verify_flow_session` and
+    `verify_flow_profile` all read labs through it, so all three see the same answer."""
+    from gflow_cli.auth.verification import evaluate_session_response
+
+    status = evaluate_session_response(
+        410, '{"error":"gone"}', google_session=google_session, source="t"
+    )
+    assert status.outcome is expected

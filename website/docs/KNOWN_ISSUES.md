@@ -1518,6 +1518,15 @@ success. The expected authenticated response shape is pinned by the
 change surfaces there as a failing test. Start any investigation of a sudden
 `gflow auth login` verification failure at that fixture and `verification.py`.
 
+**Since 2026-10-22 that endpoint answers HTTP 410 Gone** for every account, with or
+without cookies ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023),
+[spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-10-22-labs-session-oracle-gone.md)). A 410 is now
+read as "no labs session": a profile without Google cookies is `NO_SESSION`, and one with
+them is checked by the server-attested migrated-host probe (#791), which needs the Google
+SSO and flow.google.com session cookies, then reads `myaccount.google.com`. **Still open:**
+the access-token consumers that read the same URL are not ported, so `gflow credits`
+cannot read a balance on any account (#795).
+
 Since PR #168 the production entry point is `verify_flow_profile`, which reads
 the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`
 (a no-browser fast path) and only falls back to launching Playwright when that
