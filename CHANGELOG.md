@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Locked `opentelemetry-api` 1.45.1 (CVE-2026-114603).** Transitive only, via `fastapi`
+  and `mcp`; no gflow code imports it. The advisory turned the `pip-audit` gate red on every
+  open PR.
+
 ### Fixed
 
 - **`gflow credits` reads a balance again** ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
