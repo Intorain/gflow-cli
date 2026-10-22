@@ -61,9 +61,9 @@ gflow auth                                                # bare: list profiles 
 gflow auth logout                                         # delete a saved session
 
 # Veo video-credit balance (read-only; image models use separate daily quotas).
-# Since 2026-10-22 it cannot read a balance on any account (labs session URL 410, #795).
+# Opens flow.google.com in the profile's browser and reads the balance Flow itself shows.
 gflow credits user [--profile NAME] [--refresh] [--json]
-gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews expired sessions
+gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews signed-out sessions
 
 # Image generation (Imagen / Nano Banana)
 gflow image upload <path>                                 # → asset UUID + dimensions

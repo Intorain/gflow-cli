@@ -49,7 +49,7 @@ _SETTLE_TIMEOUT_MS = 15_000
 #: aisandbox-pa still refused every Bearer labs minted for them. A stale labs session
 #: answers 200 with an expired token and ``error: ACCESS_TOKEN_REFRESH_NEEDED``; the labs
 #: landing page's own JS then signs in again silently (signin/google -> OAuth 302 ->
-#: callback), ~2.5 s after load. The credits fast path (`api/credits.py`) reads that
+#: callback), ~2.5 s after load. The retired credits fast path read that
 #: cookie, so renewal loads the page and polls the session until the error clears.
 _LABS_HOME_URL = "https://labs.google/fx/"
 _LABS_SESSION_URL = "https://labs.google/fx/api/auth/session"

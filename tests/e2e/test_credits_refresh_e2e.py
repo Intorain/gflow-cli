@@ -1,9 +1,10 @@
 """Live proof that `--refresh` turns an expired credits read into a balance.
 
-Offline tests fake both the fast path and `auth/renew.py`, so they prove the control
+Offline tests fake both the balance read and `auth/renew.py`, so they prove the control
 flow, never the claim: that loading Flow headlessly rotates the cookies on disk and the
-SAME fast path then reads a new session. Only a profile that is genuinely stale can show
-that, and a profile stops being stale the moment one renewal succeeds. So each door
+SAME read (flow.google.com's balance reply since #795) then sees a new session. Only a
+profile that is genuinely stale can show that, and a profile stops being stale the moment
+one renewal succeeds. So each door
 takes its own profile from ``GFLOW_CLI_E2E_STALE_PROFILES`` (comma-separated: the first
 for the MCP twin, the second for the CLI), and a door whose profile turns out fresh
 skips rather than passing on a read that never needed renewing.
@@ -60,7 +61,7 @@ async def _require_stale(profile: str) -> None:
         await credits.inspect_profile(profile)
     except AuthExpiredError:
         return
-    pytest.skip(f"{profile} is not stale — its fast path already reads a balance")
+    pytest.skip(f"{profile} is not stale — it already reads a balance")
 
 
 async def test_mcp_get_credits_refresh_renews_a_stale_profile(

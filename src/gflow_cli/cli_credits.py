@@ -61,15 +61,19 @@ async def _show_all(as_json: bool, refresh: bool) -> None:
 
 
 _REFRESH_HELP = (
-    "Renew an expired session in a headless browser, then ask again. "
-    "A revoked session still needs `gflow auth login`. It cannot bring a balance back "
-    "while labs.google's session URL answers 410 (#795)."
+    "If the profile is signed out of Flow, renew its session in a headless browser, "
+    "then read again. A revoked session still needs `gflow auth login`."
 )
 
 
 @click.group()
 def credits() -> None:
-    """Show current Google Flow credit balances."""
+    """Show current Google Flow credit balances.
+
+    Opens flow.google.com in the profile's browser and reads the balance the app
+    itself loads (the number in Flow's account menu). Spends nothing; takes one
+    browser launch per profile.
+    """
 
 
 @credits.command("user")
