@@ -208,7 +208,8 @@ Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Fl
 download menu offers) and save it locally. Uploaded images are not supported.
 
 > **When Flow serves `flow.google.com` (#639):** gflow drives the image detail view's download
-> menu, which answers on the `SPrCad` batchexecute wire with the upscaled JPEG. Verified for 2K
+> menu, which answers on the `SPrCad` batchexecute wire with the upscaled JPEG. When Chrome
+> drops that reply, gflow takes the same JPEG from the page's own download (#1027). Verified for 2K
 > on 2026-10-07; 4K was seen only as a disabled option (exit 22) on the account used.
 
 ```text

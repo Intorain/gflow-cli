@@ -226,6 +226,7 @@ async def install_capture_hooks(page: Page, expected_type: str) -> None:
                     if (mime.includes(expected) || (expected === 'video' && mime.includes('mp4'))) {
                         const reader = new FileReader();
                         reader.onloadend = function() {
+                            if (!window._capturing) return;  // a late read from a finished run
                             window._gflowCapturedBase64 = reader.result.split(',')[1];
                         };
                         reader.readAsDataURL(blob);
@@ -244,6 +245,7 @@ async def restore_capture_hooks(page: Page) -> None:
     try:
         await page.evaluate("""() => {
             window._capturing = false;
+            delete window._gflowCapturedBase64;
             if (window._gflowOrigCreateObjectURL) {
                 URL.createObjectURL = window._gflowOrigCreateObjectURL;
                 delete window._gflowOrigCreateObjectURL;

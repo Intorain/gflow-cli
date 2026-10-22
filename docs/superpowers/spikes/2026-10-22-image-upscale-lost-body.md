@@ -25,10 +25,12 @@ The first attempt read the anchor's `blob:` `href` back after the click. That fe
 
 ## Observed (`_spike_out/spike_upscale_lost_body_20261022_170113.json`)
 
+Run as `uv run python scripts/dev/spike_upscale_lost_body.py ffroliva --runs 12`.
+
 | | Runs |
 |---|---|
 | DevTools read of the `SPrCad` body failed with `No data found` | **6 of 12** (runs 1, 3, 5, 8, 10, 11) |
-| a `image/jpeg` blob of 3,143,496 bytes reached `createObjectURL` | **12 of 12** |
+| an `image/jpeg` blob of 3,143,496 bytes reached `createObjectURL`, the only blob over 1 KB in each run | **12 of 12** |
 | blob SHA-256 equals the DevTools image's SHA-256 (readable runs) | 6 of 6 |
 | blob SHA-256 identical across all 12 runs, failed reads included | yes |
 | anchors clicked per run | 1 (`blob:`, `download` = `<prompt>_2K_<timestamp>.jpg`) |

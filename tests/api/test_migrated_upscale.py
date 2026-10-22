@@ -159,8 +159,8 @@ async def test_migrated_upscale_non_image_payload_raises_wireformat() -> None:
         await _run(page)
 
 
-async def test_migrated_upscale_unreadable_reply_still_returns_the_image() -> None:
-    """#1027: Chrome lost the SPrCad body; the image the page received is still returned."""
+def _lost_reply_item() -> tuple[FakeItem, list]:
+    """A 2K item whose SPrCad reply body Chrome no longer has (#1027)."""
     holder: list = []
 
     async def lost() -> None:
@@ -175,7 +175,31 @@ async def test_migrated_upscale_unreadable_reply_still_returns_the_image() -> No
         for handler in list(holder[0].response_handlers):
             await handler(res)
 
-    page = fake_page([FakeItem("2K", on_click=lost)], captured_b64=_PNG_B64)
+    return FakeItem("2K", on_click=lost), holder
+
+
+async def test_migrated_upscale_unreadable_reply_still_returns_the_image() -> None:
+    """#1027: Chrome lost the SPrCad body; the image the page received is still returned."""
+    item, holder = _lost_reply_item()
+    page = fake_page([item], captured_b64=_PNG_B64)
     holder.append(page)
 
     assert await _run(page) == _PNG_BYTES
+
+
+async def test_migrated_upscale_unreadable_reply_and_no_capture_times_out() -> None:
+    item, holder = _lost_reply_item()
+    page = fake_page([item])
+    holder.append(page)
+
+    with pytest.raises(TransportTimeoutError, match="Timed out after 0.2s"):
+        await _run(page, timeout_s=0.2)
+
+
+async def test_migrated_upscale_readable_refusal_wins_over_a_captured_blob() -> None:
+    item_2k, holder = _replying_item("2K", _make_sprcad_error_body())
+    page = fake_page([item_2k], captured_b64=_PNG_B64)
+    holder.append(page)
+
+    with pytest.raises(WireFormatError, match="SPrCad RPC refused"):
+        await _run(page)
