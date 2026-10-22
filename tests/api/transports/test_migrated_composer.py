@@ -538,11 +538,23 @@ class FakeKeyboard:
             dom.prompt += text
 
 
+#: A scripted reply text that makes ``FakeResponse.text()`` fail the way Chrome does when
+#: it has dropped the body (#1009, #1010).
+LOST_BODY = "<lost body>"
+
+
 class FakeResponse:
     def __init__(self, url: str, text: str, status: int = 200) -> None:
         self.url, self._text, self.status = url, text, status
 
     async def text(self) -> str:
+        if self._text == LOST_BODY:
+            from playwright.async_api import Error as PlaywrightError
+
+            raise PlaywrightError(
+                "Response.text: Protocol error (Network.getResponseBody): "
+                "No data found for resource with given identifier"
+            )
         return self._text
 
 
@@ -1768,6 +1780,41 @@ async def test_submit_timeout_names_the_rpcs_it_did_see() -> None:
             page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
         )
     assert "rpcs seen: none" not in str(ei.value)
+
+
+async def test_a_video_submit_timeout_after_the_click_is_not_retryable() -> None:
+    """#1010: the click is the billed act. A timeout after it does not mean nothing was
+    made (the spike found the clip finished in the project), so ``retryable: true``
+    invites a second billed clip."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
+        )
+    assert not is_retryable(ei.value)
+    assert "30 s deadline" not in ei.value.remediation_hint
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_an_unreadable_video_submit_body_is_named_and_not_retryable() -> None:
+    """#1010: the reply arrived and Chrome lost its body. The detail used to say "no
+    YhhmEf reply" while listing YhhmEf under rpcs seen."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=30.0, on_started=None, project_id=PROJ
+        )
+    assert "YhhmEf" in ei.value.detail and "unreadable" in ei.value.detail
+    assert not is_retryable(ei.value)
 
 
 async def test_submit_frame_without_record_is_wire_format_error() -> None:
@@ -3143,6 +3190,40 @@ async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
         await MigratedComposer().submit_images_and_observe(
             page, GenerateImageRequest(prompt="a blue cup")
         )
+
+
+async def test_an_image_reply_timeout_after_the_click_is_not_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1010 count arm, run 3: no reply was read, yet the image was in the project."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    monkeypatch.setattr(migrated_composer, "IMAGE_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert not is_retryable(ei.value)
+
+
+async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error() -> None:
+    """#1010: the raw Playwright error reached the client's retry loop, which re-ran the
+    billed submit. It must arrive typed, named, and marked not retryable."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert "ogiZ0b" in ei.value.detail and "unreadable" in ei.value.detail
+    assert not is_retryable(ei.value)
 
 
 # ----------------------------------------------------------------------------------

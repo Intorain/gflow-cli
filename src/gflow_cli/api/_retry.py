@@ -116,6 +116,7 @@ class _LambdaWait(wait_base):
 def _make_retrying(
     *,
     wait_seconds: Callable[[RetryCallState], float] | None = None,
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> AsyncRetrying:
     """Internal factory; tests override ``wait_seconds`` to skip real sleeps.
 
@@ -131,7 +132,7 @@ def _make_retrying(
         _LambdaWait(wait_seconds) if wait_seconds is not None else _JitteredExponentialWait()
     )
     return AsyncRetrying(
-        stop=stop_after_attempt(MAX_ATTEMPTS),
+        stop=stop_after_attempt(max_attempts),
         wait=waiter,
         retry=retry_if_exception_type(
             # Patchright raises its OWN Error/TimeoutError (distinct classes from
@@ -143,7 +144,9 @@ def _make_retrying(
     )
 
 
-def post_with_retry(*, _retry_on_5xx: bool = True) -> AsyncIterator[Any]:
+def post_with_retry(
+    *, _retry_on_5xx: bool = True, max_attempts: int = MAX_ATTEMPTS
+) -> AsyncIterator[Any]:
     """Public: returns the configured ``AsyncRetrying`` async iterator.
 
     Args:
@@ -151,6 +154,7 @@ def post_with_retry(*, _retry_on_5xx: bool = True) -> AsyncIterator[Any]:
             signals "intentionally unused". Currently retries on 5xx and 429
             because both surface as :class:`NetworkError` /
             :class:`RateLimitError` and the retry predicate matches them.
+        max_attempts: ``1`` for a call that is not safe to repeat (#1010).
 
     Usage::
 
@@ -164,4 +168,4 @@ def post_with_retry(*, _retry_on_5xx: bool = True) -> AsyncIterator[Any]:
                 # 4xx (non-429) falls through; classifier outside the loop turns
                 # them into AuthExpiredError / WireFormatError (NOT retried).
     """
-    return _make_retrying().__aiter__()
+    return _make_retrying(max_attempts=max_attempts).__aiter__()

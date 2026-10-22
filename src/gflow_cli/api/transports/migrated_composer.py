@@ -767,6 +767,22 @@ def _ligature(page: Any, name: str) -> Any:
 UNUSUAL_ACTIVITY_REASON = "PUBLIC_ERROR_UNUSUAL_ACTIVITY"
 
 
+def _outcome_unknown(detail: str) -> TransportTimeoutError:
+    """A failure AFTER the submit click: Flow may have made and billed the generation.
+
+    #1010 found exactly that on every arm (a finished clip, an extra image), so the
+    error must not invite a retry, and the hint must not be the class's 30 s default."""
+    return TransportTimeoutError(
+        detail=detail,
+        retryable=False,
+        remediation_hint=(
+            "Submit was already clicked, so Flow may have made and billed this "
+            "generation. Open the project in Flow and check before re-running: "
+            "a re-run bills again."
+        ),
+    )
+
+
 def _submit_refusal(
     text: str, rpcids: tuple[str, ...]
 ) -> WafRejectionError | ContentPolicyError | None:
@@ -2991,6 +3007,15 @@ class MigratedComposer:
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+                # #1009/#1010: Chrome can drop a reply body. On the submit reply that
+                # loses the workflow id, so no status reply can settle the run either.
+                if rpcid in submit_rpcs and not submitted.done():
+                    submitted.set_exception(
+                        _outcome_unknown(
+                            f"migrated host: the {rpcid} submit reply arrived but its "
+                            "body was unreadable"
+                        )
+                    )
                 return
             refusal = _submit_refusal(text, submit_rpcs)
             # An envelope arriving after an accepted submit is ignored: that run's outcome
@@ -3085,11 +3110,9 @@ class MigratedComposer:
                 raise route_error.result()
             if not submitted.done():
                 seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
-                raise TransportTimeoutError(
-                    detail=(
-                        f"migrated host: no {'/'.join(submit_rpcs)} reply within "
-                        f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
-                    ),
+                raise _outcome_unknown(
+                    f"migrated host: no {'/'.join(submit_rpcs)} reply within "
+                    f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                 )
             first = submitted.result()
             started = VideoStarted(
@@ -3280,6 +3303,15 @@ class MigratedComposer:
                 return
             try:
                 text = await response.text()
+            except Exception:  # noqa: BLE001 - a raw Playwright error here was retried (#1010)
+                result.set_exception(
+                    _outcome_unknown(
+                        f"migrated host: the {IMAGE_SUBMIT_RPC} submit reply arrived but "
+                        "its body was unreadable"
+                    )
+                )
+                return
+            try:
                 refusal = _submit_refusal(text, (IMAGE_SUBMIT_RPC,))
                 if refusal is not None:
                     raise refusal
@@ -3371,11 +3403,9 @@ class MigratedComposer:
             if route_error.done():
                 raise route_error.result()
             if result not in done:
-                raise TransportTimeoutError(
-                    detail=(
-                        f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
-                        f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"
-                    )
+                raise _outcome_unknown(
+                    f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
+                    f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"
                 )
             return result.result()
         finally:
@@ -3410,11 +3440,8 @@ class MigratedComposer:
         if terminal.done():
             return terminal.result()
         if not done:
-            raise TransportTimeoutError(
-                detail=(
-                    f"migrated host: generation {workflow_id} was not terminal within the "
-                    f"poll timeout"
-                ),
+            raise _outcome_unknown(
+                f"migrated host: generation {workflow_id} was not terminal within the poll timeout"
             )
         grace = min(RESULT_URL_GRACE_S, max(deadline - time.monotonic(), 0.01))
         try:

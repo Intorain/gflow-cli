@@ -58,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **flow.google.com: a run that fails after the submit click no longer invites a second
+  billed generation** ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)).
+  When Chrome lost the image submit reply's body, gflow silently submitted the image
+  again: one `--count 1` run left two images in the project and reported one. A lost
+  video submit reply, or any timeout after the click, was reported as a retryable exit 9
+  while Flow had already made and billed the clip. A failure after the click now makes no
+  second submit and reports exit 9 with `retryable: false`, a detail that names an
+  unreadable reply as unreadable, and a hint to check the project before re-running.
 - On Flow's agent-only composer, an image result's `model_name_type` echoed the requested
   `--model`, so a `--model nano-pro` run that Flow rendered with Nano Banana 2.1 still
   reported `GEM_PIX_2`. Nothing on that composer observes which model rendered, so it is

@@ -258,7 +258,7 @@ First visible-and-clickable wins. Log:
 | `AuthBrowserRejectedError` | 14 | Google's sign-in rejected the browser for advertising automation; only the `internal` strategy surfaces it | Re-run `gflow auth login` (default `auto` picks the `chrome` strategy, which retries on a no-automation path) |
 | `AuthLoginTimeoutError` | 12 | User did not finish the OAuth flow in time | Run `gflow auth login` again; raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT` |
 | `IdentityRecheckPendingError` | 12 | Login ended while Flow was still sending the account to `/about` because Google wants it to "Confirm it's you" (#902) | Run `gflow auth login` again, press the page's main button, and finish Google's check until the Flow app loads |
-| `TransportTimeoutError` | 9 | A single API call exceeded its timeout | Retry; check Flow status |
+| `TransportTimeoutError` | 9 | A single API call exceeded its timeout | Retry; check Flow status. When `retryable` is `false` the submit was already clicked (#1010): check the project in Flow before re-running |
 | `WafRejectionError` | 10 | reCAPTCHA / WAF blocked the request (`PUBLIC_ERROR_UNUSUAL_ACTIVITY`) | Stop on that profile — each rejected request can raise its score. Wait hours or switch profile; see [ACCOUNT_SAFETY § When Google does push back](ACCOUNT_SAFETY.md#when-google-does-push-back) |
 
 For health probes from a worker process, use
