@@ -115,3 +115,55 @@ async def test_client_get_credits_reads_nzlxg_on_a_pooled_page(
 
     assert await client.get_credits() == CreditsInfo(credits=5)
     read.assert_awaited_once_with(page)
+
+
+class _Unreadable(_Response):
+    async def text(self) -> str:
+        raise RuntimeError("Network.getResponseBody: No resource with given identifier found")
+
+
+class _Refusal(_Response):
+    def __init__(self, rpcid: str) -> None:
+        super().__init__(rpcid, None)
+        frame = [["wrb.fr", rpcid, None, None, None, [7, None, [["x", ["PERMISSION"]]]], "generic"]]
+        self._text = ")]}'\n\n10\n" + json.dumps(frame) + "\n"
+
+
+async def test_a_lost_nzlxg_body_is_logged_and_named_not_called_absent(install_log_capture) -> None:
+    page = _Page(replies=[_Unreadable(mc.CREDITS_RPC, None)])
+
+    with pytest.raises(FlowAppError) as caught:
+        await mc.read_credits(page, timeout_s=0.1)  # type: ignore[arg-type]
+
+    assert "no readable nzlxg reply" in caught.value.detail
+    assert "1 batchexecute bodies unreadable" in caught.value.detail
+    events = [e for e in install_log_capture.entries if e["event"].endswith("body_unreadable")]
+    assert events and events[0]["carries_rpcid"] is True
+    assert "identifier" not in str(events)  # the class name only, never the message
+
+
+async def test_an_nzlxg_refusal_raises_at_once_and_is_not_called_a_missing_fetch() -> None:
+    page = _Page(replies=[_Refusal(mc.CREDITS_RPC)])
+
+    with pytest.raises(WireFormatError, match="refused nzlxg") as caught:
+        await mc.read_credits(page, timeout_s=5)  # type: ignore[arg-type]
+
+    assert "prompt" not in caught.value.remediation_hint  # not the generation-payload default
+
+
+async def test_an_about_landing_from_credits_names_googles_reverification() -> None:
+    page = _Page(replies=[], land_on="https://flow.google.com/about")
+
+    with pytest.raises(FlowAppError) as caught:
+        await mc.read_credits(page, timeout_s=0.1)  # type: ignore[arg-type]
+
+    hint = caught.value.remediation_hint
+    # Both measured causes (live `credits list`, 2026-10-22): no Google session at all,
+    # and a signed-in account Google holds at /about for re-verification.
+    assert "gflow auth status --profile" in hint
+    assert "gflow auth login --browser chrome --profile" in hint
+    assert "Confirm it's you" in hint
+    assert "--user-data-dir" in hint
+    assert "project" not in hint
+    assert "project" not in caught.value.detail
+    assert caught.value.retryable is False

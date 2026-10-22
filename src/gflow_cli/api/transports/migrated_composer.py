@@ -52,6 +52,7 @@ from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports._common import (
     expired_link_hint,
     extract_project_id,
+    flow_landing_kind,
     get_signed_media,
     raise_if_known_landing,
     recoverable_clip_hint,
@@ -3777,16 +3778,43 @@ async def _wait_anchor(
 async def _rpc_reply(
     page: Page, rpcid: str, action: Callable[[], Awaitable[None]], *, timeout_s: float
 ) -> Any:
-    """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets."""
+    """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets.
+
+    A refusal frame for ``rpcid`` raises at once instead of waiting out the timeout, and a
+    body the page could not hand over is counted, so a timeout can say "no READABLE reply"
+    rather than "Flow did not answer" (the body may have been sent and lost, #1009).
+    """
     reply: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    unreadable = [0]
 
     async def on_response(response: Any) -> None:
-        if reply.done() or "batchexecute" not in str(getattr(response, "url", "")):
+        url = str(getattr(response, "url", ""))
+        if reply.done() or "batchexecute" not in url:
             return
         try:
             text = await response.text()
-        except Exception:  # noqa: BLE001 - an aborted body is not our frame
+        except Exception as exc:  # noqa: BLE001 - recorded, never fatal: it may not be ours
+            unreadable[0] += 1
+            log.debug(
+                "migrated.rpc_reply_body_unreadable",
+                rpcid=rpcid,
+                carries_rpcid=f"rpcids={rpcid}" in url,
+                error_type=type(exc).__name__,
+            )
             return
+        for err in rpc_errors(text):
+            if err.rpcid == rpcid and not reply.done():
+                reply.set_exception(
+                    WireFormatError(
+                        detail=f"flow.google.com refused {rpcid} (code={err.code}, "
+                        f"reasons={list(err.reasons)})",
+                        route=f"batchexecute:{rpcid}",
+                        remediation_hint=(
+                            "Flow answered this request with an error frame, not with data. "
+                            "Retry once; if it persists, report it with the code and reasons."
+                        ),
+                    )
+                )
         for rid, payload in parse_frames(text):
             if rid == rpcid and not reply.done():
                 reply.set_result(payload)
@@ -3799,8 +3827,9 @@ async def _rpc_reply(
         except TimeoutError as e:
             raise TransportTimeoutError(
                 detail=(
-                    f"flow.google.com did not answer {rpcid} within {timeout_s:.0f}s "
-                    f"on {safe_page_url(page.url)} (host=migrated)"
+                    f"no readable {rpcid} reply from flow.google.com within {timeout_s:.0f}s "
+                    f"on {safe_page_url(page.url)} (host=migrated; "
+                    f"{unreadable[0]} batchexecute bodies unreadable)"
                 ),
             ) from e
     finally:
@@ -3891,12 +3920,38 @@ async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
     try:
         payload = await _rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
     except TransportTimeoutError as e:
-        # Signed out, /about, no Flow access: each has its own typed error.
+        if flow_landing_kind(page.url) == "public":
+            # The generic /about hint says "open the project"; credits has no project.
+            # Two causes are measured: a profile with no Google session at all (live
+            # `credits list`, 2026-10-22), and healthy cookies held at /about by Google's
+            # pending "Confirm it's you" (2026-09-23, denon82; spike 2026-09-23-about-cta-
+            # leads-to-google-reauth.md), which `gflow auth login` cannot clear (#902).
+            # They are not told apart here; `gflow auth status` does that.
+            raise FlowAppError(
+                detail=(
+                    f"Flow redirected to its public landing page ({safe_page_url(page.url)}) "
+                    "instead of the app, so there is no balance to read."
+                ),
+                route=f"batchexecute:{CREDITS_RPC}",
+                remediation_hint=(
+                    "Two causes land here. First run `gflow auth status --profile <name>`. "
+                    "If it reports no Google session, sign in: `gflow auth login "
+                    "--browser chrome --profile <name>`. If it reports you are signed in, "
+                    "Google may want the account to confirm its identity, which `gflow auth "
+                    "login` cannot clear: open Chrome by hand on the profile directory "
+                    '(chrome --user-data-dir="<profile dir>" https://flow.google.com/), click '
+                    "through, finish Google's \"Confirm it's you\", wait for the app, close "
+                    "Chrome and re-run. See KNOWN_ISSUES."
+                ),
+                retryable=False,
+            ) from e
+        # Signed out, no Flow access: each has its own typed error.
         await raise_if_known_landing(page, requested=MIGRATED_ROOT_URL, at="migrated.credits")
         raise FlowAppError(
             detail=(
-                f"flow.google.com loaded ({safe_page_url(page.url)}) but the app did not "
-                f"fetch its credit balance ({CREDITS_RPC}) within {timeout_s:.0f}s."
+                f"flow.google.com loaded ({safe_page_url(page.url)}) but no readable "
+                f"{CREDITS_RPC} reply (the credit balance) arrived within {timeout_s:.0f}s: "
+                f"{e.detail}"
             ),
             route=f"batchexecute:{CREDITS_RPC}",
             remediation_hint=(

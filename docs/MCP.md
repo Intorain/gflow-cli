@@ -439,17 +439,21 @@ gflow credits user         # reads the balance from flow.google.com (#795)
 | "Signed in to Google, but not to the Flow app" | — | **or** the account has no Flow access at all | Same sentence, second cause. The session endpoint answers 200 with an empty `user` for an abandoned sign-in *and* for an account with no Google AI Plus/Pro/Ultra (or qualifying Workspace) plan, so `auth status` cannot tell them apart. Open `https://flow.google.com` in a browser on that account: a landing on `/unavailable` means this row. A generation command says so directly — **exit 39**, `FlowAccessUnavailableError` |
 
 In every migrated row above except the no-Flow-access one, **generation over the migrated composer still works** — only
-the aisandbox REST reads fail. On the agent-only composer described below that holds for
+the aisandbox REST reads fail (`credits` no longer is one, #795). On the agent-only composer described below that holds for
 text-to-image and text-to-video only.
 
-> **A `credits` failure does not mean your cookies are stale.** Two raise sites produce it
-> — labs answering with no token, and aisandbox-pa rejecting the token labs did issue —
-> and since v0.74.0 **both name the real cause**. On a migrated account SAPISID is
-> typically present and fine, and **re-running `gflow auth login` will not help**. If the
-> profile has no browser-strategy marker yet, it can make things worse: a failed *first*
-> login rolls that marker back. **If `auth status` says verified and only `credits` fails,
-> believe `auth status`.** Through v0.73.2 the second site carried the class-default
-> SAPISID advice instead — see the CHANGELOG for why.
+> **A `credits` failure names its cause.** Since #795 the balance is read from flow.google.com's
+> own reply, not from a labs.google token. A sign-in landing is exit 3 (`AuthExpiredError`,
+> renewable with `refresh=true` / `--refresh`). Flow's public `/about` page, or an app that loads
+> without a readable balance reply, is exit 31 (`FlowAppError`). An account with no Flow access
+> is exit 39. A balance reply in an unexpected shape is exit 7 (`WireFormatError`), and a profile
+> another gflow process holds is exit 11 (`ProfileLockedError`). **Only exit 3 is about your
+> session.** The other codes do not mean "re-run `gflow auth login`". If the profile has no
+> browser-strategy marker yet, a re-login can make things worse, because a failed *first* login
+> rolls that marker back. *History:* before #795, two raise sites in the since-deleted
+> `api/credits.py` (labs issuing no token, aisandbox-pa rejecting the token) produced every
+> `credits` failure. Through v0.73.2 the second one carried the class-default SAPISID advice;
+> see the CHANGELOG.
 
 The migrated composer itself also comes in more than one shape. An account whose composer
 is **agent-only** — no classic composer at all — is driven through its chat agent for
