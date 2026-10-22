@@ -865,7 +865,8 @@ async def gflow_generate_image(
         'seed' is the catalogued seed of 'flow_media_id': the seed Flow chose on the
         classic image paths; 0 on the agentic / agent-only arms, which observe none;
         null when none was recorded. It cannot be requested.
-        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
+        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict; when
+        Flow made media before the failure, 'flow_media_id' and 'flow_project_id' name it.
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
@@ -1141,7 +1142,8 @@ async def gflow_generate_video(  # NOSONAR
         'seed' is the catalogued seed of 'flow_media_id' — for video, one a CLI
         ``--seed`` recorded (this tool takes none), never one observed from Flow; null
         when none was recorded.
-        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
+        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict; when
+        Flow made media before the failure, 'flow_media_id' and 'flow_project_id' name it.
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err

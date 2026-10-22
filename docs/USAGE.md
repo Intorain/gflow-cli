@@ -817,7 +817,9 @@ gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan left" 
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
 ```
 
-Exit codes specific to this surface: **27** — Flow's upload endpoint rejected a
+Exit codes specific to this surface: **7** — Chrome lost the upload's reply and the
+readback could not prove the upload saved (`RpcResponseUnavailableError`; check the
+project before re-running); **27** — Flow's upload endpoint rejected a
 local frame file (`MediaUploadRejectedError`; try re-encoding, e.g.
 `ffmpeg -i in.jpg -q:v 2 -map_metadata -1 out.jpg`, or reference the asset by
 UUID instead); **9** — a frame UUID could not be located in the project's media
@@ -1655,7 +1657,7 @@ Options:
                         (experimental; shape may change).
 ```
 
-Ten checks run on every invocation:
+Eleven checks run on every invocation:
 
 | Check id | Detects | Suggested remediation |
 |---|---|---|
@@ -1669,6 +1671,7 @@ Ten checks run on every invocation:
 | `env.deprecated_vars` | Deprecated env vars still set (`GFLOW_CLI_PREFER_CLASSIC`, `GFLOW_CLI_FORCE_AGENT_UI`, `GEMINI_API_KEY`), or `GFLOW_CLI_DB_PATH` disagreeing with the resolved settings path | Unset the variable / switch to its successor |
 | `env.browsers_missing` | Playwright Chromium is not installed | `playwright install chromium` |
 | `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
+| `env.browser_proxy` | Reports whether `GFLOW_CLI_BROWSER_PROXY` is set (`scheme://host:port`, never credentials); informational, never changes the exit code | Use the same proxy for `HTTPS_PROXY` and for signing in ([CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_proxy)) |
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status

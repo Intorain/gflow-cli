@@ -4,7 +4,29 @@
 
 ## Current release
 
-**v0.87.1 — alpha.** `gflow credits` reads a balance again, and 2K image upscales stop
+**v0.88.0 — alpha.** gflow works behind a proxy, and a slow or interrupted write no longer
+reports a failure for something Flow saved.
+
+**`GFLOW_CLI_BROWSER_PROXY` routes the browser through a proxy (#1036).** For networks where
+Google is only reachable through a local proxy (Clash on `127.0.0.1:7897`, for example).
+Applied to every browser gflow launches. A proxy that needs a password is refused for now:
+Flow did not load through one in our tests.
+
+**Writes that Flow saved are no longer reported as failures.** A create on a slow link
+returns the project Flow made, or ends exit 7 not retryable, never a retryable error that
+makes a second project (#1037). A write whose reply Chrome lost is read back (#992, thanks
+@L1meSn0w; #1009). A generated image whose download fails keeps its media id in the catalog
+(#1035).
+
+**Also:** commands print their result without about ten info log lines, and
+`GFLOW_CLI_LOG_LEVEL` works (#1041); `gflow auth login --browser internal` works again,
+verified on Windows, macOS not measured (#1026); `GFLOW_CLI_TIMEOUT_SECONDS`, which nothing read, is removed.
+
+Full ledger: [LIVE_VERIFICATION_v0.88.0](LIVE_VERIFICATION_v0.88.0.md).
+
+<details><summary>v0.87.1 — credits read from flow.google.com; upscale survives a lost reply</summary>
+
+`gflow credits` reads a balance again, and 2K image upscales stop
 failing when Chrome loses Flow's reply.
 
 **`gflow credits` works again, on flow.google.com (#795).** The labs.google session token it
@@ -21,6 +43,8 @@ catalog (#1022); `opentelemetry-api` locked at 1.45.1 (CVE-2026-114603). A login
 `--browser internal` (#1026) is fixed for the next release, verified live on Windows.
 
 Full ledger: [LIVE_VERIFICATION_v0.87.1](LIVE_VERIFICATION_v0.87.1.md).
+
+</details>
 
 <details><summary>v0.87.0 — sign-in after labs.google's session URL went away</summary>
 
@@ -560,6 +584,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Browser proxy setting (#1036); slow-link create and lost-reply writes no longer report false failures (#1037, #992, #1035) | ✅ done (v0.88.0) |
 | `gflow credits` reads the balance from flow.google.com (#795); 2K image upscale survives a lost reply (#1027) | ✅ done (v0.87.1) |
 | Session checks survive labs.google's session URL answering 410 (#1023); no second billed generation after a lost submit reply (#1010) | ✅ done (v0.87.0) |
 | `video extend` driven through Flow's own UI on flow.google.com, single segment, with a route guard on the billed request (#991); t2i/t2v on the agent-only composer (#989); `auth renew` / `credits --refresh` (#982) | ✅ done (v0.86.0) |
