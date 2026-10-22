@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A video run into an existing `--project` no longer rewrites that project's title in
+  the local catalog** ([#1022](https://github.com/ffroliva/gflow-cli/issues/1022)).
+  `video t2v`/`i2v`/`r2v`/`extend` replaced the stored title with their `gflow-cli video`
+  placeholder, so `gflow data list projects` showed that for a project titled `my-project`
+  in Flow, and every run (images included) overwrote a project's `gflow-cli` source. Only
+  `gflow project create` and `rename` change a stored title now, and an empty title is no
+  longer kept as a real one. CLI and MCP share the fix. A title already overwritten is not
+  recoverable locally: run `gflow project rename <id> <title>` to restore it. Reported, with
+  the fix, by @error-Sench.
+
 ## [0.87.0] — 2026-10-22
 
 ### Security

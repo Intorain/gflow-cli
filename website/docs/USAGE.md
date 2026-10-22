@@ -1368,6 +1368,13 @@ has multiple local copies (e.g. re-downloaded to different paths), they appear
 as a single row with a `COPIES` count and the path of the latest copy. Use
 `--all-copies` to see every path as a separate row.
 
+A project's `title` is the one gflow recorded when it first saw the project: the real title
+for one `gflow project create` made, but a placeholder (`gflow-cli video`, or empty for an image
+run) for one first met through a generation. `gflow project create` / `rename` replace it. A generation into an existing `--project`
+never rewrites it ([#1022](https://github.com/ffroliva/gflow-cli/issues/1022)).
+The catalog does not import titles set on the website, so a project renamed there keeps
+its old title here.
+
 Output:
 - TTY stdout → Rich-formatted table.
 - Pipe / non-TTY / `--json` → JSONL.
