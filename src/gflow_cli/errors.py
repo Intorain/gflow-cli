@@ -416,14 +416,15 @@ class WireFormatError(FlowApiError):
 
 
 class RpcResponseUnavailableError(WireFormatError):
-    """An RPC response arrived but Playwright could not read its body.
+    """A write was sent but its outcome was never seen: the reply body was unreadable,
+    or no reply arrived before the ceiling (#1037).
 
     The write may already have committed; callers must recover by readback,
     never infer failure or automatically submit the write again.
     """
 
     problem_type = "https://gflow-cli.dev/errors/rpc-response-unavailable"
-    title = "Flow response body could not be read"
+    title = "Flow write outcome unknown"
     _default_remediation = (
         "The outcome is unknown: Flow may have saved this write. Open the project on "
         "flow.google.com and check its title or the uploaded file before re-running. "

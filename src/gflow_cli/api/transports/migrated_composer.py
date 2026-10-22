@@ -3995,8 +3995,9 @@ async def create_project(
             original_error,
             CREATE_PROJECT_RPC,
             "Create was already clicked, so Flow may have made this project. Open "
-            "https://flow.google.com/ and look for it before re-running: a re-run makes "
-            "a second project. If it is there, pass its id with --project <id>.",
+            "https://flow.google.com/ and look for the newest project (it may still carry "
+            "Flow's default name) before re-running: a re-run makes a second project. "
+            "If it is there, pass its id with --project <id>.",
         )
         try:
             await page.wait_for_url(

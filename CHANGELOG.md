@@ -22,13 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project and pass `--project <id>`, instead of a retryable timeout. A rename whose reply
   is lost is settled by reading the saved title back. Builds on #992's lost-body recovery.
 
-### Removed
-
-- **`GFLOW_CLI_TIMEOUT_SECONDS`** ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)).
-  It was documented as a per-request HTTP timeout and elsewhere as a chain link ceiling, but
-  nothing read it. An `.env` file or environment that still sets it keeps loading; the
-  value is ignored, as it always was.
-
 - **Commands no longer print about ten info log lines before their result, and
   `GFLOW_CLI_LOG_LEVEL` works** ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
   Every command logged at `INFO` to stderr regardless of `GFLOW_CLI_LOG_LEVEL`, which was
@@ -83,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answered and refused the file. Exit 7 here means the outcome is unknown: the upload may
   have saved, so check the project before re-running. Scripts that branch on 27 for a lost
   upload should branch on 7.
+
+### Removed
+
+- **`GFLOW_CLI_TIMEOUT_SECONDS`** ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)).
+  It was documented as a per-request HTTP timeout and elsewhere as a chain link ceiling, but
+  nothing read it. An `.env` file or environment that still sets it keeps loading; the
+  value is ignored, as it always was.
 
 ## [0.87.1] — 2026-10-22
 
