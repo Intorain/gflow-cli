@@ -182,29 +182,98 @@ def _sprcad_b64(text: str) -> str | None:
 
 
 def _sprcad_listener(found_b64: asyncio.Future[str]) -> Callable[[Response], Awaitable[None]]:
-    """A response listener that settles ``found_b64`` from the first ``SPrCad`` reply."""
+    """A response listener that settles ``found_b64`` from the first ``SPrCad`` reply.
+
+    An unreadable body is skipped, not a failure: Chrome evicted it on 6 of 12 measured
+    upscales, and the page's own blob still carried the image (#1027).
+    """
 
     async def on_response(response: Response) -> None:
         if "batchexecute" not in response.url or UPSCALE_RPCID not in response.url:
             return
         try:
-            b64_val = _sprcad_b64(await response.text())
+            text = await response.text()
+        except Exception as exc:  # noqa: BLE001 - evicted body (Network.getResponseBody)
+            log.debug("migrated_upscale.body_unreadable", error=str(exc))
+            return
+        try:
+            b64_val = _sprcad_b64(text)
         except WireFormatError as exc:
             settle_exception(found_b64, exc)
-            return
-        except Exception as exc:  # noqa: BLE001
-            log.warning("migrated_upscale.parse_error", error=str(exc))
-            settle_exception(
-                found_b64,
-                WireFormatError(
-                    detail=f"Failed to parse SPrCad response: {exc}", route="image_upscale"
-                ),
-            )
             return
         if b64_val and not found_b64.done():
             found_b64.set_result(b64_val)
 
     return on_response
+
+
+async def install_capture_hooks(page: Page, expected_type: str) -> None:
+    """Keep the blob Flow hands to its download link, and stop the link reaching Downloads.
+
+    The page reads the reply with ``fetch``, so the blob survives when Chrome evicts the
+    DevTools copy of the body (#1027). ``expected_type`` is matched against the blob MIME.
+    """
+    await page.evaluate(
+        """(expected) => {
+            window._gflowCapturedBase64 = null;
+            window._capturing = true;
+            window._gflowOrigCreateObjectURL = URL.createObjectURL;
+            window._gflowOrigAnchorClick = HTMLAnchorElement.prototype.click;
+
+            URL.createObjectURL = function(blob) {
+                if (window._capturing && blob && blob.size > 1000) {
+                    const mime = (blob.type || '').toLowerCase();
+                    if (mime.includes(expected) || (expected === 'video' && mime.includes('mp4'))) {
+                        const reader = new FileReader();
+                        reader.onloadend = function() {
+                            if (!window._capturing) return;  // a late read from a finished run
+                            window._gflowCapturedBase64 = reader.result.split(',')[1];
+                        };
+                        reader.readAsDataURL(blob);
+                    }
+                }
+                return window._gflowOrigCreateObjectURL.call(URL, blob);
+            };
+
+            HTMLAnchorElement.prototype.click = function() {};
+        }""",
+        expected_type,
+    )
+
+
+async def restore_capture_hooks(page: Page) -> None:
+    try:
+        await page.evaluate("""() => {
+            window._capturing = false;
+            delete window._gflowCapturedBase64;
+            if (window._gflowOrigCreateObjectURL) {
+                URL.createObjectURL = window._gflowOrigCreateObjectURL;
+                delete window._gflowOrigCreateObjectURL;
+            }
+            if (window._gflowOrigAnchorClick) {
+                HTMLAnchorElement.prototype.click = window._gflowOrigAnchorClick;
+                delete window._gflowOrigAnchorClick;
+            }
+        }""")
+    except Exception:  # noqa: BLE001 - best-effort restore on a page that may be gone
+        pass
+
+
+async def _await_image(page: Page, found_b64: asyncio.Future[str], timeout_s: float) -> str:
+    """The ``SPrCad`` reply's image, or the page's blob of it when Chrome lost the body."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while loop.time() < deadline:
+        if found_b64.done():
+            return await found_b64  # re-raises an SPrCad refusal
+        captured: str | None = await page.evaluate("() => window._gflowCapturedBase64")
+        if captured:
+            return captured
+        await asyncio.sleep(min(0.5, max(deadline - loop.time(), 0)))
+    raise TransportTimeoutError(
+        detail=f"Timed out after {timeout_s}s waiting for {UPSCALE_RPCID} response from Flow",
+        route="image_upscale",
+    )
 
 
 def settle_exception(future: asyncio.Future[Any], exc: BaseException) -> None:
@@ -252,33 +321,16 @@ async def upscale_image_migrated(
     on_response = _sprcad_listener(found_b64)
     page.on("response", on_response)
     try:
-        # Override anchor click and preserve original to restore later
-        await page.evaluate("""() => {
-            window._origAnchorClick = HTMLAnchorElement.prototype.click;
-            HTMLAnchorElement.prototype.click = function() {};
-        }""")
+        await install_capture_hooks(page, "image")
         await btn_target.click()
-
-        try:
-            b64_data = await asyncio.wait_for(found_b64, timeout=timeout_s)
-        except TimeoutError as exc:
-            raise TransportTimeoutError(
-                detail=(
-                    f"Timed out after {timeout_s}s waiting for {UPSCALE_RPCID} response from Flow"
-                ),
-                route="image_upscale",
-            ) from exc
+        b64_data = await _await_image(page, found_b64, timeout_s)
     finally:
         page.remove_listener("response", on_response)
-        try:
-            await page.evaluate("""() => {
-                if (window._origAnchorClick) {
-                    HTMLAnchorElement.prototype.click = window._origAnchorClick;
-                    delete window._origAnchorClick;
-                }
-            }""")
-        except Exception:  # noqa: BLE001
-            pass
+        if not found_b64.done():
+            found_b64.cancel()
+        elif not found_b64.cancelled():
+            found_b64.exception()  # mark retrieved: a late refusal after a capture is moot
+        await restore_capture_hooks(page)
 
     try:
         image_bytes = base64.b64decode(b64_data)
