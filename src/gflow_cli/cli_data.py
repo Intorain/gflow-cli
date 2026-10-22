@@ -21,7 +21,7 @@ from rich.text import Text
 from gflow_cli import json_output, profile_store
 from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
 from gflow_cli.api import routes
-from gflow_cli.config import get_settings
+from gflow_cli.config import LogLevel, get_settings
 from gflow_cli.data.queries import (
     ImageRow,
     OperationErrorRow,
@@ -675,13 +675,16 @@ def errors_prune_cmd(profile: str | None, older_than: str, dry_run: bool) -> Non
 # ---------------------------------------------------------------------------
 
 
-def _logs_emit_json() -> bool:
-    """True when structlog renders JSON on stderr (mirrors
-    ``observability.configure_logging``'s AUTO resolution: TEXT on a stderr
-    TTY, JSON otherwise). Gates the human progress echo — under TEXT logs the
-    per-project ``sync.project_started`` events already narrate progress, and
-    a second unconditional channel would break the single-channel rule."""
-    return resolves_to_json(get_settings().log_format)
+def _logs_narrate_progress() -> bool:
+    """True when the log stream itself narrates sync progress: TEXT logs (a stderr
+    TTY under AUTO) at INFO or DEBUG, where the per-project ``sync.project_started``
+    events show. Gates the human progress echo, so there is exactly one channel.
+    Since #1041 the default level is WARNING, which hides those events."""
+    settings = get_settings()
+    return not resolves_to_json(settings.log_format) and settings.log_level in (
+        LogLevel.DEBUG,
+        LogLevel.INFO,
+    )
 
 
 def _sync_profile_name(profile: str | None) -> str:
@@ -793,7 +796,7 @@ async def _run_data_sync(
     ensure_prompts_stored(settings)
     profile_name = _sync_profile_name(profile)
     adapter = _ThreadSafeListingClient(asyncio.get_running_loop(), profile_name)
-    on_progress = _echo_progress if _logs_emit_json() else None
+    on_progress = None if _logs_narrate_progress() else _echo_progress
     db_path = _db_path()
 
     def _sync_worker() -> Any:

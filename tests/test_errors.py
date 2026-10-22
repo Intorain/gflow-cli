@@ -341,6 +341,21 @@ def test_transport_timeout_error_exit_code():
     assert "31s" in str(err)
 
 
+def test_transport_timeout_default_text_names_no_fixed_ceiling():
+    # #1037: the page-RPC ceiling is no longer 30 s; the class text must not claim one.
+    err = TransportTimeoutError("x")
+    assert "30" not in err.remediation_hint
+    assert "30" not in (TransportTimeoutError.__doc__ or "")
+
+
+def test_an_unknown_write_outcome_is_exit_7_and_never_retryable():
+    from gflow_cli.errors import RpcResponseUnavailableError, is_retryable
+
+    err = RpcResponseUnavailableError(detail="x")
+    assert _exit_code_for(err) == 7
+    assert is_retryable(err) is False
+
+
 def test_waf_rejection_error_exit_code():
     err = WafRejectionError("HTTP 403 from aisandbox-pa")
     assert _exit_code_for(err) == 10

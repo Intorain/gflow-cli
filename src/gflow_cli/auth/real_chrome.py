@@ -21,8 +21,13 @@ from gflow_cli.errors import (
 from gflow_cli.profile_lease import ProfileLease
 
 from .base import AuthStrategy
-from .internal_chromium import login_launch_kwargs, poll_session_until_authenticated
-from .verification import FlowSessionOutcome, verify_flow_profile
+from .internal_chromium import (
+    UNVERIFIED_HINT,
+    UNVERIFIED_MESSAGE,
+    login_launch_kwargs,
+    poll_session_until_authenticated,
+)
+from .verification import verify_flow_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,33 +37,6 @@ logger = structlog.get_logger(__name__)
 _console = Console()
 
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
-
-# User-facing guidance per non-authenticated verification outcome (issue #15).
-_UNVERIFIED_MESSAGE: dict[FlowSessionOutcome, str] = {
-    FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
-        "Signed in to your Google account, but the Flow app sign-in wasn't completed."
-    ),
-    FlowSessionOutcome.NO_SESSION: "No sign-in detected.",
-    FlowSessionOutcome.VERIFICATION_ERROR: (
-        "Could not verify the Flow session — this is often a network problem."
-    ),
-    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
-        "This profile is missing its Chrome-strategy marker, so its cookies cannot be read."
-    ),
-}
-_UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
-    FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
-        "Re-run `gflow auth login` and continue until the Flow editor "
-        "(the prompt box / your projects) loads."
-    ),
-    FlowSessionOutcome.NO_SESSION: (
-        "Re-run `gflow auth login`, sign in to Google, and continue until the Flow editor loads."
-    ),
-    FlowSessionOutcome.VERIFICATION_ERROR: ("Check your connection and re-run `gflow auth login`."),
-    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
-        "Re-run `gflow auth login --browser chrome` to rewrite the profile marker."
-    ),
-}
 
 
 def _validate_profile_dir(profile_dir: Path, settings: Settings) -> None:
@@ -75,7 +53,9 @@ def _validate_profile_dir(profile_dir: Path, settings: Settings) -> None:
         ) from None
 
 
-def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> list[str]:
+def _build_chrome_args(
+    chrome_exe: str, profile_dir: Path, headless: bool, proxy: str | None = None
+) -> list[str]:
     """Build the Chrome command-line argument list for passive-capture login."""
     args = [
         chrome_exe,
@@ -86,6 +66,8 @@ def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> li
         "--password-store=basic",
         # No --remote-debugging-port: zero automation surface.
     ]
+    if proxy:
+        args.append(f"--proxy-server={proxy}")
     if headless:
         args.append("--headless=new")
     # Open Flow directly (ONCE) so the user lands on the sign-in / app surface
@@ -332,7 +314,12 @@ class RealChromeStrategy(AuthStrategy):
         async with ProfileLease(profile_dir), async_playwright() as pw:
             try:
                 ctx = await pw.chromium.launch_persistent_context(
-                    **login_launch_kwargs(profile_dir, headless, channel="chrome"),
+                    **login_launch_kwargs(
+                        profile_dir,
+                        headless,
+                        channel="chrome",
+                        proxy=get_settings().browser_proxy,
+                    ),
                 )
             except Exception as exc:
                 logger.warning(
@@ -428,7 +415,9 @@ class RealChromeStrategy(AuthStrategy):
                 msg,
             )
 
-        chrome_args = _build_chrome_args(chrome_exe, profile_dir, headless)
+        chrome_args = _build_chrome_args(
+            chrome_exe, profile_dir, headless, get_settings().browser_proxy
+        )
 
         # Own the profile while passive-capture Chrome runs (D3). The lease
         # scope is ONLY the running browser: it is released before
@@ -512,6 +501,6 @@ class RealChromeStrategy(AuthStrategy):
                 outcome=status.outcome.value,
             )
             raise AuthMissingError(
-                _UNVERIFIED_MESSAGE[status.outcome],
-                remediation_hint=_UNVERIFIED_HINT[status.outcome],
+                UNVERIFIED_MESSAGE[status.outcome],
+                remediation_hint=UNVERIFIED_HINT[status.outcome],
             )

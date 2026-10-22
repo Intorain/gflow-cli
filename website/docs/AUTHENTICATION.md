@@ -146,11 +146,13 @@ gflow auth login --profile work    # named profile (creates if missing)
 gflow auth login --browser chrome  # force the chrome strategy (real Chrome + its profile marker)
 ```
 
-> **Use `--browser chrome` for now.** Since 2026-10-22 labs.google's session URL answers HTTP
-> 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)). A real-Chrome login is
-> verified against Google's account page instead; a bundled-Chromium login (`--browser
-> internal`, or `auto` on a machine without Chrome) has no such check yet, so it waits until
-> its timeout ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)).
+> **Prefer `--browser chrome`.** Since 2026-10-22 labs.google's session URL answers HTTP
+> 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so every login is
+> verified against Google's account page with the profile's saved cookies. A
+> bundled-Chromium login (`--browser internal`, or `auto` on a machine without Chrome) runs
+> that check too ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)). It is verified
+> on Windows; on macOS it is expected to fail (not measured), and generation needs a
+> chrome-strategy profile.
 
 Re-running this command refreshes an expired session: it reuses the existing profile dir,
 so you typically just have to click "Continue as <you>" on the Google account chooser.
@@ -246,6 +248,12 @@ anyway, `gflow auth login` falls back to the earlier **Passive Capture** flow: C
 launched as a plain process with no automation flags and no debugging port, where you close
 the window once the Flow editor has loaded and `gflow` extracts the verified session from the
 profile. There is no flag and no prompt for this — the fallback simply happens.
+
+**Behind a proxy.** Set [`GFLOW_CLI_BROWSER_PROXY`](CONFIGURATION.md#gflow_cli_browser_proxy)
+before `gflow auth login`, so you sign in from the same IP you will generate from. Both
+login paths use it, including the Passive Capture fallback (as Chrome's
+`--proxy-server` switch). Use a proxy without credentials, such as a local Clash on
+`http://127.0.0.1:7897`.
 
 **Privacy guard:** The `chrome` strategy strictly refuses to use any profile directory
 outside `GFLOW_CLI_HOME`. This protects your primary system Chrome profile from

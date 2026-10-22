@@ -23,9 +23,8 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from structlog.testing import capture_logs
 
-from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
+from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE, UNVERIFIED_HINT
 from gflow_cli.auth.real_chrome import (
-    _UNVERIFIED_HINT,
     GEMINI_URL,
     RealChromeStrategy,
     _await_chrome_close,
@@ -34,6 +33,7 @@ from gflow_cli.auth.real_chrome import (
 )
 from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
 from gflow_cli.errors import AuthLoginTimeoutError
+from tests.fixtures.settings_mock import NO_PROXY
 
 AUTHENTICATED_BODY = '{"user": {"email": "test@example.com"}}'
 
@@ -214,7 +214,7 @@ async def test_login_cancellation_releases_lease_and_reaps_chrome(
     proc.kill = MagicMock()
 
     with (
-        patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+        patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
         # This guard covers the RETAINED subprocess path — force it.
         patch(
             "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
@@ -268,7 +268,7 @@ class TestPlaywrightAutoClose:
         subprocess_exec = AsyncMock()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -313,7 +313,7 @@ class TestPlaywrightAutoClose:
         proc.kill = MagicMock()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=False,
@@ -368,7 +368,7 @@ class TestPlaywrightAutoClose:
         )
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -410,7 +410,7 @@ class TestPlaywrightAutoClose:
         proc.kill = MagicMock()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -452,7 +452,7 @@ class TestPlaywrightAutoClose:
         proc.kill = MagicMock()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -491,7 +491,7 @@ class TestPlaywrightAutoClose:
         proc.kill = MagicMock()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -538,7 +538,7 @@ class TestPlaywrightAutoClose:
         )
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -579,7 +579,7 @@ class TestPlaywrightAutoClose:
         )
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -611,7 +611,7 @@ class TestPlaywrightAutoClose:
         ap, _pw, ctx = _build_fake_playwright(session_body="{}")
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -645,7 +645,7 @@ class TestPlaywrightAutoClose:
         verify = AsyncMock(return_value=_authenticated_status())
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -674,7 +674,7 @@ class TestPlaywrightAutoClose:
         ap, _pw, _ctx = _build_fake_playwright(session_body="{}", order=order)
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -717,7 +717,7 @@ class TestPlaywrightAutoClose:
         ap, _pw, _ctx = _build_fake_playwright(order=order, on_poll=_block)
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -745,7 +745,7 @@ class TestPlaywrightAutoClose:
         ap, _pw, _ctx = _build_fake_playwright(webdriver=True)
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -785,7 +785,7 @@ class TestPlaywrightAutoClose:
             page.url = "https://labs.google/fx/tools/flow"
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
                 return_value=True,
@@ -832,4 +832,4 @@ def test_login_instructions_say_gflow_closes_chrome(capsys: pytest.CaptureFixtur
 
 
 def test_google_session_only_hint_drops_close_chrome() -> None:
-    assert "before closing Chrome" not in _UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]
+    assert "before closing Chrome" not in UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]

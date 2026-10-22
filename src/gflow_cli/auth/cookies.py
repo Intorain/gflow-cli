@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from gflow_cli.browser_manager import channel_for_profile
+from gflow_cli.browser_manager import browser_proxy_kwargs, channel_for_profile
+from gflow_cli.config import get_settings
 from gflow_cli.errors import SecurityError
 from gflow_cli.paths import get_cookies_path
 from gflow_cli.profile_lease import ProfileLease
@@ -159,6 +160,7 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
             channel=channel,
             headless=True,
             args=["--password-store=basic"],
+            **browser_proxy_kwargs(get_settings().browser_proxy),
         )
         try:
             all_cookies = await ctx.cookies()

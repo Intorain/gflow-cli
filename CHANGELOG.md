@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.88.0] — 2026-10-22
+
+### Added
+
+- **`GFLOW_CLI_BROWSER_PROXY` routes the browser through a proxy**
+  ([#1036](https://github.com/ffroliva/gflow-cli/issues/1036), reported by @error-Sench).
+  On a network where Google is reachable only through a local proxy (Clash on
+  `127.0.0.1:7897`, say), gflow's HTTP calls followed `HTTPS_PROXY` but the browser it
+  launches did not, so every page step timed out. The new setting takes
+  `http://`, `https://` or `socks5://host:port` and applies to every browser launch:
+  generation over the CLI and MCP, `auth login`, `auth renew` and the `auth status`
+  check. Opt-in: unset changes nothing, and it is never derived from `HTTPS_PROXY`. A bad
+  value fails at startup (exit 11), and so do proxy credentials (`user:pass@`): measured,
+  Flow never loads through Playwright's proxy authentication, so a local client such as
+  Clash should hold them. A dead proxy stops a generation run at its first page load with
+  a hint naming the setting (exit 11). `gflow doctor` reports the proxy, and credentials
+  inside any URL are now redacted from error details.
+  `docs/ACCOUNT_SAFETY.md` now says: no IP rotation, no proxy unless you set one, and sign
+  in through the proxy you generate through.
+
+### Fixed
+
+- **A project create on a slow link no longer fails while Flow makes the project, and
+  never invites the retry that duplicates it**
+  ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)). On flow.google.com a create
+  whose reply took over 30 s (measured: 40 s through a slow proxy) ended as exit 9
+  `TransportTimeoutError`, flagged retryable, while Flow went on to create the project, so
+  a retry made a second one. The create and rename replies now wait up to 120 s. Selector
+  waits stay at 30 s, so a moved frontend still fails fast. If the reply is still late or
+  lost, gflow takes the id from Flow's navigation to the new project and checks it. If it
+  cannot prove the outcome, it now ends with exit 7 (`RpcResponseUnavailableError`,
+  `retryable: false` in `--json` and on the MCP queue) and tells you to look for the
+  project and pass `--project <id>`, instead of a retryable timeout. A rename whose reply
+  is lost is settled by reading the saved title back. Builds on #992's lost-body recovery.
+
+- **Commands no longer print about ten info log lines before their result, and
+  `GFLOW_CLI_LOG_LEVEL` works** ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
+  Every command logged at `INFO` to stderr regardless of `GFLOW_CLI_LOG_LEVEL`, which was
+  documented but read by nothing. The default is now `WARNING`, so a command prints its
+  result plus warnings and errors. `GFLOW_CLI_LOG_LEVEL=INFO` restores the old output, and
+  `-v` still shows everything. A long-running `gflow mcp run` / `gflow serve` now also logs
+  only warnings by default (uvicorn's own startup and access lines under `serve` are
+  separate); set `INFO` there to keep progress events. `gflow data sync` now echoes its
+  per-project progress itself unless INFO text logs already narrate it. `--json` stdout is
+  unchanged (it was already only the result).
+- **A generated image whose download fails is no longer lost**
+  ([#1035](https://github.com/ffroliva/gflow-cli/issues/1035), reported by @error-Sench).
+  Flow generated the image and spent the quota, then a failed local write (for example an
+  `--out` directory gflow cannot write to) left only a FAILED row with no project and no
+  asset, and the media id went with the traceback. `image t2i`, `image i2i`, `image batch`,
+  `gflow run` and the MCP `gflow_generate_image` tool now keep the media id in the catalog,
+  with no local copy, under one FAILED operation in its project. `image t2i` and `image i2i`
+  also print the media id(s) and the project URL on stderr; `image batch` and `gflow run`
+  only log them (the row is marked failed in their summary). The MCP failed reply carries
+  `flow_media_id` and `flow_project_id`. Exit codes are unchanged (a write refused by the OS
+  is still exit 1). A download interrupted with Ctrl-C leaves the operation STARTED, which
+  `gflow doctor` reports as stuck after 24 h. `gflow data download` stays video-only, so the
+  image is recovered from the Flow project.
+
+- **`gflow auth login --browser internal` no longer waits until its timeout**
+  ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)). With labs.google's session
+  URL answering 410 (#1023), a bundled-Chromium login (`--browser internal`, or
+  `--browser auto` on a machine without Chrome) never saw a signed-in session and waited
+  until its timeout. It now ends the wait once the flow.google.com session cookies appear,
+  then verifies the saved profile with the same server-attested check `--browser chrome`
+  and `auth status` use, so a sign-in that did not complete says why instead of timing
+  out. Generation still needs a `--browser chrome` profile. Verified live on Windows
+  (2026-10-22: a fresh bundled-Chromium sign-in finished on its own and `auth status`
+  reported the session verified). Not measured on macOS, where the saved-cookie read is
+  expected to fail; the login then ends with "re-run with `--browser chrome`".
+- **flow.google.com: a write whose reply Chrome lost is read back, not called a failure**
+  ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009), PR
+  [#992](https://github.com/ffroliva/gflow-cli/pull/992) by @L1meSn0w). Chrome sometimes
+  cannot hand over a reply body (`Network.getResponseBody: No data found`, 2 of 45 real
+  uploads in our spike) although Flow saved the write. A local upload was reported as a
+  rejected file, and a project create or rename as a timeout. gflow now opens the project
+  in a second tab and checks it: the new project's id from the page it navigated to, the
+  saved title, or exactly one tile with the run's unique file name and a media id. Nothing
+  is submitted twice. If that check cannot prove the outcome, the command exits 7 with
+  `RpcResponseUnavailableError`, which is not retryable. Renaming a project to the title it
+  already has no longer waits for a reply Flow never sends.
+
+### Changed
+
+- **A lost upload reply now exits 7 (`RpcResponseUnavailableError`) instead of 27**
+  ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)). Exit 27 still means Flow
+  answered and refused the file. Exit 7 here means the outcome is unknown: the upload may
+  have saved, so check the project before re-running. Scripts that branch on 27 for a lost
+  upload should branch on 7.
+
+### Removed
+
+- **`GFLOW_CLI_TIMEOUT_SECONDS`** ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)).
+  It was documented as a per-request HTTP timeout and elsewhere as a chain link ceiling, but
+  nothing read it. An `.env` file or environment that still sets it keeps loading; the
+  value is ignored, as it always was.
+
 ## [0.87.1] — 2026-10-22
 
 ### Security
@@ -6308,7 +6405,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.88.0...HEAD
+[0.88.0]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...v0.88.0
 [0.87.1]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...v0.87.1
 [0.87.0]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0

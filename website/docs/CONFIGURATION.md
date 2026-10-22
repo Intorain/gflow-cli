@@ -250,12 +250,6 @@ Both generate tools are gated, not just video: image generation is only *empiric
 GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 ```
 
-### `GFLOW_CLI_TIMEOUT_SECONDS`
-
-**What:** Per-request HTTP timeout. Veo videos can take 60–180 s each.
-**Default:** `600`
-**Note:** This is a single-request ceiling; the *batch* timeout you experience is sum of all per-clip waits.
-
 ### `GFLOW_CLI_JITTER_RANGE`
 
 **What:** Anti-bot pause between prompt submissions in multi-prompt image runs (`gflow image batch`, `gflow image t2i --prompts-file` / `--stdin` / multiple positional prompts, and `gflow run` image batches). Spaces out the *submission clicks* only — generations still run in parallel inside Flow.
@@ -267,16 +261,19 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 
 ### `GFLOW_CLI_LOG_LEVEL`
 
-**What:** Logging verbosity.
+**What:** Logging verbosity. Logs go to stderr; stdout carries only the command's output.
 **Values:** `DEBUG` | `INFO` | `WARNING` | `ERROR`
-**Default:** `INFO`
+**Default:** `WARNING` — a command prints its result plus any warnings and errors. Set `INFO`
+to see progress events (engine, cookies, locale, page setup), for example on a long-running
+`gflow mcp run` / `gflow serve`.
 **CLI override:** `-v` / `--verbose` flag flips to `DEBUG`.
+Until the #1041 fix this setting was ignored and every command logged at `INFO` ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
 
 ### `GFLOW_CLI_LOG_FORMAT`
 
 **What:** Output format for log lines.
 **Values:**
-- `auto` (default) — text on TTY, JSON when stdout is piped/redirected
+- `auto` (default) — text when stderr is a terminal, JSON when stderr is piped/redirected
 - `text` — always pretty (Rich-styled, colours)
 - `json` — always machine-readable (one JSON object per line)
 
@@ -398,6 +395,49 @@ Linux, or for runs whose polling lasts longer than about five minutes.
 Measurement script: `scripts/dev/spike_offscreen_window.py`.
 
 **Malformed values** (`100`, `1,2,3`, `a,b`) fail at startup with a validation error.
+
+### `GFLOW_CLI_BROWSER_PROXY`
+
+**What:** A proxy for every browser gflow launches: generation (CLI and MCP),
+`gflow auth login`, `auth renew` and the session check behind `auth status`
+([#1036](https://github.com/ffroliva/gflow-cli/issues/1036)).
+**Values:** `http://host:port` | `https://host:port` | `socks5://host:port`; the port is
+required, and credentials (`user:pass@`) are refused, see below
+**Default:** unset. The browser then connects as it always has: on Windows that means
+through the system proxy (Settings → Network → Proxy), if one is on.
+
+Use it when Google is reachable only through a proxy, for example a local Clash or
+v2ray client on `http://127.0.0.1:7897` with its *System Proxy* switch off.
+
+**Two proxies, one exit.** gflow's own HTTP calls (httpx, the LLM client) follow
+`HTTPS_PROXY`; the browser follows this setting and ignores `HTTPS_PROXY` (Chromium reads
+proxy env vars only on Linux). gflow never copies one into the other. Point both at the
+same proxy so Google sees one IP per session, and sign in through it. See
+[ACCOUNT_SAFETY](ACCOUNT_SAFETY.md#what-it-deliberately-does-not-do).
+
+| Situation | What happens |
+|---|---|
+| unset | no change from earlier versions |
+| set | every browser launch routes through it; `gflow doctor` shows it |
+| credentials (`user:pass@`), a missing host or port, a path or an unknown scheme | refused at startup, exit 11, naming the setting and never repeating the value |
+| the proxy is down or refuses the tunnel | a generation run stops at its first page load, exit 11, with a hint naming this setting. `auth status` and `auth renew` report an unverified session instead (the usual "check your connection" wording), so check the proxy first |
+
+**Why no credentials.** Through a proxy that asks for a password, the Flow page never
+finishes loading: measured 2026-10-22 on Playwright 1.61 with bundled Chromium and
+Chrome alike, the labs → flow.google.com navigation timed out at 45 s, while the same
+proxy without a password loaded it in about a second (and plain sites loaded either way).
+Run your proxy client locally and let it hold the upstream credentials; that is how
+Clash and v2ray work by default. `tests/e2e/test_browser_proxy_e2e.py` re-measures this,
+so the restriction can be lifted once Playwright handles it.
+
+**Long-running servers** (`gflow mcp run`, `gflow serve`) read it once at start; restart
+them after changing it. For MCP, set it in `$GFLOW_CLI_HOME/.env` or the client's `env`
+block, since a client does not load a `.env` from your shell's directory
+([MCP setup](MCP.md#4-setup-instructions)).
+
+**Not supported:** a bypass list (Chromium already sends loopback addresses direct),
+per-command `--proxy` flags (the setting covers one-off runs:
+`GFLOW_CLI_BROWSER_PROXY=... gflow ...`), and the opt-in experimental transports.
 
 ### `GFLOW_CLI_BROWSER_ENGINE`
 
@@ -534,10 +574,9 @@ For images, `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png` — file pat
 `gflow video chain` (last-frame I2V chaining — see
 [USAGE § gflow video chain](USAGE.md#gflow-video-chain)) is configured entirely
 by command-line flags; it adds **no new environment variables**. It reuses
-`GFLOW_CLI_OUTPUT_DIR` (default output root), `GFLOW_CLI_PROFILE`,
-`GFLOW_CLI_DB_PATH` (chain links are recorded for `--resume-from`), and
-`GFLOW_CLI_TIMEOUT_SECONDS` (per-link generation ceiling — the chain waits for
-each link in turn, so total wallclock is the sum of all link waits).
+`GFLOW_CLI_OUTPUT_DIR` (default output root), `GFLOW_CLI_PROFILE`
+and `GFLOW_CLI_DB_PATH` (chain links are recorded for `--resume-from`). The chain
+waits for each link in turn, so total wallclock is the sum of all link waits.
 
 | Flag | Default | Notes |
 |---|---|---|
@@ -601,12 +640,10 @@ gflow image t2i "product photo on a white sweep"
 
 See [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md) for MinIO and GCS examples.
 
-### "I'm running in CI — I want JSON logs and a strict timeout"
+### "I'm running in CI — I want JSON logs"
 
 ```bash
-GFLOW_CLI_LOG_FORMAT=json \
-GFLOW_CLI_TIMEOUT_SECONDS=300 \
-gflow image batch ./manifest.tsv
+GFLOW_CLI_LOG_FORMAT=json gflow image batch ./manifest.tsv
 ```
 
 ### "I want to test against the official Veo SDK"
@@ -631,10 +668,10 @@ gflow image t2i "test idea" --profile experiments
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ValidationError: GFLOW_CLI_TIMEOUT_SECONDS must be a positive integer` | Bad `.env` value | Set to a number ≥ 1 |
 | `FileNotFoundError: $GFLOW_CLI_HOME/profile_default not found` | First run, no auth yet | `gflow auth login` |
 | `AuthExpiredError` | Cookies expired or revoked | `gflow auth login --profile <name>` |
 | A run stops on an account chooser, consent or verification screen (`FlowAccountChooserError`, exit 38) | Google wants a person to answer that screen | `gflow auth login --profile <name>` and clear it there; the login window is always visible. Making the generation window visible does not help: the run gives up within 30 s. See [`GFLOW_CLI_BROWSER_WINDOW_POSITION`](#gflow_cli_browser_window_position) |
+| Every browser step times out, while `curl` and `HTTPS_PROXY` work | Google is reachable only through a proxy, and the browser ignores `HTTPS_PROXY` | Set [`GFLOW_CLI_BROWSER_PROXY`](#gflow_cli_browser_proxy) to the same proxy, then `gflow auth renew` |
 | `ProfileAccessError` (exit code 11) | Chrome cannot write the profile directory (Windows access denied) | Grant write access to the whole profile directory, or use a writable profile. See [Profile-directory permissions](#profile-directory-permissions-at-browser-launch) |
 | Output files don't appear where I expect | Flag > env > .env > default — check actual resolved path | `gflow image t2i ... --verbose` shows the resolved output path |
 | `ProfileLockedError` (exit code 11) | Two concurrent calls against the same profile — the cross-process `ProfileLease` fails fast (never waits) on same-profile contention, whether the second holder is another `gflow` process, the `gflow serve` daemon, or an MCP call | Wait for the first call to finish, or use `--profile other` — different profiles run fully in parallel, each with its own lease |

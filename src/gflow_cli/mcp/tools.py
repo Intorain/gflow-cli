@@ -419,12 +419,22 @@ async def _run_generation_task(
                     status=completed_task.status,
                     error=completed_task.error,
                 )
-                return {
+                failed: dict[str, Any] = {
                     "status": "failed",
                     "task_id": task_id,
                     "error": completed_task.error
                     or {"detail": f"Task ended in unexpected status {completed_task.status!r}"},
                 }
+                # #1035/#895: media Flow generated before the failure (a lost
+                # download) is still reachable by these ids.
+                if completed_task.flow_media_id:
+                    failed["flow_media_id"] = completed_task.flow_media_id
+                    asset = DataRepository(store).get_asset_by_flow_media_id(
+                        profile, completed_task.flow_media_id
+                    )
+                    if asset is not None:
+                        failed["flow_project_id"] = asset.flow_project_id
+                return failed
 
             # Resolve local file paths from the asset catalog.
             file_paths: list[str] = []
@@ -855,7 +865,8 @@ async def gflow_generate_image(
         'seed' is the catalogued seed of 'flow_media_id': the seed Flow chose on the
         classic image paths; 0 on the agentic / agent-only arms, which observe none;
         null when none was recorded. It cannot be requested.
-        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
+        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict; when
+        Flow made media before the failure, 'flow_media_id' and 'flow_project_id' name it.
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
@@ -1131,7 +1142,8 @@ async def gflow_generate_video(  # NOSONAR
         'seed' is the catalogued seed of 'flow_media_id' — for video, one a CLI
         ``--seed`` recorded (this tool takes none), never one observed from Flow; null
         when none was recorded.
-        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
+        On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict; when
+        Flow made media before the failure, 'flow_media_id' and 'flow_project_id' name it.
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err

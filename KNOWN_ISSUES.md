@@ -843,6 +843,18 @@ The contrasting message, **`no upload request ever left the page`**, means somet
 
 **What is known.** A healthy upload window issues **4** POSTs; a failing one issued **24** — the full project-load rpcid inventory, firing ~2.6 s after the request went out, which is just before the ~2.8 s successful uploads take to answer. That has the shape of the page re-initialising underneath the in-flight upload, but no navigation event was captured, so the cause is unconfirmed. Measured 2026-09-08, 1 failure in 4 runs on one funded account — enough for "intermittent", not enough for a rate.
 
+### Chrome loses a reply body although Flow saved the write (migrated host)
+
+- **Status:** Mitigated · **Severity:** Medium (intermittent; the write usually saved) · **Affects:** the migrated `flow.google.com` host, local uploads (`--initial-frame`, `--ref`, `i2i` files), project create and rename · **Tracked:** [#1009](https://github.com/ffroliva/gflow-cli/issues/1009)
+
+Distinct from #719 above, where no reply arrives at all. Here the reply arrives, but Chrome cannot hand its body over: `Network.getResponseBody: No data found for resource with given identifier`. Our spike saw it on 2 of 45 real `maseQ` uploads, and a fresh reload found both uploads saved ([spike](docs/superpowers/spikes/2026-10-20-migrated-upload-reply-body-eviction.md)). Before the fix, gflow reported the upload as a refused file (exit 27).
+
+A project create or rename whose reply is late, not lost, takes the same path: on a slow link a 40 s create used to end as a retryable exit 9 while Flow made the project, so a retry made a second one ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)). The reply wait is now 120 s, and past it gflow reads the new project's id from Flow's navigation to it.
+
+**Mitigation:** gflow now opens the project in a second tab and reads the outcome back: the new project's id, the saved title, or exactly one tile with the run's unique file name and a media id. Nothing is submitted twice. The readback can take up to about two minutes on a slow page.
+
+**If it cannot confirm the outcome**, the command exits **7** with `RpcResponseUnavailableError` (`retryable: false`). The write may have saved. Open the project on flow.google.com and look for the title or the file name in the error before you re-run, or you may get a duplicate project or upload. `gflow run` does not re-upload a reference file after this error in the same run.
+
 ### Flow's release-notes ("What's new") changelog popup blocks first-run UI automation
 
 - **Status:** Mitigated · **Severity:** Medium · **Tracked:** [#26](https://github.com/ffroliva/gflow-cli/issues/26)
@@ -1521,7 +1533,7 @@ here, because the run gives up within 30 s (see [CONFIGURATION](docs/CONFIGURATI
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
-- **Status:** Mitigated for real-Chrome profiles and for `gflow credits` (#795); **open** for logins with `--browser internal` · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+- **Status:** Mitigated for real-Chrome profiles and for `gflow credits` (#795); `--browser internal` logins fixed and live-verified on Windows (#1026) · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 `gflow auth login` verifies a real Flow sign-in by calling
 `https://labs.google/fx/api/auth/session` (see `src/gflow_cli/auth/verification.py`)
@@ -1541,9 +1553,12 @@ read as "no labs session": a profile without Google cookies is `NO_SESSION`, and
 them is checked by the server-attested migrated-host probe (#791), which needs the Google
 SSO and flow.google.com session cookies, then reads `myaccount.google.com`. **Still open:**
 some access-token consumers that read the same URL are not ported. `gflow credits` is
-(#795: it reads flow.google.com's own balance reply). And a login with `--browser internal` (bundled
-Chromium, also what `--browser auto` picks when Chrome is missing) cannot finish: it has no
-on-disk check to hand the verdict to, so it waits until its timeout. Use `--browser chrome`.
+(#795: it reads flow.google.com's own balance reply). A login with `--browser internal` (bundled
+Chromium, also what `--browser auto` picks when Chrome is missing) runs the same on-disk
+check after the window closes ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026));
+before that fix it waited until its timeout. A fresh bundled-Chromium sign-in passed that check
+on Windows (2026-10-22). On macOS the cookie read is expected to fail and is not measured, so
+use `--browser chrome` there.
 
 Since PR #168 the production entry point is `verify_flow_profile`, which reads
 the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`

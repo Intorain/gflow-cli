@@ -7,10 +7,12 @@ import structlog
 from playwright.async_api import Error as PlaywrightError
 from rich.console import Console
 
+from gflow_cli.browser_manager import browser_proxy_kwargs
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthLoginTimeoutError,
+    AuthMissingError,
     IdentityRecheckPendingError,
     SecurityError,
 )
@@ -22,6 +24,7 @@ from .verification import (
     FlowSessionOutcome,
     evaluate_session_response,
     has_migrated_app_session,
+    verify_flow_profile,
 )
 
 if TYPE_CHECKING:
@@ -43,12 +46,40 @@ POLL_INTERVAL_SECONDS = 3
 LANDING_SETTLE_SECONDS = 3.0
 _LANDING_SETTLE_STEP_SECONDS = 0.25
 
+# User-facing guidance per non-authenticated verification outcome (issue #15).
+UNVERIFIED_MESSAGE: dict[FlowSessionOutcome, str] = {
+    FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
+        "Signed in to your Google account, but the Flow app sign-in wasn't completed."
+    ),
+    FlowSessionOutcome.NO_SESSION: "No sign-in detected.",
+    FlowSessionOutcome.VERIFICATION_ERROR: (
+        "Could not verify the Flow session — this is often a network problem."
+    ),
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "This profile is missing its Chrome-strategy marker, so its cookies cannot be read."
+    ),
+}
+UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
+    FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
+        "Re-run `gflow auth login` and continue until the Flow editor "
+        "(the prompt box / your projects) loads."
+    ),
+    FlowSessionOutcome.NO_SESSION: (
+        "Re-run `gflow auth login`, sign in to Google, and continue until the Flow editor loads."
+    ),
+    FlowSessionOutcome.VERIFICATION_ERROR: ("Check your connection and re-run `gflow auth login`."),
+    FlowSessionOutcome.PROFILE_MARKER_MISSING: (
+        "Re-run `gflow auth login --browser chrome` to rewrite the profile marker."
+    ),
+}
+
 
 def login_launch_kwargs(
     profile_dir: Path,
     headless: bool,
     *,
     channel: str | None = None,
+    proxy: str | None = None,
 ) -> dict[str, Any]:
     """Launch kwargs for a browser a HUMAN signs into — shared by both strategies.
 
@@ -86,6 +117,7 @@ def login_launch_kwargs(
             # keychain, which api/client.py also depends on (#222).
             "--password-store=basic",
         ],
+        **browser_proxy_kwargs(proxy),
     }
 
 
@@ -111,12 +143,12 @@ async def poll_session_until_authenticated(
     ``raise_on_close`` — also when the browser closes before authentication is
     verified.
 
-    ``raise_on_close=False`` means "I own a fallback oracle": ``RealChromeStrategy``
-    re-checks the on-disk store with ``verify_flow_profile``. Three releases told
-    users to close the window themselves, so doing so must not turn a successful
-    login red — and, for the same reason, that caller (and only that caller) may
-    stop on the migrated-host signal below, which ends a wait without claiming
-    to have authenticated anything.
+    ``raise_on_close=False`` means "I own a fallback oracle": both login strategies
+    re-check the on-disk store with ``verify_flow_profile`` (the internal one since
+    #1026). Three releases told users to close the window themselves, so doing so
+    must not turn a successful login red — and, for the same reason, only such a
+    caller may stop on the migrated-host signal below, which ends a wait without
+    claiming to have authenticated anything.
 
     The one exception to "a close returns None": a window closed while Flow is still
     routing the account to `/about` (#902) raises ``IdentityRecheckPendingError``
@@ -393,16 +425,16 @@ class InternalChromiumStrategy(AuthStrategy):
         profile_dir.mkdir(parents=True, exist_ok=True)
         logger.info("auth_login_started", profile_dir=str(profile_dir), strategy=self.name)
 
-        user_email: str | None = None
         # Own the profile for this login context (D3). The lease is the OUTER
-        # context so it releases only after the driver stops. Contention raises
-        # ProfileLockedError before Chromium launches.
+        # context so it releases only after the driver stops — and before
+        # verify_flow_profile below, which opens its own probe context on this profile.
+        # Contention raises ProfileLockedError before Chromium launches.
         async with ProfileLease(profile_dir), async_playwright() as pw:
             # We use launch_persistent_context to ensure cookies are saved to profile_dir
             # Bundled Chromium: no channel. Everything else — the stealth set,
             # the real-window geometry — is the shared, measured configuration.
             ctx = await pw.chromium.launch_persistent_context(
-                **login_launch_kwargs(profile_dir, headless),
+                **login_launch_kwargs(profile_dir, headless, proxy=settings.browser_proxy),
             )
             try:
                 page = ctx.pages[0] if ctx.pages else await ctx.new_page()
@@ -416,21 +448,36 @@ class InternalChromiumStrategy(AuthStrategy):
                     )
 
                 # Poll until the Flow app sign-in completes; raises on timeout/rejection.
-                # `raise_on_close` defaults True here: this strategy has no
-                # on-disk fallback oracle, so a close or a stop-without-proof
-                # must stay an error rather than a quietly unverified profile.
-                session = await poll_session_until_authenticated(
+                # `raise_on_close=False` because this strategy now owns the on-disk
+                # oracle below (#1026). Since 2026-10-22 labs answers 410 to every
+                # account, so the poll can only end on the migrated-cookie stop, which
+                # is gated on this flag; with the default it waited to its deadline.
+                await poll_session_until_authenticated(
                     ctx,
                     page,
                     self._timeout_seconds,
                     self.name,
+                    raise_on_close=False,
                 )
-                user_email = session.user_email if session is not None else None
                 # Small delay to ensure state is flushed to disk
                 await asyncio.sleep(1)
 
             finally:
                 await ctx.close()
 
-        if user_email:
-            (profile_dir / ".gflow_account").write_text(user_email, encoding="utf-8")
+        # The disk is the authority, as for the chrome strategy: the #791
+        # server-attested flow.google.com check runs inside. No chrome marker —
+        # this is a bundled-Chromium profile.
+        status = await verify_flow_profile(profile_dir, source=self.name)
+        if not status.authenticated:
+            logger.warning(
+                "auth_flow_session_unverified",
+                strategy=self.name,
+                outcome=status.outcome.value,
+            )
+            raise AuthMissingError(
+                UNVERIFIED_MESSAGE[status.outcome],
+                remediation_hint=UNVERIFIED_HINT[status.outcome],
+            )
+        if status.user_email:
+            (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")

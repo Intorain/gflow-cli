@@ -964,6 +964,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # #792: set when a migrated run FAILED, so the park that would otherwise
         # run in a `finally` is deferred past FlowApiClient's incident capture.
         self._deferred_park_pending: bool = False
+        # The route the last image call took ("labs" / "migrated"): the page is
+        # parked on about:blank afterwards, so its URL no longer says (#1035).
+        self.last_image_route: str | None = None
         # Cross-process profile lease (D3). Held ONLY on the standalone-context
         # path (setup with page=None), where this transport owns the persistent
         # context. On the shared-page path the caller (FlowApiClient) owns both
@@ -1075,6 +1078,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             import os
 
             from gflow_cli.browser_manager import (
+                browser_proxy_kwargs,
                 channel_for_profile,
                 ensure_profile_engine_compatible,
                 window_position_args,
@@ -1103,6 +1107,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "--disable-dev-shm-usage",
                     *window_position_args(get_settings().browser_window_position),
                 ],
+                **browser_proxy_kwargs(get_settings().browser_proxy),
             )
             # Hide the automation flag so reCAPTCHA Enterprise doesn't score
             # the session as a bot — navigator.webdriver=true causes low-score
@@ -3165,6 +3170,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
         if route == "blocked":
             raise_if_migrated(page, at="image_flow_host_kill_switch")
+        self.last_image_route = route
         if route == "migrated":
             try:
                 result = await run_images(page, request, project_id=project_id, out_dir=out_dir)

@@ -63,6 +63,7 @@ CHECK_IDS: tuple[str, ...] = (
     "queue.stuck_processing",
     "env.deprecated_vars",
     "env.browsers_missing",
+    "env.browser_proxy",
     "auth.files_present",
 )
 
@@ -438,6 +439,22 @@ def _check_browsers_missing() -> list[Finding]:
     ]
 
 
+def _check_browser_proxy(settings: Settings) -> list[Finding]:
+    """Report GFLOW_CLI_BROWSER_PROXY (#1036): info when set, never flipping status."""
+    if not settings.browser_proxy:
+        return [
+            _finding("env.browser_proxy", "pass", "no browser proxy set (GFLOW_CLI_BROWSER_PROXY)")
+        ]
+    return [
+        _finding(
+            "env.browser_proxy",
+            "info",
+            f"browser proxy {settings.browser_proxy}",
+            "sign in, renew and generate through this same proxy, and point HTTPS_PROXY at it too",
+        )
+    ]
+
+
 def _check_auth_files_present() -> list[Finding]:
     profiles = profile_store.list_profiles()
     if not profiles:
@@ -518,6 +535,7 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
             ("queue.stuck_processing", lambda: _check_stuck_processing(_require(conn))),
             ("env.deprecated_vars", lambda: _check_deprecated_vars(settings)),
             ("env.browsers_missing", _check_browsers_missing),
+            ("env.browser_proxy", lambda: _check_browser_proxy(settings)),
             ("auth.files_present", _check_auth_files_present),
         )
         findings: list[Finding] = []

@@ -73,7 +73,14 @@ auto-retry, because retrying only inflates per-profile heat.**
 
 ## What it deliberately does not do
 
-- **No proxy or IP rotation.** Your requests come from your connection.
+- **No IP rotation, and no proxy unless you set one.** By default your requests come from
+  your connection. [`GFLOW_CLI_BROWSER_PROXY`](CONFIGURATION.md#gflow_cli_browser_proxy)
+  routes the browser through **one** proxy you choose, for networks where Google is
+  reachable only that way. Google watches where a session comes from, so: sign in, renew
+  and generate through the **same** proxy; point `HTTPS_PROXY` at the same exit, so
+  gflow's own HTTP calls do not leave from a second IP; and remember that a shared or
+  commercial proxy IP carries other people's reputation, which can trigger "Confirm it's
+  you" checks or reCAPTCHA refusals on your account.
 - **No fingerprint spoofing**, beyond the opt-in patched engine below. No canvas
   noise, no UA lying, no timezone games.
 - **No headless "unlock".** The patchright option is explicitly *not* one.

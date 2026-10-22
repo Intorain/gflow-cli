@@ -817,7 +817,9 @@ gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan left" 
 gflow video i2v ./hero.png "Slow camera arc, soft golden light"
 ```
 
-Exit codes specific to this surface: **27** — Flow's upload endpoint rejected a
+Exit codes specific to this surface: **7** — Chrome lost the upload's reply and the
+readback could not prove the upload saved (`RpcResponseUnavailableError`; check the
+project before re-running); **27** — Flow's upload endpoint rejected a
 local frame file (`MediaUploadRejectedError`; try re-encoding, e.g.
 `ffmpeg -i in.jpg -q:v 2 -map_metadata -1 out.jpg`, or reference the asset by
 UUID instead); **9** — a frame UUID could not be located in the project's media
@@ -1465,6 +1467,17 @@ bare `Unexpected error` it used to raise
 ([#895](https://github.com/ffroliva/gflow-cli/issues/895)). Re-running is safe and still
 costs nothing: each attempt asks Flow for a fresh signed link.
 
+**An image whose download fails is still recorded**
+([#1035](https://github.com/ffroliva/gflow-cli/issues/1035)). Flow generates the image,
+and spends that model's daily quota, before gflow writes it. When the write then fails
+(an `--out` directory it cannot write to, a locked file, a dropped transfer), `image t2i`,
+`image i2i`, `image batch` and `gflow run` keep the image's media id in the catalog with no
+local copy, under one FAILED operation in its project, and `t2i` / `i2i` print the media
+id(s) and the project URL on stderr (also under `--json`). The exit code is the error's own,
+unchanged: a write refused by the OS is still exit 1. To get the file, open the project in
+Flow; `gflow data list images` shows the row with `copy_count` 0. A download interrupted
+with Ctrl-C leaves that operation STARTED, which `gflow doctor` reports as stuck after 24 h.
+
 ```text
 gflow data download MEDIA_ID [--out DIR] [--profile NAME] [--json]
 
@@ -1644,7 +1657,7 @@ Options:
                         (experimental; shape may change).
 ```
 
-Ten checks run on every invocation:
+Eleven checks run on every invocation:
 
 | Check id | Detects | Suggested remediation |
 |---|---|---|
@@ -1658,6 +1671,7 @@ Ten checks run on every invocation:
 | `env.deprecated_vars` | Deprecated env vars still set (`GFLOW_CLI_PREFER_CLASSIC`, `GFLOW_CLI_FORCE_AGENT_UI`, `GEMINI_API_KEY`), or `GFLOW_CLI_DB_PATH` disagreeing with the resolved settings path | Unset the variable / switch to its successor |
 | `env.browsers_missing` | Playwright Chromium is not installed | `playwright install chromium` |
 | `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
+| `env.browser_proxy` | Reports whether `GFLOW_CLI_BROWSER_PROXY` is set (`scheme://host:port`, never credentials); informational, never changes the exit code | Use the same proxy for `HTTPS_PROXY` and for signing in ([CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_proxy)) |
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status
@@ -2114,7 +2128,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
 | `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts — including a signed-media download whose connection dropped on every attempt ([#895](https://github.com/ffroliva/gflow-cli/issues/895)) | Check connectivity — **but read the error's own `remediation_hint` first.** When a *generation* download fails this way the clip was already produced and billed: the hint names it, and `gflow data download <media_id>` recovers it for free. Re-generating pays twice |
-| `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed     | File a bug (do NOT include captured tokens or signed URLs) |
+| `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed. **Also `RpcResponseUnavailableError`** (flow.google.com): Chrome lost the reply body of a project create, rename or upload ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)), or a project create or rename got no reply within 120 s ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)), and gflow could not confirm the outcome by reading the project back | File a bug (do NOT include captured tokens or signed URLs). **For `RpcResponseUnavailableError` the write may have saved:** open the project and check its title or the uploaded file before re-running, or you may get a duplicate (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout. **If the detail says `clicking submit`, `not terminal` or `unreadable`, or `--json` shows `retryable: false`, the submit already went out ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): check the project in Flow before re-running, because a re-run bills again.** For a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |

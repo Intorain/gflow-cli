@@ -188,6 +188,17 @@ are masked**: the client sees only the exception class name
 names, or token material and never leaves the server; the full message and
 traceback go to the server-side structured log (`mcp.tool.unexpected_error`).
 
+**A failed generation task can still name its media.** When Flow generated the media and
+only the download failed (a video whose transfer dropped, #895; an image whose local write
+failed, #1035), the `status: "failed"` reply of `gflow_generate_image` /
+`gflow_generate_video` also carries `flow_media_id` and, when the catalog knows it,
+`flow_project_id`. Both keys are absent when the task failed before Flow named any media.
+With `count` > 1, `flow_media_id` is the first image's id only; every image's id is in the
+catalog (`gflow data list images`; there is no MCP twin for that listing).
+A video is then recoverable with `gflow_download_media`; an image is not (that tool is
+video-only, #877), so open the project in Flow. The catalog keeps the image's asset row,
+with no local copy, under one FAILED operation.
+
 ---
 
 ## 4. Setup Instructions
@@ -371,6 +382,13 @@ unauthenticated, which is the local single-user default.
 > surface are built as internal foundation but are **not yet wired into**
 > `gflow serve` — it currently runs the MCP/SSE server only. See the
 > [CHANGELOG](../CHANGELOG.md) for the roadmap.
+
+> **Settings reach the server through its environment, not your shell's `.env`.** An MCP
+> client starts `gflow mcp run` in a directory of its own choosing, so a `.env` beside your
+> shell is not read. Put settings such as
+> [`GFLOW_CLI_BROWSER_PROXY`](CONFIGURATION.md#gflow_cli_browser_proxy) in
+> `$GFLOW_CLI_HOME/.env` or in the client's `env` block, and restart the server after
+> changing them.
 
 > **However you register it, that server then gates your upgrades.** Every client
 > above starts a long-lived `gflow mcp run` — one per session — and on Windows it

@@ -49,6 +49,7 @@ __all__ = [
     "QueueSchemaError",
     "RateLimitError",
     "RecaptchaError",
+    "RpcResponseUnavailableError",
     "SceneConcatError",
     "SecurityError",
     "SyncPartialError",
@@ -414,6 +415,23 @@ class WireFormatError(FlowApiError):
         self.discovery = discovery or {}
 
 
+class RpcResponseUnavailableError(WireFormatError):
+    """A write was sent but its outcome was never seen: the reply body was unreadable,
+    or no reply arrived before the ceiling (#1037).
+
+    The write may already have committed; callers must recover by readback,
+    never infer failure or automatically submit the write again.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/rpc-response-unavailable"
+    title = "Flow write outcome unknown"
+    _default_remediation = (
+        "The outcome is unknown: Flow may have saved this write. Open the project on "
+        "flow.google.com and check its title or the uploaded file before re-running. "
+        "Do not resubmit blindly, or you may get a duplicate project or upload."
+    )
+
+
 class SceneConcatError(FlowApiError):
     """Raised when Flow's server-side scene concatenation job FAILS.
 
@@ -430,12 +448,12 @@ class SceneConcatError(FlowApiError):
 
 
 class TransportTimeoutError(GFlowError):
-    """Raised when a transport strategy hangs > 30s on a single API call."""
+    """Raised when a single API call or page wait exceeds its deadline (named in ``detail``)."""
 
     problem_type = "https://gflow-cli.dev/errors/transport-timeout"
     title = "Transport strategy timed out"
     _default_remediation = (
-        "A single API call exceeded the 30 s deadline. "
+        "A single API call exceeded its deadline (the detail names it). "
         "Check connectivity or reduce request complexity."
     )
 

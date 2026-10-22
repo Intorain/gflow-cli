@@ -153,11 +153,12 @@ def main(ctx: click.Context, verbose: bool) -> None:
         field = ".".join(str(p) for p in first.get("loc", ())) or "(unknown)"
         console.print(
             f"[red]{ConfigurationError.title}:[/red] "
-            f"GFLOW_CLI_{field.upper()} — {first.get('msg', 'invalid value')}"
+            f"GFLOW_CLI_{field.upper()} — "
+            f"{first.get('msg', 'invalid value').removeprefix('Value error, ')}"
         )
         console.print("[dim]Set a valid value, or unset it to use the default.[/dim]")
         sys.exit(11)
-    configure_logging(settings.log_format)
+    configure_logging(settings.log_format, settings.log_level)
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(
         cli_version=__version__,

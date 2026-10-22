@@ -30,6 +30,7 @@ from gflow_cli.data.recorder import (
     OperationRecorder,
     escalate_asset_collision,
     record_failed_operation_safe,
+    record_undownloaded_images_safe,
 )
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
@@ -40,6 +41,7 @@ from gflow_cli.errors import (
     DataStoreError,
     GFlowError,
     MediaAttributionError,
+    RpcResponseUnavailableError,
 )
 from gflow_cli.storage import cloud_info_from_path
 
@@ -554,7 +556,7 @@ async def run_one_image_prompt(
     stem = item.output_filename or f"prompt_{idx}"
     mode = OperationKind.I2I if req.refs else OperationKind.T2I
 
-    def record_failure(exc: BaseException) -> None:
+    def record_failure(exc: BaseException, flow_media_ids: list[str] | None = None) -> None:
         if profile_name is not None and profile_dir is not None:
             record_failed_operation_safe(
                 recorder,
@@ -566,6 +568,7 @@ async def run_one_image_prompt(
                 exc=exc,
                 request=req,
                 flow_project_id=project_id,
+                flow_media_ids=flow_media_ids or (),
             )
 
     try:
@@ -599,11 +602,34 @@ async def run_one_image_prompt(
         for img_idx, img in enumerate(images):
             target = output_dir / f"{stem}_{img_idx}.png"
             saved.append(await client.download_image(img, target))
-    except Exception as exc:  # noqa: BLE001 - one row's transfer must not end the run
+    except BaseException as exc:
         # The images exist in Flow; only the local copy failed. Report the row as failed
-        # but keep what Flow generated, so a `batch:N` child can still reference it.
+        # but keep what Flow generated, so a `batch:N` child can still reference it, and
+        # record it (#1035): STARTED here, turned FAILED by record_failure.
         logger.warning("batch.download_failed", index=idx, error_class=type(exc).__name__)
-        record_failure(exc)
+        started: list[str] = []
+        # shortcut: with no project_id here (or no recorder context) the ids are only in
+        # the outcome and this log line, not the catalog; record_failure writes a bare row.
+        logger.warning(
+            "batch.download_failed_ids", index=idx, flow_media_ids=[i.media_name for i in images]
+        )
+        if profile_name is not None and profile_dir is not None and project_id:
+            started = record_undownloaded_images_safe(
+                recorder,
+                logger=logger,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=ProjectInfo(project_id=project_id, title=project_title or ""),
+                project_created=project_created,
+                request=req,
+                images=images,
+                saved_paths=saved,
+                input_media_ids=[ref.name for ref in req.refs],
+                operation_kind=mode.value,
+            )
+        if not isinstance(exc, Exception):  # Ctrl-C / cancel: keep the STARTED row, stop
+            raise
+        record_failure(exc, started)
         return BatchOutcome(
             index=idx,
             prompt=item,
@@ -711,6 +737,8 @@ async def run_image_batch(
     results: dict[int, BatchOutcome] = {}
     # One upload per distinct local file per run (one run, one project).
     uploads: dict[str, ImageRef] = {}
+    # Uploads whose outcome is unknown (#1009): they may have saved, so never re-upload.
+    lost_uploads: dict[str, RpcResponseUnavailableError] = {}
     project_created = project_id is None
 
     async def image_worker(
@@ -743,10 +771,15 @@ async def run_image_batch(
             cached = uploads.get(item.ref)
             if cached is None:
                 try:
+                    if item.ref in lost_uploads:
+                        raise lost_uploads[item.ref]
                     cached = await client.upload_reference(project_id, Path(item.ref))
                 except Exception as exc:  # noqa: BLE001 - one row's upload must not end the run
                     # Like a generation failure: the row fails with the reason and the run
-                    # goes on. Not cached, so a later row naming the file retries it.
+                    # goes on. Not cached, so a later row naming the file retries it --
+                    # unless the outcome is unknown: then a retry could duplicate the asset.
+                    if isinstance(exc, RpcResponseUnavailableError):
+                        lost_uploads[item.ref] = exc
                     logger.warning(
                         "batch.reference_upload_failed",
                         index=item.index,
@@ -1099,10 +1132,10 @@ async def _download_item_images(
     item: BatchPromptItem,
     result: BatchSubmissionResult,
     output_dir: Path,
+    saved: list[Path],
 ) -> list[Path]:
-    """Download all images for one ok BatchSubmissionResult; return saved paths."""
+    """Download all images for one ok BatchSubmissionResult into ``saved``; return it."""
     stem = item.output_filename or f"prompt_{item.index}"
-    saved: list[Path] = []
     for img_idx, img in enumerate(result.images):
         target = output_dir / f"{stem}_{img_idx}.png"
         path = await client.download_image(img, target)
@@ -1176,12 +1209,41 @@ async def _process_ok_row(
     if recorder is not None and profile_name is not None:
         recorder.verify_media_attribution(profile_name=profile_name, images=result.images)
 
-    saved = await _download_item_images(
-        client=client,
-        item=item,
-        result=result,
-        output_dir=output_dir,
-    )
+    saved: list[Path] = []
+    try:
+        await _download_item_images(
+            client=client, item=item, result=result, output_dir=output_dir, saved=saved
+        )
+    except BaseException as exc:
+        # #1035: Flow generated these; only the local copy failed. Same pair of
+        # writes as the other sites: STARTED with what landed, then FAILED.
+        if recorder is not None and profile_name is not None and profile_dir is not None:
+            request = _to_request(item)
+            started = record_undownloaded_images_safe(
+                recorder,
+                logger=logger,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                project=ProjectInfo(project_id=result.project_id, title="gflow-cli image batch"),
+                request=request,
+                images=result.images,
+                saved_paths=saved,
+                operation_kind="t2i",
+            )
+            if isinstance(exc, Exception):
+                record_failed_operation_safe(
+                    recorder,
+                    logger=logger,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    command="image batch",
+                    mode=OperationKind.T2I,
+                    exc=exc,
+                    request=request,
+                    flow_project_id=result.project_id,
+                    flow_media_ids=started,
+                )
+        raise
 
     if recorder is not None and profile_name is not None and profile_dir is not None:
         _try_record_images(

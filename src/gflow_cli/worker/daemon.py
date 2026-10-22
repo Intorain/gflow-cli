@@ -18,6 +18,7 @@ from gflow_cli.data.recorder import (
     OperationRecorder,
     escalate_asset_collision,
     record_failed_operation_safe,
+    record_undownloaded_images_safe,
 )
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
@@ -242,23 +243,45 @@ class FlowWorker:
                         output_file_val = task.payload.get("output_file")
                         output_file = Path(output_file_val) if output_file_val else None
 
+                        input_media_ids = [r.name for r in req.refs] if hasattr(req, "refs") else []
                         saved_paths: list[Path] = []
-                        for i, img in enumerate(images, start=1):
-                            if output_file is not None:
-                                if len(images) == 1:
-                                    target = output_file
+                        try:
+                            for i, img in enumerate(images, start=1):
+                                if output_file is not None:
+                                    if len(images) == 1:
+                                        target = output_file
+                                    else:
+                                        target = (
+                                            output_file.parent
+                                            / f"{output_file.stem}_{i}{output_file.suffix}"
+                                        )
+                                    target.parent.mkdir(parents=True, exist_ok=True)
                                 else:
-                                    target = (
-                                        output_file.parent
-                                        / f"{output_file.stem}_{i}{output_file.suffix}"
+                                    target = image_output_path(
+                                        settings.output_dir, job_id=img.media_name, index=i
                                     )
-                                target.parent.mkdir(parents=True, exist_ok=True)
-                            else:
-                                target = image_output_path(
-                                    settings.output_dir, job_id=img.media_name, index=i
+                                saved = await client.download_image(img, target)
+                                saved_paths.append(saved)
+                        except BaseException:
+                            # #1035: Flow generated these; only the local copy failed.
+                            # The failure funnel below turns this STARTED row FAILED
+                            # and puts the first id on the task row.
+                            started_media_ids.extend(
+                                record_undownloaded_images_safe(
+                                    recorder,
+                                    logger=logger,
+                                    profile_name=self.profile_name,
+                                    profile_dir=profile_dir,
+                                    project=project,
+                                    project_created=project_created,
+                                    request=req,
+                                    images=images,
+                                    saved_paths=saved_paths,
+                                    input_media_ids=input_media_ids,
+                                    operation_kind=task.task_type,
                                 )
-                            saved = await client.download_image(img, target)
-                            saved_paths.append(saved)
+                            )
+                            raise
 
                         try:
                             recorder.record_generated_images(
@@ -269,9 +292,7 @@ class FlowWorker:
                                 request=req,
                                 images=images,
                                 saved_paths=saved_paths,
-                                input_media_ids=(
-                                    [r.name for r in req.refs] if hasattr(req, "refs") else []
-                                ),
+                                input_media_ids=input_media_ids,
                                 operation_kind=task.task_type,
                                 cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
                             )
@@ -505,6 +526,7 @@ class FlowWorker:
                     mode=op_kind,
                     exc=exc,
                     request=req,
+                    flow_project_id=checkpoint_project_id[0],
                     flow_media_ids=started_media_ids,
                 )
 
