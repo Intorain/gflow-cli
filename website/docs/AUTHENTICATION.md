@@ -146,6 +146,12 @@ gflow auth login --profile work    # named profile (creates if missing)
 gflow auth login --browser chrome  # force the chrome strategy (real Chrome + its profile marker)
 ```
 
+> **Use `--browser chrome` for now.** Since 2026-10-22 labs.google's session URL answers HTTP
+> 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)). A real-Chrome login is
+> verified against Google's account page instead; a bundled-Chromium login (`--browser
+> internal`, or `auto` on a machine without Chrome) has no such check yet, so it waits until
+> its timeout ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)).
+
 Re-running this command refreshes an expired session: it reuses the existing profile dir,
 so you typically just have to click "Continue as <you>" on the Google account chooser.
 
@@ -461,7 +467,8 @@ Two cases look the same at that point and are fixed differently:
   `/about` page). Re-running `gflow auth login` refreshes the cookies in place, and no other state
   is lost.
 
-> **Renewal signs in headlessly.** The labs re-sign-in runs Google's OAuth hop in a headless
+> **Renewal signs in headlessly** (until 2026-10-22; labs' session URL now answers 410, so
+> this step finds nothing to renew). The labs re-sign-in runs Google's OAuth hop in a headless
 > browser, which identifies itself as `HeadlessChrome` (only `navigator.webdriver` is hidden).
 > Generation runs headed by default, so this is the one Google sign-in gflow does headless.
 > It worked on 7 of 7 recoverable profiles on 2026-10-14. If Google ever starts challenging it,

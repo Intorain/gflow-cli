@@ -60,7 +60,8 @@ gflow auth renew [--profile NAME | --all] [--json]        # headless cookie refr
 gflow auth                                                # bare: list profiles or trigger first login
 gflow auth logout                                         # delete a saved session
 
-# Veo video-credit balance (read-only; image models use separate daily quotas)
+# Veo video-credit balance (read-only; image models use separate daily quotas).
+# Since 2026-10-22 it cannot read a balance on any account (labs session URL 410, #795).
 gflow credits user [--profile NAME] [--refresh] [--json]
 gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews expired sessions
 

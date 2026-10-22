@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.87.0] — 2026-10-22
+
 ### Security
 
 - **Locked `aiohttp` 3.14.5 (CVE-2026-111063, CVE-2026-111064, GHSA-2g87-pp6c-29x5).**
@@ -42,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the value catalogued for its `flow_media_id` (`null` when none was recorded) — the MCP
   twin of `gflow image t2i --json`'s `images[].seed`. On the classic image paths that is
   the seed Flow chose; the agentic and agent-only arms observe no seed and record `0`;
-  for video it is the seed the caller requested, not one read back from Flow. Reported by
+  for video it is whatever the CLI recorded from `--seed` (the MCP video tool takes no
+  seed, so over MCP it is `null`), never one read back from Flow. Reported by
   @Chapax.
 
 ### Removed
@@ -54,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--seed` went from `image t2i` in v0.8.0 for the same reason. The parameter is gone from
   the tool schema; a call that still passes `seed` is not rejected (the MCP server ignores
   unknown arguments) and it is no longer echoed back — read the result's `seed` for the
-  value Flow chose (classic image paths). The video tool's seed is unchanged. Reported by @Chapax.
+  value Flow chose (classic image paths). Reported by @Chapax.
 
 ### Fixed
 
@@ -66,7 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already used for accounts labs never signed in (#791), and a profile with no Google
   sign-in is reported as signed out rather than as a network problem. `auth renew` and
   MCP `gflow_auth_status` use the same check. `gflow credits` still cannot read a balance:
-  it needs the labs token that URL no longer issues (#795).
+  it needs the labs token that URL no longer issues (#795). A login with bundled Chromium
+  (`--browser internal`, or `--browser auto` on a machine without Chrome) still cannot
+  finish and waits until its timeout ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)):
+  use `--browser chrome`.
 - **flow.google.com: a run that fails after the submit click no longer invites a second
   billed generation** ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)).
   When Chrome lost the image submit reply's body, gflow silently submitted the image
@@ -6262,7 +6268,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...HEAD
+[0.87.0]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0
 [0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0
 [0.84.0]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...v0.84.0
