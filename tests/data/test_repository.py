@@ -214,8 +214,8 @@ def test_upsert_project_natural_key_conflict_is_idempotent(tmp_path: Path) -> No
         assert len(rows) == 1
         # The original row id is preserved (natural-key dedupe, not a new row).
         assert rows[0]["id"] == "project-a"
-        # Mutable field (title) is updated on repeat.
-        assert rows[0]["title"] == "B"
+        # A run's title never replaces a stored one; only an explicit create does (#1022).
+        assert rows[0]["title"] == "A"
 
 
 def test_upsert_project_repeat_preserves_existing_title_when_none(tmp_path: Path) -> None:
@@ -802,3 +802,54 @@ def test_list_missing_remote_media_scopes_by_project_and_profile(tmp_path: Path)
         assert ghosts == ("media-ghost-1",)  # ghost rows only, this project only
         assert isinstance(ghosts, tuple)
         assert repo.list_missing_remote_media("nobody", "flow-project-a") == ()
+
+
+def _project_row(store: DataStore) -> tuple[str | None, str]:
+    row = store.conn.execute(
+        "SELECT title, source FROM projects WHERE profile_name = ? AND flow_project_id = ?",
+        ("default", "flow-project-1"),
+    ).fetchone()
+    return row["title"], row["source"]
+
+
+@pytest.mark.parametrize("source", ["generated", "uploaded"])
+def test_a_run_into_an_existing_project_keeps_its_title_and_source(
+    tmp_path: Path, source: str
+) -> None:
+    """#1022: a generation or upload into a project already in the ledger passes its run
+    placeholder (``"gflow-cli video"``) as the title. Only an explicit create or rename
+    (``source="gflow-cli"``) may replace a stored title, and that source stays."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        for title, src in (("my-project", "gflow-cli"), ("gflow-cli video", source)):
+            repo.upsert_project(
+                ProjectRecord(
+                    id=f"project-{src}",
+                    profile_name="default",
+                    flow_project_id="flow-project-1",
+                    title=title,
+                    source=src,
+                )
+            )
+
+        assert _project_row(store) == ("my-project", "gflow-cli")
+
+
+def test_an_explicit_create_replaces_a_placeholder_title(tmp_path: Path) -> None:
+    """#1022: the authoritative source still wins over a placeholder a run left first."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        for title, src in (("gflow-cli video", "generated"), ("my-project", "gflow-cli")):
+            repo.upsert_project(
+                ProjectRecord(
+                    id=f"project-{src}",
+                    profile_name="default",
+                    flow_project_id="flow-project-1",
+                    title=title,
+                    source=src,
+                )
+            )
+
+        assert _project_row(store) == ("my-project", "gflow-cli")

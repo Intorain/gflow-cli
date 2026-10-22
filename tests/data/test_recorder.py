@@ -1097,3 +1097,33 @@ def test_a_start_recorded_after_completion_leaves_the_clip_alone(tmp_path: Path)
             "SELECT status, flow_workflow_id FROM assets WHERE flow_media_id='media-v'"
         ).fetchone()
         assert (row[0], row[1]) == ("MEDIA_GENERATION_STATUS_SUCCESSFUL", "wf-v")
+
+
+def test_a_video_into_an_existing_project_keeps_its_title(tmp_path: Path) -> None:
+    """#1022: ``record_started_video`` always passes ``"gflow-cli video"``; on a project the
+    ledger already knows, that placeholder used to replace the real title."""
+    from gflow_cli.data.models import ProjectRecord
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        repo.upsert_profile("default", tmp_path / "profile_default")
+        repo.upsert_project(
+            ProjectRecord(
+                id="p1",
+                profile_name="default",
+                flow_project_id="flow-project-1",
+                title="my-project",
+                source="gflow-cli",
+            )
+        )
+        recorder.record_started_video(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            request=GenerateVideoRequest(prompt="a red apple"),
+            started=VideoStarted(media_id="m1", project_id="flow-project-1"),
+        )
+
+        project = repo.get_project("default", "flow-project-1")
+        assert project is not None
+        assert (project.title, project.source) == ("my-project", "gflow-cli")
