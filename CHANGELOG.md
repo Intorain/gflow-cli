@@ -9,14 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`gflow auth login --browser internal` can finish again**
+- **`gflow auth login --browser internal` no longer waits until its timeout**
   ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)). With labs.google's session
   URL answering 410 (#1023), a bundled-Chromium login (`--browser internal`, or
   `--browser auto` on a machine without Chrome) never saw a signed-in session and waited
   until its timeout. It now ends the wait once the flow.google.com session cookies appear,
   then verifies the saved profile with the same server-attested check `--browser chrome`
   and `auth status` use, so a sign-in that did not complete says why instead of timing
-  out. Generation still needs a `--browser chrome` profile.
+  out. Generation still needs a `--browser chrome` profile. Not yet run against a live
+  sign-in: whether gflow can read a bundled-Chromium profile's saved cookies is measured on
+  Windows only, and on macOS that read is expected to fail, which now ends the login with
+  "re-run with `--browser chrome`".
 
 - **A video run into an existing `--project` no longer rewrites that project's title in
   the local catalog** ([#1022](https://github.com/ffroliva/gflow-cli/issues/1022)).

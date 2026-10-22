@@ -23,10 +23,9 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from structlog.testing import capture_logs
 
-from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
+from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE, UNVERIFIED_HINT
 from gflow_cli.auth.real_chrome import (
     GEMINI_URL,
-    UNVERIFIED_HINT,
     RealChromeStrategy,
     _await_chrome_close,
     _build_chrome_args,

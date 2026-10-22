@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from structlog.testing import capture_logs
 
-from gflow_cli.auth.real_chrome import GEMINI_URL, UNVERIFIED_HINT, UNVERIFIED_MESSAGE
+from gflow_cli.auth.internal_chromium import UNVERIFIED_HINT, UNVERIFIED_MESSAGE
+from gflow_cli.auth.real_chrome import GEMINI_URL
 from gflow_cli.auth.strategies import InternalChromiumStrategy, RealChromeStrategy
 from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
 from gflow_cli.errors import (
