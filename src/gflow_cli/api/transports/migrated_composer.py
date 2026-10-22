@@ -45,13 +45,14 @@ from uuid import uuid4
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from gflow_cli.api.dto import GeneratedImage, ProjectInfo
+from gflow_cli.api.dto import CreditsInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import ImageRef
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports._common import (
     expired_link_hint,
     extract_project_id,
+    flow_landing_kind,
     get_signed_media,
     raise_if_known_landing,
     recoverable_clip_hint,
@@ -77,8 +78,9 @@ from gflow_cli.errors import (
     CONTENT_SAFETY_REASONS,
     ConfigurationError,
     ContentPolicyError,
-    FlowAgentUiError,
+    FlowAppError,
     FlowHostMigratedError,
+    GFlowError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
@@ -97,6 +99,10 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
+
+    # Stores a finished clip's bytes under its media id and returns where they went —
+    # the transport's one writer for both hosts, so a cloud storage_uri holds here too (#1003).
+    ClipSaver = Callable[[str, bytes], Awaitable[Path]]
 
 log = structlog.get_logger(__name__)
 
@@ -144,6 +150,19 @@ AGENT_MODE_CHIP_ANY = "button.agent-mode-chip"
 #: a local Angular re-render, not a navigation — measured well under a second on both
 #: accounts — so this is headroom, not an expectation.
 AGENT_RECOVERY_S = 20.0
+#: The first slice of the readiness wait. Long enough for Angular to mount the composer
+#: after `domcontentloaded` (the chip was reliably absent before that — see
+#: `ensure_editor`), short enough that #799's agent-only composer, whose trigger never
+#: becomes visible, is reported without paying the whole gate. A page that is neither
+#: gets the rest of the gate on a re-entry, so slow loads keep their full budget.
+AGENT_ONLY_EARLY_S = 5.0
+#: A positive agent-only verdict is re-asked after this long: the verdict rests on the chip's
+#: ABSENCE, and a slow mount can put the trigger in the DOM before the chip.
+AGENT_ONLY_SETTLE_S = 2.0
+#: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
+AGENT_ONLY_ANCHOR = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
+#: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
+ComposerKind = Literal["classic", "agent_only"]
 #: What :meth:`MigratedComposer._exit_agent_mode` did. `"blocked"` — the chip was there
 #: and the click did not land — is not `"clicked"`: nothing was toggled, so there is
 #: nothing to wait :data:`AGENT_RECOVERY_S` for.
@@ -241,6 +260,16 @@ _OPTION_TITLES_JS = (
     " const t = o.querySelector('.asset-title');"
     " return ((t && t.textContent) || '').trim(); })"
 )
+#: Collapse the selection to the END of the composer (#997). A click lands wherever the
+#: composer's centre is, which with three chips on the line is chip 2 (measured,
+#: docs/superpowers/spikes/2026-10-19-fourth-ref-caret.md). Not the End key: per the
+#: reporter it stops at the end of the visual line once the chips wrap.
+_CARET_TO_END_JS = (
+    "(sel) => { const ce = document.querySelector(sel); if (!ce) return;"
+    " ce.focus(); const r = document.createRange(); r.selectNodeContents(ce);"
+    " r.collapse(false); const s = window.getSelection();"
+    " s.removeAllRanges(); s.addRange(r); }"
+)
 #: Budget for a just-generated image to become mentionable, across editor reloads
 #: (#913). Checked after each attempt, so a row can overrun it by one attempt.
 EXISTING_REF_WAIT_S = 90.0
@@ -253,6 +282,29 @@ ARROW_SETTLE_MS = 3500
 ARROW_STEP_MS = 150
 #: Flow writes captions with its own model; they reach the composer by typing.
 _CAPTION_MAX = 120
+
+
+def _require_appended(before: list[dict[str, str]], chips: list[dict[str, str]]) -> None:
+    """Refuse a mention that did not land after every chip already in the prompt (#997).
+
+    A count cannot see a chip inserted mid-prompt; the earlier chips staying a prefix can.
+    shortcut: chips that read identically (same caption and kind) cannot be told apart.
+    Retryability is the class default, unmeasured for this condition (Bug Lane).
+    """
+    if chips[: len(before)] != before:
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: a reference attached out of order — it did not land after "
+                f"the {len(before)} reference(s) already in the prompt, so the prompt is no "
+                "longer the one requested. Refusing to submit"
+            ),
+            # The chip WAS found, so the class default ("not in the picker") would mislead.
+            remediation_hint=(
+                "The reference was found but attached out of order, so nothing was "
+                "submitted. Re-run the command; if it repeats, report it with the "
+                "number of references and your window size."
+            ),
+        )
 
 
 def _picker_query(ref: ImageRef) -> str:
@@ -602,9 +654,9 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
     if request.refs and request.ref_paths:
         return "existing-image references mixed with local files"
     if any(not ref.in_project for ref in request.refs):
-        # Only an image this run generated in this project is referenced in place (#913);
-        # a UUID ref from the catalog or MCP is not ported here.
-        return "a reference given by Flow media UUID"
+        # Referenced in place only when this run generated it here (#913) or the
+        # catalog records it in this project (#995); any other UUID is not ported.
+        return "a Flow media UUID the catalog does not record in this --project"
     if any(not ref.display_name for ref in request.refs):
         # Found by its Flow caption, then matched by thumbnail; Flow returned none.
         return "a reference to an image Flow returned without a caption"
@@ -718,6 +770,22 @@ def _ligature(page: Any, name: str) -> Any:
 UNUSUAL_ACTIVITY_REASON = "PUBLIC_ERROR_UNUSUAL_ACTIVITY"
 
 
+def _outcome_unknown(detail: str) -> TransportTimeoutError:
+    """A failure AFTER the submit click: Flow may have made and billed the generation.
+
+    #1010 found exactly that on every arm (a finished clip, an extra image), so the
+    error must not invite a retry, and the hint must not be the class's 30 s default."""
+    return TransportTimeoutError(
+        detail=detail,
+        retryable=False,
+        remediation_hint=(
+            "Submit was already clicked, so Flow may have made and billed this "
+            "generation. Open the project in Flow and check before re-running: "
+            "a re-run bills again."
+        ),
+    )
+
+
 def _submit_refusal(
     text: str, rpcids: tuple[str, ...]
 ) -> WafRejectionError | ContentPolicyError | None:
@@ -780,16 +848,16 @@ async def _raise_if_out_of_credits(page: Any) -> None:
         )
 
 
-def _rpcid(url: str) -> str | None:
+def url_rpcid(url: str) -> str | None:
     m = re.search(r"[?&]rpcids=([A-Za-z0-9]+)", url)
     return m.group(1) if m else None
 
 
-def _body_rpcid(body: str) -> str | None:
+def body_rpcid(body: str) -> str | None:
     """The rpc name inside a ``batchexecute`` POST body, or ``None``.
 
     The interpolation submit (``nprQif``) carries no ``rpcids`` query param — the
-    name lives at the head of ``f.req``. ``_post_data`` form-decodes first, so the
+    name lives at the head of ``f.req``. ``request_body`` form-decodes first, so the
     match runs on plain text either way.
     """
     m = re.search(r'f\.req=\[\[\["([A-Za-z0-9]+)"', body or "")
@@ -801,11 +869,6 @@ def _unreadable_rpc_error(rpcid: str, *, location: str) -> RpcResponseUnavailabl
     return RpcResponseUnavailableError(
         detail=f"{rpcid} response body was unavailable at {location}",
         route=f"batchexecute:{rpcid}",
-        remediation_hint=(
-            "The operation outcome is unknown. Reload the existing project and check its "
-            "title or unique upload name before resubmitting. Do not create another "
-            "project or upload blindly."
-        ),
     )
 
 
@@ -839,12 +902,13 @@ async def _project_snapshot(
                     ?.getAttribute('data-media-id') || ''}))"""
                 ),
             )
-            if upload_name is None or any(t["name"] == upload_name for t in tiles):
+            # Wait for the media id too: the name can render before `img[data-media-id]`.
+            if upload_name is None or any(
+                t["name"] == upload_name and UUID_RE.fullmatch(t["id"]) for t in tiles
+            ):
                 break
             if time.monotonic() >= deadline:
-                raise ReferenceNotFoundError(
-                    detail="Unique upload absent from independent readback"
-                )
+                break  # the caller's exactly-one check turns this into "outcome unknown"
             # The project grid is a load-time asset listing, not a live subscription.
             # The upload's follow-up library write may finish after its response event.
             await probe.wait_for_timeout(1000)
@@ -853,6 +917,7 @@ async def _project_snapshot(
         return await field.input_value(), tiles
     finally:
         await probe.close()
+        await page.bring_to_front()  # the composer's typing and `@` picker need focus
 
 
 def _first_uuid(text: str) -> str | None:
@@ -867,7 +932,7 @@ def _first_uuid(text: str) -> str | None:
     return None
 
 
-def _post_data(request: Any) -> str:
+def request_body(request: Any) -> str:
     """The POST body as text, or ``""`` when Playwright cannot decode it —
     a listener must not raise.
 
@@ -1111,7 +1176,7 @@ async def _guard_image_submit(
     such a run: by then Flow has generated it, spent quota and added an image (#913,
     SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
     """
-    problem = _image_body_problem(_post_data(request), reference_ids, model, entity_ids)
+    problem = _image_body_problem(request_body(request), reference_ids, model, entity_ids)
     if problem is not None:
         await route.abort()
         return problem
@@ -1128,6 +1193,32 @@ def _redacted_page_url(page: Any) -> str:
     if not parsed.scheme or not parsed.netloc:
         return "<unavailable>"
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
+def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
+    """Why the trigger did not come back after the agent chip was clicked (#749)."""
+    if pressed:
+        return (
+            f"migrated host: the account was in Flow's agent mode, the chip was "
+            f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
+            f"{page.url} (host=migrated) — the mode is pinned on this account; "
+            f"turn the Agent chip off in a browser and re-run: {error}"
+        )
+    if pressed is None:
+        return (
+            f"migrated host: the account was in Flow's agent mode, the chip was "
+            f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
+            f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
+            f"— the chip could not be read back, so whether the mode is still "
+            f"on is unknown; check the Agent chip in a browser before filing "
+            f"this as drift: {error}"
+        )
+    return (
+        f"migrated host: Flow's agent mode was left, but the settings "
+        f"trigger ({READY_ANCHOR}) still did not become visible within "
+        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
+        f"is off, so this is ordinary selector drift: {error}"
+    )
 
 
 class MigratedComposer:
@@ -1247,9 +1338,12 @@ class MigratedComposer:
 
     # --- readiness ------------------------------------------------------------
 
-    async def ensure_editor(self, page: Page, project_id: str, *, timeout_s: float = 30.0) -> None:
+    async def ensure_editor(
+        self, page: Page, project_id: str, *, timeout_s: float = 30.0
+    ) -> ComposerKind:
         """Land on ``flow.google.com/project/<id>`` (direct — no labs.google visit
-        needed on either kind of account) and wait for the settings trigger."""
+        needed on either kind of account), wait for the settings trigger, and report
+        which composer is there: ``"classic"``, or #799's ``"agent_only"``."""
         target = MIGRATED_PROJECT_URL.format(project_id=project_id)
         current = str(getattr(page, "url", "") or "")
         if not current.startswith(target):
@@ -1260,8 +1354,9 @@ class MigratedComposer:
         # (2026-09-09 incident 8dc6c020); clear it before anything clicks.
         await self._dismiss_cookie_bar(page)
         trigger = page.locator(READY_ANCHOR).first
+        early_s = min(AGENT_ONLY_EARLY_S, timeout_s)
         try:
-            await trigger.wait_for(state="visible", timeout=int(timeout_s * 1000))
+            await trigger.wait_for(state="visible", timeout=int(early_s * 1000))
         except Exception as e:
             # Before blaming the anchor, ask the prior question: is this even the page
             # we asked for? Flow answers a project navigation with its public /about
@@ -1278,46 +1373,9 @@ class MigratedComposer:
             # healthy run nothing — no extra query is issued unless the gate has failed.
             state, click_error = await self._exit_agent_mode(page)
             if state == "absent":
-                # #799. Before calling this drift, separate the third cohort from our own
-                # bug, because the DOM they leave is the same one: the trigger present
-                # under a bare `hidden`. With a pressed chip that is agent mode and the
-                # branch above recovers it. With NO chip in the page at all, there is no
-                # classic arm to return to — the account's only composer is the agent
-                # panel, so model/aspect/count live in Agent settings as defaults and
-                # nothing gflow drives is on the page. A trigger that has LEFT the DOM is
-                # the opposite finding, a renamed selector, and stays drift.
-                if await self._is_agent_only_composer(page, trigger):
-                    log.info("migrated.agent_only_composer", issue_ref="#799", url=page.url)
-                    raise FlowAgentUiError(
-                        detail=(
-                            f"migrated host: this account's composer is agent-only — the "
-                            f"settings trigger ({READY_ANCHOR}) is in the page but hidden, "
-                            f"and no agent-mode chip ({AGENT_MODE_CHIP_ANY}) exists to turn "
-                            f"off, so there is no classic composer to drive on {page.url} "
-                            f"(host=migrated). Not selector drift, and not the recoverable "
-                            f"agent mode of #749. Readiness gate: {e}"
-                        ),
-                        remediation_hint=(
-                            "Google has put this account on Flow's agent-only composer, "
-                            "where aspect, model and count are Agent-settings defaults "
-                            "rather than per-request controls. gflow-cli has no driver for "
-                            "it yet, so no flag or profile change helps and a re-run will "
-                            "not either — this is tracked in issue #799. Generating from "
-                            "the Flow web UI still works."
-                        ),
-                        # Not retryable: #749's chip flips per click, but which composer an
-                        # account gets is server-assigned per account, so a retry lands the
-                        # same page. Same reasoning that keeps FlowHostMigratedError out of
-                        # RETRYABLE_ERRORS; FlowAgentUiError is in it for the labs A/B.
-                        retryable=False,
-                    ) from e
-                raise UiSelectorDriftError(
-                    detail=(
-                        f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
-                        f"become visible within {timeout_s:.0f}s on {page.url} "
-                        f"(host=migrated): {e}"
-                    ),
-                ) from e
+                return await self._absent_chip_verdict(
+                    page, project_id, trigger, timeout_s=timeout_s, early_s=early_s, error=e
+                )
             if state == "blocked":
                 # Nothing was toggled, so the trigger cannot have changed — spending
                 # AGENT_RECOVERY_S here buys a verdict already in hand. The click's own
@@ -1339,30 +1397,7 @@ class MigratedComposer:
                 # BACK rather than assumed. Reporting both as "the mode may be pinned"
                 # hides genuine selector drift behind a mode the driver already left.
                 pressed = await self._agent_chip_pressed(page)
-                if pressed:
-                    detail = (
-                        f"migrated host: the account was in Flow's agent mode, the chip was "
-                        f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
-                        f"{page.url} (host=migrated) — the mode is pinned on this account; "
-                        f"turn the Agent chip off in a browser and re-run: {e2}"
-                    )
-                elif pressed is None:
-                    detail = (
-                        f"migrated host: the account was in Flow's agent mode, the chip was "
-                        f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
-                        f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
-                        f"— the chip could not be read back, so whether the mode is still "
-                        f"on is unknown; check the Agent chip in a browser before filing "
-                        f"this as drift: {e2}"
-                    )
-                else:
-                    detail = (
-                        f"migrated host: Flow's agent mode was left, but the settings "
-                        f"trigger ({READY_ANCHOR}) still did not become visible within "
-                        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
-                        f"is off, so this is ordinary selector drift: {e2}"
-                    )
-                raise UiSelectorDriftError(detail=detail) from e2
+                raise UiSelectorDriftError(detail=_recovery_detail(page, pressed, e2)) from e2
         # One count() on the happy path, for the cohort that would render the agent prompt
         # box while LEAVING the trigger visible: `send_prompt` would type into the agent
         # composer ([contenteditable='true'].first) and nothing downstream would notice.
@@ -1379,6 +1414,41 @@ class MigratedComposer:
         if await self._agent_chip_pressed(page):
             log.warning("migrated.agent_mode_chip_pressed_while_ready", issue_ref="#752")
         log.info("migrated.editor_ready", url=page.url)
+        return "classic"
+
+    async def _absent_chip_verdict(
+        self,
+        page: Page,
+        project_id: str,
+        trigger: Locator,
+        *,
+        timeout_s: float,
+        early_s: float,
+        error: Exception,
+    ) -> ComposerKind:
+        """No agent-mode chip and no visible trigger: agent-only, a slow mount, or drift."""
+        # #799. Before calling this drift, separate the third cohort from our own
+        # bug, because the DOM they leave is the same one: the trigger present
+        # under a bare `hidden`. With a pressed chip that is agent mode and the
+        # branch above recovers it. With NO chip in the page at all, there is no
+        # classic arm to return to — the account's only composer is the agent
+        # panel, so model/aspect/count live in Agent settings as defaults and
+        # nothing gflow drives is on the page. A trigger that has LEFT the DOM is
+        # the opposite finding, a renamed selector, and stays drift.
+        if await self._is_agent_only_composer(page, trigger):
+            log.info("migrated.agent_only_composer", issue_ref="#799", url=page.url)
+            return "agent_only"
+        if timeout_s > early_s:
+            # Neither composer yet — a slow mount. Spend the rest of the gate on a
+            # full re-entry, so the chip and the discriminator get asked again.
+            return await self.ensure_editor(page, project_id, timeout_s=timeout_s - early_s)
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
+                f"become visible within {timeout_s:.0f}s on {page.url} "
+                f"(host=migrated): {error}"
+            ),
+        ) from error
 
     @staticmethod
     async def _agent_chip_pressed(page: Page) -> bool | None:
@@ -1416,12 +1486,24 @@ class MigratedComposer:
         it contradicts the measured mechanism (pressed ⇒ hidden) and falls through to
         drift rather than being asserted as a cohort.
 
+        Both are absences, so the verdict also needs one presence — the agent composer's own
+        settings button — and is asked a second time after ``AGENT_ONLY_SETTLE_S``: a slow
+        mount can put the trigger in the DOM seconds before the chip, and a classic account
+        called agent-only would get account defaults written to it.
+
         Fail-closed: an unreadable page is not evidence of a cohort.
         """
         try:
-            if not await trigger.count() or await trigger.is_visible():
-                return False
-            return not await page.locator(AGENT_MODE_CHIP_ANY).first.count()
+            for attempt in range(2):
+                if attempt:
+                    await asyncio.sleep(AGENT_ONLY_SETTLE_S)
+                if not await trigger.count() or await trigger.is_visible():
+                    return False
+                if await page.locator(AGENT_MODE_CHIP_ANY).first.count():
+                    return False
+                if not await page.locator(AGENT_ONLY_ANCHOR).first.count():
+                    return False
+            return True
         except Exception as exc:  # noqa: BLE001 - an unreadable page is not an answer
             log.warning("migrated.agent_only_probe_failed", error=str(exc)[:200])
             return False
@@ -2122,7 +2204,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            if "batchexecute" not in url or _rpcid(url) != UPLOAD_RPC or reply.done():
+            if "batchexecute" not in url or url_rpcid(url) != UPLOAD_RPC or reply.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
             text: str | None = ""
@@ -2143,7 +2225,7 @@ class MigratedComposer:
         def on_request(request: Any) -> None:
             nonlocal sent
             url = str(getattr(request, "url", ""))
-            if "batchexecute" in url and _rpcid(url) == UPLOAD_RPC:
+            if "batchexecute" in url and url_rpcid(url) == UPLOAD_RPC:
                 sent = True
 
         page.on("response", on_response)
@@ -2280,7 +2362,7 @@ class MigratedComposer:
                     if (
                         len(matches) == 1
                         and UUID_RE.fullmatch(matches[0])
-                        and matches[0] != project_id
+                        and matches[0].lower() != project_id.lower()
                     ):
                         log.info("migrated.upload_recovered", media_id=matches[0])
                         return matches[0], display_name
@@ -2336,7 +2418,10 @@ class MigratedComposer:
             log.info("migrated.existing_reference_reload")
             await page.wait_for_timeout(EXISTING_REF_RELOAD_PAUSE_S * 1000)
             await page.reload(wait_until="domcontentloaded", timeout=45_000)
-            await self.ensure_editor(page, project_id)
+            if await self.ensure_editor(page, project_id) == "agent_only":
+                from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415
+
+                raise agent.refuse_unported("image-to-image")
 
     async def await_existing_references(
         self, page: Page, refs: tuple[ImageRef, ...]
@@ -2396,7 +2481,7 @@ class MigratedComposer:
         over 30 s), while a fresh editor load offers it at once. So retrying belongs to
         :meth:`reference_existing`, which reloads.
         """
-        await page.locator(COMPOSER).first.click(timeout=5000)
+        before = await self._caret_to_end(page)
         await page.keyboard.type("@", delay=120)
         await page.wait_for_timeout(2200)
         await page.keyboard.type(query, delay=100)
@@ -2413,6 +2498,7 @@ class MigratedComposer:
             chips = await self.read_chips(page)
             # A query can also match a character; only a media chip is this image.
             if len(chips) == expect_chips and chips[-1].get("reference_type") == "media":
+                _require_appended(before, chips)
                 await page.keyboard.type(" ", delay=80)
                 return
         else:
@@ -2556,8 +2642,9 @@ class MigratedComposer:
         too (the caller aborts the run before submit, so that chip never reaches Flow).
         """
         titles: list[str] = []
+        before: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            await page.locator(COMPOSER).first.click(timeout=5000)
+            before = await self._caret_to_end(page)
             # Real keystrokes: see `_mention_by_name`.
             await page.keyboard.type("@", delay=120)
             await page.wait_for_timeout(2200)
@@ -2613,8 +2700,18 @@ class MigratedComposer:
                     f"{offered}"
                 ),
             )
+        _require_appended(before, chips)
         # The kind check lives in `attach_character_entities`: a media chip here is
         # refused there, before any submit.
+
+    async def _caret_to_end(self, page: Page) -> list[dict[str, str]]:
+        """Focus the composer with the caret at its END; return the chips already there.
+
+        Every ``@`` mention starts here, so a new chip can only be appended (#997).
+        """
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.evaluate(_CARET_TO_END_JS, COMPOSER)
+        return await self.read_chips(page)
 
     async def clear_composer(self, page: Page) -> None:
         await page.locator(COMPOSER).first.click(timeout=5000)
@@ -2644,10 +2741,10 @@ class MigratedComposer:
         someone already attached.
         """
         offered: list[str] = []
-        chips = await self.read_chips(page)
+        chips: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            before = len(chips)
-            await page.locator(COMPOSER).first.click(timeout=5000)
+            prior = await self._caret_to_end(page)
+            before = len(prior)
             # `keyboard.type`, never `insert_text`: the latter dispatches input events with
             # no key events, so the mention plugin opens a picker with no query behind it
             # and every later gesture is a no-op. `send_prompt` keeps insert_text on
@@ -2662,6 +2759,7 @@ class MigratedComposer:
             await page.wait_for_timeout(2500)
             chips = await self.read_chips(page)
             if len(chips) == expect_chips:
+                _require_appended(prior, chips)
                 await page.keyboard.type(" ", delay=80)
                 return
             log.info(
@@ -2871,10 +2969,17 @@ class MigratedComposer:
         expect_media_id: str | None = None,
         expect_end_media_id: str | None = None,
         expect_reference_ids: tuple[str, ...] = (),
+        submit_rpcs: tuple[str, ...] = SUBMIT_RPCS,
+        submit_selector: str | None = None,
+        request_check: Callable[[str, str], GFlowError | None] | None = None,
     ) -> GenerationRecord:
         """Click submit, then read the page's own submit / ``jwpduf`` / ``as29s``
         replies until the record is terminal. Fires ``on_started`` as soon as the
         submit reply names the media id — before the poll, as the labs path does.
+
+        ``submit_rpcs``, ``submit_selector`` and ``request_check`` let another surface
+        reuse this observer (extend: ``fZytfe``, the editor's own submit button, and a
+        verdict on every outgoing ``batchexecute`` request that fails the run at once).
 
         ``expect_media_id`` (i2v) and ``expect_reference_ids`` (r2v) inspect the
         submit *request* the app sends: its body must carry those ids and the
@@ -2885,7 +2990,7 @@ class MigratedComposer:
         URL; that body must carry the interpolation key and both frame ids."""
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
-        route_error: asyncio.Future[WireFormatError] = loop.create_future()
+        route_error: asyncio.Future[GFlowError] = loop.create_future()
 
         def on_request(request: Any) -> None:
             url = str(getattr(request, "url", ""))
@@ -2896,15 +3001,20 @@ class MigratedComposer:
             # without that param; on the account measured 2026-09-17 it DID carry it
             # (`nprQif` in the URL, key `omni_flash_i2v_8s_first_last`), so treat the
             # body as a second carrier rather than the rule — cohorts differ here.
-            body = _post_data(request)
-            rpcid = _rpcid(url) or _body_rpcid(body)
+            body = request_body(request)
+            rpcid = url_rpcid(url) or body_rpcid(body)
             # Record request rpcids too: at timeout the set shows both what went
             # out and what answered (issue #639).
             if rpcid is not None:
                 seen_submit_rpcs.add(rpcid)
             if rpcid is None:
                 return
-            if rpcid in SUBMIT_RPCS:
+            if request_check is not None:
+                verdict = request_check(rpcid, body)
+                if verdict is not None:
+                    route_error.set_result(verdict)
+                    return
+            if rpcid in submit_rpcs:
                 if rpcid == INTERPOLATION_SUBMIT_RPC:
                     problem = _interpolation_body_problem(
                         body, rpcid, expect_media_id, expect_end_media_id
@@ -2960,7 +3070,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            rpcid = _rpcid(url) if "batchexecute" in url else None
+            rpcid = url_rpcid(url) if "batchexecute" in url else None
             if rpcid is not None:
                 seen_submit_rpcs.add(rpcid)
             if "batchexecute" not in url:
@@ -2968,13 +3078,22 @@ class MigratedComposer:
             # `rpcid is None` falls through on purpose: the interpolation reply is a
             # bare `batchexecute` with no `rpcids` param, and `parse_frames` recovers
             # its id from the frame itself (measured 2026-09-17).
-            if rpcid is not None and rpcid not in SUBMIT_RPCS and rpcid not in STATUS_RPCS:
+            if rpcid is not None and rpcid not in submit_rpcs and rpcid not in STATUS_RPCS:
                 return
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+                # #1009/#1010: Chrome can drop a reply body. On the submit reply that
+                # loses the workflow id, so no status reply can settle the run either.
+                if rpcid in submit_rpcs and not submitted.done():
+                    submitted.set_exception(
+                        _outcome_unknown(
+                            f"migrated host: the {rpcid} submit reply arrived but its "
+                            "body was unreadable"
+                        )
+                    )
                 return
-            refusal = _submit_refusal(text, SUBMIT_RPCS)
+            refusal = _submit_refusal(text, submit_rpcs)
             # An envelope arriving after an accepted submit is ignored: that run's outcome
             # is already decided, and it now belongs to the terminal wait.
             if refusal is not None and not submitted.done():
@@ -2986,7 +3105,7 @@ class MigratedComposer:
                 # URL-only diagnostic reports "rpcs seen: none" for the very reply shape
                 # whose absence it is trying to explain (#639).
                 seen_submit_rpcs.add(rid)
-                if rid in SUBMIT_RPCS and not submitted.done():
+                if rid in submit_rpcs and not submitted.done():
                     try:
                         rec = generation_record(rid, payload)
                     except WireFormatError as exc:
@@ -3021,7 +3140,12 @@ class MigratedComposer:
         # early for a t2v submit it has nothing to assert about.
         page.on("request", on_request)
         try:
-            submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+            submit = (
+                page.locator(submit_selector).first
+                if submit_selector
+                else page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+            )
+            submit_named = submit_selector or "arrow_forward"
             if not await submit.count():
                 # A credit shortfall and a moved frontend look identical here: both are
                 # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
@@ -3030,7 +3154,7 @@ class MigratedComposer:
                 await _raise_if_out_of_credits(page)
                 raise UiSelectorDriftError(
                     detail=(
-                        "migrated host: the submit button (arrow_forward) is missing "
+                        f"migrated host: the submit button ({submit_named}) is missing "
                         "after the prompt was typed (host=migrated)"
                     ),
                 )
@@ -3041,7 +3165,7 @@ class MigratedComposer:
                     await _raise_if_out_of_credits(page)
                     raise UiSelectorDriftError(
                         detail=(
-                            "migrated host: the submit button (arrow_forward) stayed disabled "
+                            f"migrated host: the submit button ({submit_named}) stayed disabled "
                             f"for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed "
                             "(host=migrated)"
                         ),
@@ -3062,11 +3186,9 @@ class MigratedComposer:
                 raise route_error.result()
             if not submitted.done():
                 seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
-                raise TransportTimeoutError(
-                    detail=(
-                        f"migrated host: no {'/'.join(SUBMIT_RPCS)} reply within "
-                        f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
-                    ),
+                raise _outcome_unknown(
+                    f"migrated host: no {'/'.join(submit_rpcs)} reply within "
+                    f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                 )
             first = submitted.result()
             started = VideoStarted(
@@ -3231,10 +3353,10 @@ class MigratedComposer:
 
         def on_request(raw_request: Any) -> None:
             url = str(getattr(raw_request, "url", ""))
-            if _rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
                 return
             problem = _image_body_problem(
-                _post_data(raw_request), reference_ids, request.model, entity_ids
+                request_body(raw_request), reference_ids, request.model, entity_ids
             )
             if problem is not None:
                 route_error.set_result(
@@ -3243,7 +3365,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            if _rpcid(url) != IMAGE_SUBMIT_RPC or result.done():
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or result.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
             if status != 200:
@@ -3257,6 +3379,15 @@ class MigratedComposer:
                 return
             try:
                 text = await response.text()
+            except Exception:  # noqa: BLE001 - a raw Playwright error here was retried (#1010)
+                result.set_exception(
+                    _outcome_unknown(
+                        f"migrated host: the {IMAGE_SUBMIT_RPC} submit reply arrived but "
+                        "its body was unreadable"
+                    )
+                )
+                return
+            try:
                 refusal = _submit_refusal(text, (IMAGE_SUBMIT_RPC,))
                 if refusal is not None:
                     raise refusal
@@ -3305,13 +3436,13 @@ class MigratedComposer:
             result.set_result(images)
 
         def is_image_submit(url: str) -> bool:
-            return _rpcid(url) == IMAGE_SUBMIT_RPC
+            return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
         async def guard(route: Any, raw_request: Any) -> None:
             problem = await _guard_image_submit(
                 route, raw_request, reference_ids, request.model, entity_ids
             )
-            found = _image_body_references(_post_data(raw_request))
+            found = _image_body_references(request_body(raw_request))
             log.info(
                 "migrated.image_submit_guarded",
                 outcome="aborted" if problem else "passed",
@@ -3348,11 +3479,9 @@ class MigratedComposer:
             if route_error.done():
                 raise route_error.result()
             if result not in done:
-                raise TransportTimeoutError(
-                    detail=(
-                        f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
-                        f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"
-                    )
+                raise _outcome_unknown(
+                    f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
+                    f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"
                 )
             return result.result()
         finally:
@@ -3387,11 +3516,8 @@ class MigratedComposer:
         if terminal.done():
             return terminal.result()
         if not done:
-            raise TransportTimeoutError(
-                detail=(
-                    f"migrated host: generation {workflow_id} was not terminal within the "
-                    f"poll timeout"
-                ),
+            raise _outcome_unknown(
+                f"migrated host: generation {workflow_id} was not terminal within the poll timeout"
             )
         grace = min(RESULT_URL_GRACE_S, max(deadline - time.monotonic(), 0.01))
         try:
@@ -3403,7 +3529,7 @@ class MigratedComposer:
     # --- download ---------------------------------------------------------------
 
     @staticmethod
-    async def _fetch_mp4(page: Page, record: GenerationRecord) -> bytes:
+    async def fetch_mp4(page: Page, record: GenerationRecord) -> bytes:
         """GET the signed URL and prove it is an MP4 (``ftyp`` at offset 4); if it is
         not — the record carries a poster JPEG next to the clip, and a 2026-09-05
         run downloaded that one — try the other URL before giving up."""
@@ -3464,11 +3590,12 @@ class MigratedComposer:
         self,
         page: Page,
         record: GenerationRecord,
-        out_dir: Path | None,
+        save: ClipSaver,
     ) -> Path | None:
-        """The clip from its signed CDN URL. The labs ``media.getMediaUrlRedirect``
-        route answers 404 for a migrated media id (measured 2026-09-05), so there is
-        no second source: a record with no URL is a wire-format failure."""
+        """The clip from its signed CDN URL, stored by ``save``. The labs
+        ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id
+        (measured 2026-09-05), so there is no second source: a record with no URL is a
+        wire-format failure."""
         if not record.video_url and not record.poster_url:
             raise WireFormatError(
                 detail=(
@@ -3477,11 +3604,8 @@ class MigratedComposer:
                 ),
                 route="batchexecute:as29s",
             )
-        body = await self._fetch_mp4(page, record)
-        target_dir = out_dir or Path.cwd()
-        target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{record.media_id}.mp4"
-        path.write_bytes(body)
+        body = await self.fetch_mp4(page, record)
+        path = await save(record.media_id, body)
         log.info("migrated.download", path=str(path), bytes=len(body))
         return path
 
@@ -3491,7 +3615,7 @@ async def run_video(
     request: GenerateVideoRequest,
     *,
     project_id: str | None,
-    out_dir: Path | None,
+    save: ClipSaver,
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
@@ -3505,9 +3629,12 @@ async def run_video(
     project is created by ``FlowApiClient`` before this runs (#864), so reaching
     here without one means a caller bypassed the client.
     """
+    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
+
     unported = _unported_form(request)
-    if unported is not None:
-        raise FlowHostMigratedError(
+
+    def refuse() -> FlowHostMigratedError:
+        return FlowHostMigratedError(
             detail=(
                 f"Flow served flow.google.com, where gflow drives "
                 f"text-to-video, image-to-video from local start (and end) frames, and "
@@ -3515,6 +3642,10 @@ async def run_video(
                 f"(#639) — pass --initial-frame / --ref as local files"
             ),
         )
+
+    # $0 and before the page only when neither composer takes it (see run_images).
+    if unported is not None and agent.unported_video(request) is not None:
+        raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
         raise ConfigurationError(
@@ -3525,7 +3656,18 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    await composer.ensure_editor(page, pid)
+    if await composer.ensure_editor(page, pid) == "agent_only":
+        return await agent.run_agent_video(
+            page,
+            request,
+            project_id=pid,
+            save=save,
+            poll_timeout_s=poll_timeout_s,
+            download=download,
+            on_started=on_started,
+        )
+    if unported is not None:
+        raise refuse()
     await composer.apply_video_settings(page, request)
     media_id: str | None = None
     end_media_id: str | None = None
@@ -3581,10 +3723,11 @@ async def run_video(
     )
     local_path: Path | None = None
     if download and record.is_done:
-        local_path = await composer.download(page, record, out_dir)
+        local_path = await composer.download(page, record, save)
     return VideoResult(
         status=status,
-        local_path=Path(local_path) if local_path is not None else None,
+        # Not re-wrapped in Path(): a cloud UPath must reach the caller intact (#1003).
+        local_path=local_path,
         project_id=pid,
         flow_operation_id=record.workflow_id,
         workflow_id=record.workflow_id,
@@ -3599,14 +3742,22 @@ async def run_images(
     out_dir: Path | None = None,
 ) -> list[GeneratedImage]:
     """Drive supported image requests through the migrated project composer."""
+    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
+
     unported = _unported_image_form(request)
-    if unported is not None:
-        raise FlowHostMigratedError(
+
+    def refuse() -> FlowHostMigratedError:
+        return FlowHostMigratedError(
             detail=(
                 "Flow served flow.google.com, where gflow drives t2i "
                 f"and i2i from local files; {unported} is not ported yet (#639)"
             )
         )
+
+    # $0 and before the page only when NEITHER composer takes it: the agent-only one has
+    # its own limits (#799) — its Agent-settings pane offers 3:4, the classic pane does not.
+    if unported is not None and agent.unported_image(request) is not None:
+        raise refuse()
     pid = project_id or extract_project_id(page.url)
     if not pid:
         raise ConfigurationError(
@@ -3615,7 +3766,10 @@ async def run_images(
             )
         )
     composer = MigratedComposer(out_dir=out_dir)
-    await composer.ensure_editor(page, pid)
+    if await composer.ensure_editor(page, pid) == "agent_only":
+        return await agent.run_agent_images(page, request, project_id=pid)
+    if unported is not None:
+        raise refuse()
     reference_ids: tuple[str, ...] = ()
     if request.refs:
         # Images already in this project (a manifest's `batch:N`, #913): referenced in
@@ -3695,21 +3849,74 @@ async def _wait_anchor(
     return locator
 
 
+def _navigated_project_id(url: str, before: str) -> str | None:
+    """The project id a create navigated to, read from the URL PATH on flow.google.com.
+
+    Only the path counts: a redirect's query (``continue=``) can carry another project's
+    URL. A URL the page already had before the click proves nothing about this create.
+    """
+    parts = urlsplit(url)
+    if parts.path == urlsplit(before).path:
+        return None
+    if parts.scheme != "https" or parts.hostname != "flow.google.com":
+        return None
+    segments = parts.path.split("/")
+    if len(segments) < 3 or segments[1] != "project" or not UUID_RE.fullmatch(segments[2]):
+        return None
+    return segments[2]
+
+
 async def _rpc_reply(
-    page: Page, rpcid: str, action: Callable[[], Awaitable[None]], *, timeout_s: float
+    page: Page,
+    rpcid: str,
+    action: Callable[[], Awaitable[None]],
+    *,
+    timeout_s: float,
+    write: bool = False,
 ) -> Any:
-    """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets."""
+    """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets.
+
+    A refusal frame for ``rpcid`` raises at once instead of waiting out the timeout, and a
+    body the page could not hand over is counted, so a timeout can say "no READABLE reply"
+    rather than "Flow did not answer" (the body may have been sent and lost, #1009).
+    With ``write``, a lost body for ``rpcid`` itself raises ``RpcResponseUnavailableError``
+    at once: the write may have saved, so the caller reads the outcome back (#992).
+    """
     reply: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    unreadable = [0]
 
     async def on_response(response: Any) -> None:
-        if reply.done() or "batchexecute" not in str(getattr(response, "url", "")):
+        url = str(getattr(response, "url", ""))
+        if reply.done() or "batchexecute" not in url:
             return
         try:
             text = await response.text()
-        except Exception:  # noqa: BLE001 - a reply arrived, not a transport timeout
-            if _rpcid(str(getattr(response, "url", ""))) == rpcid and not reply.done():
+        except Exception as exc:  # noqa: BLE001 - recorded, never fatal: it may not be ours
+            unreadable[0] += 1
+            ours = url_rpcid(url) == rpcid
+            log.debug(
+                "migrated.rpc_reply_body_unreadable",
+                rpcid=rpcid,
+                carries_rpcid=ours,
+                error_type=type(exc).__name__,
+            )
+            if write and ours and not reply.done():
+                # A write's reply arrived and was lost: the outcome is unknown, not late.
                 reply.set_exception(_unreadable_rpc_error(rpcid, location=safe_page_url(page.url)))
             return
+        for err in rpc_errors(text):
+            if err.rpcid == rpcid and not reply.done():
+                reply.set_exception(
+                    WireFormatError(
+                        detail=f"flow.google.com refused {rpcid} (code={err.code}, "
+                        f"reasons={list(err.reasons)})",
+                        route=f"batchexecute:{rpcid}",
+                        remediation_hint=(
+                            "Flow answered this request with an error frame, not with data. "
+                            "Retry once; if it persists, report it with the code and reasons."
+                        ),
+                    )
+                )
         for rid, payload in parse_frames(text):
             if rid == rpcid and not reply.done():
                 reply.set_result(payload)
@@ -3722,8 +3929,9 @@ async def _rpc_reply(
         except TimeoutError as e:
             raise TransportTimeoutError(
                 detail=(
-                    f"flow.google.com did not answer {rpcid} within {timeout_s:.0f}s "
-                    f"on {safe_page_url(page.url)} (host=migrated)"
+                    f"no readable {rpcid} reply from flow.google.com within {timeout_s:.0f}s "
+                    f"on {safe_page_url(page.url)} (host=migrated; "
+                    f"{unreadable[0]} batchexecute bodies unreadable)"
                 ),
             ) from e
     finally:
@@ -3744,29 +3952,34 @@ async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> 
         at="migrated.create_project",
         timeout_s=timeout_s,
     )
+    before = str(page.url)
     try:
         payload = await _rpc_reply(
-            page, CREATE_PROJECT_RPC, lambda: button.click(timeout=15_000), timeout_s=timeout_s
+            page,
+            CREATE_PROJECT_RPC,
+            lambda: button.click(timeout=15_000),
+            timeout_s=timeout_s,
+            write=True,
         )
     except RpcResponseUnavailableError as original_error:
         # The response event precedes Angular's navigation on a successful create.
         # Observe that navigation; never click Create a second time.
         try:
             await page.wait_for_url(
-                re.compile(r"https://flow\.google\.com/project/[0-9a-f-]{36}(?:[/?#]|$)"),
+                lambda url: _navigated_project_id(str(url), before) is not None,
                 timeout=int(min(timeout_s, 5.0) * 1000),
             )
         except Exception:  # noqa: BLE001 - no verified project means uncertain outcome
             raise original_error from None
-        match = re.search(r"/project/([0-9a-f-]{36})(?:[/?#]|$)", str(page.url))
-        if match is None or not UUID_RE.fullmatch(match[1]):
+        created_id = _navigated_project_id(str(page.url), before)
+        if created_id is None:
             raise
         try:
-            persisted_title, _ = await _project_snapshot(page, match[1])
+            persisted_title, _ = await _project_snapshot(page, created_id)
         except Exception:  # noqa: BLE001 - no verified project means no recovery
             raise original_error from None
-        payload = [match[1], [persisted_title]]
-        log.info("migrated.project_create_recovered", project_id=match[1])
+        payload = [created_id, [persisted_title]]
+        log.info("migrated.project_create_recovered", project_id=created_id)
     reply = _as_list_any(payload)
     project_id: object = reply[0] if reply else None
     if not isinstance(project_id, str) or not UUID_RE.fullmatch(project_id):
@@ -3811,7 +4024,9 @@ async def rename_project(
         await field.press("Enter")
 
     try:
-        payload = await _rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s)
+        payload = await _rpc_reply(
+            page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True
+        )
     except RpcResponseUnavailableError as original_error:
         try:
             persisted_title, _ = await _project_snapshot(page, project_id)
@@ -3829,3 +4044,77 @@ async def rename_project(
             route=f"batchexecute:{RENAME_PROJECT_RPC}",
         )
     log.info("migrated.project_renamed", project_id=project_id)
+
+
+#: The app's own balance read: no arguments, fired on every load of the app (#795).
+#: `[]` -> `[balance, a, b, c, null, balance', [refresh_epoch_s, nanos]]`
+#: (docs/superpowers/spikes/2026-10-22-credits-balance-on-nzlxg.md).
+CREDITS_RPC = "nzlxg"
+
+
+async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
+    """Load flow.google.com and return the balance from the app's own ``nzlxg`` reply.
+
+    Read-only and free: nothing is clicked. The reply is read from the wire, not from the
+    account menu, so no translated text is involved.
+    """
+
+    async def load() -> None:
+        await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
+
+    try:
+        payload = await _rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
+    except TransportTimeoutError as e:
+        if flow_landing_kind(page.url) == "public":
+            # The generic /about hint says "open the project"; credits has no project.
+            # Two causes are measured: a profile with no Google session at all (live
+            # `credits list`, 2026-10-22), and healthy cookies held at /about by Google's
+            # pending "Confirm it's you" (2026-09-23, denon82; spike 2026-09-23-about-cta-
+            # leads-to-google-reauth.md), which `gflow auth login` cannot clear (#902).
+            # They are not told apart here; `gflow auth status` does that.
+            raise FlowAppError(
+                detail=(
+                    f"Flow redirected to its public landing page ({safe_page_url(page.url)}) "
+                    "instead of the app, so there is no balance to read."
+                ),
+                route=f"batchexecute:{CREDITS_RPC}",
+                remediation_hint=(
+                    "Two causes land here. First run `gflow auth status --profile <name>`. "
+                    "If it reports no Google session, sign in: `gflow auth login "
+                    "--browser chrome --profile <name>`. If it reports you are signed in, "
+                    "Google may want the account to confirm its identity, which `gflow auth "
+                    "login` cannot clear: open Chrome by hand on the profile directory "
+                    '(chrome --user-data-dir="<profile dir>" https://flow.google.com/), click '
+                    "through, finish Google's \"Confirm it's you\", wait for the app, close "
+                    "Chrome and re-run. See KNOWN_ISSUES."
+                ),
+                retryable=False,
+            ) from e
+        # Signed out, no Flow access: each has its own typed error.
+        await raise_if_known_landing(page, requested=MIGRATED_ROOT_URL, at="migrated.credits")
+        raise FlowAppError(
+            detail=(
+                f"flow.google.com loaded ({safe_page_url(page.url)}) but no readable "
+                f"{CREDITS_RPC} reply (the credit balance) arrived within {timeout_s:.0f}s: "
+                f"{e.detail}"
+            ),
+            route=f"batchexecute:{CREDITS_RPC}",
+            remediation_hint=(
+                "Your session is not the problem: the app loaded. Retry once; if it "
+                "persists, open flow.google.com and check the balance in the account "
+                "menu, then report it on issue #795 — Flow may have moved the balance."
+            ),
+        ) from e
+    try:
+        info = CreditsInfo.from_nzlxg(payload)
+    except ValueError as e:
+        raise WireFormatError(
+            detail=str(e),
+            route=f"batchexecute:{CREDITS_RPC}",
+            remediation_hint=(
+                "Flow changed the shape of its balance reply. Report it on issue #795; "
+                "generation is unaffected."
+            ),
+        ) from e
+    log.info("migrated.credits_read")
+    return info

@@ -23,9 +23,8 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from structlog.testing import capture_logs
 
-from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
+from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE, UNVERIFIED_HINT
 from gflow_cli.auth.real_chrome import (
-    _UNVERIFIED_HINT,
     GEMINI_URL,
     RealChromeStrategy,
     _await_chrome_close,
@@ -680,6 +679,16 @@ class TestPlaywrightAutoClose:
                 return_value=True,
             ),
             patch("gflow_cli.auth.strategies.async_playwright", ap),
+            # The post-timeout verdict used to reach the real labs URL; since it answers
+            # 410 (#1023) that launches the migrated probe through this same fake.
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
+                AsyncMock(
+                    return_value=FlowSessionStatus(
+                        outcome=FlowSessionOutcome.NO_SESSION, user_email=None, source="chrome"
+                    )
+                ),
+            ),
         ):
             mock_settings.return_value.home = gflow_home
             with pytest.raises(AuthLoginTimeoutError):
@@ -822,4 +831,4 @@ def test_login_instructions_say_gflow_closes_chrome(capsys: pytest.CaptureFixtur
 
 
 def test_google_session_only_hint_drops_close_chrome() -> None:
-    assert "before closing Chrome" not in _UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]
+    assert "before closing Chrome" not in UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]

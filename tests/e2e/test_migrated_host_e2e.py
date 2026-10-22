@@ -167,7 +167,7 @@ async def test_e2e_end_frame_binds_the_second_chip_and_submits_interpolation(
 
         async def block_submit(route: object, request: object) -> None:
             body = getattr(request, "post_data", None) or ""
-            rpcid = migrated_composer._body_rpcid(body) or migrated_composer._rpcid(  # noqa: SLF001
+            rpcid = migrated_composer.body_rpcid(body) or migrated_composer.url_rpcid(
                 str(getattr(request, "url", ""))
             )
             if rpcid in migrated_composer.SUBMIT_RPCS:
@@ -569,6 +569,27 @@ async def test_e2e_mcp_i2i_runs_on_the_migrated_host(
     assert result["params"]["reference_images"] == [str(reference)]
     files = [Path(path) for path in result["files"]]
     assert files and all(path.exists() and path.stat().st_size > 10_000 for path in files)
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_image
+async def test_e2e_mcp_t2i_reports_the_seed_flow_used(
+    e2e_profile_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1013: the MCP image result carries the seed Flow chose, never a requested one."""
+    del e2e_profile_dir
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    result = await mcp_tools.gflow_generate_image(
+        prompt="a single smooth grey pebble on white sand",
+        profile=os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
+        project=project,
+        wait=True,
+    )
+    assert result["status"] == "completed", result
+    assert isinstance(result["seed"], int) and result["seed"] > 0, result
+    assert "seed" not in result["params"], result
 
 
 def _selected(capture: structlog.testing.LogCapture, *events: str) -> list[dict[str, object]]:

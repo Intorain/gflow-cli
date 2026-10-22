@@ -43,6 +43,13 @@ local layout:
 └── videos/<YYYY-MM-DD>/<media_id>.mp4
 ```
 
+The layout is the same whichever host Flow serves (labs.google or flow.google.com).
+Before #1003, a flow.google.com video ignored the storage URI and was written locally.
+With a cloud storage URI, `gflow video -o/--output`, `gflow video chain` and an MCP
+`output_file` do not work yet on either host: each needs the clip as a local file
+([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). Leave the storage URI unset
+for those runs.
+
 `<ext>` is corrected from the actual bytes before upload. For example, if Flow
 returns JPEG bytes for an image request originally planned as `.png`, the object
 key is adjusted to `.jpg` before it is written.
@@ -61,12 +68,12 @@ export AWS_DEFAULT_REGION=us-east-1
 gflow image t2i "blue product cube on a white sweep" -n 2
 ```
 
-For local MinIO development:
+For local development against the bundled `docker compose up -d` stack (RustFS):
 
 ```bash
 export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_ACCESS_KEY_ID=rustfsadmin
+export AWS_SECRET_ACCESS_KEY=rustfsadmin
 export AWS_ENDPOINT_URL=http://localhost:9000
 export AWS_DEFAULT_REGION=us-east-1
 ```
@@ -107,8 +114,9 @@ aws s3 ls s3://gflow-test/dev/images/2026-05-28/
 gsutil ls gs://my-gcs-bucket/gflow/videos/2026-05-28/
 ```
 
-For MinIO, the web console can also preview generated images and download
-videos from the configured bucket.
+For RustFS or MinIO, the web console (http://localhost:9001 on the bundled
+stack) can also preview generated images and download videos from the
+configured bucket.
 
 ## Security Notes
 

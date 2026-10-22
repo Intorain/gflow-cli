@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,7 +33,6 @@ from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
-    FlowAgentUiError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaUploadRejectedError,
@@ -40,7 +40,6 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
-    is_retryable,
 )
 
 # --- a tiny DOM -------------------------------------------------------------
@@ -540,11 +539,23 @@ class FakeKeyboard:
             dom.prompt += text
 
 
+#: A scripted reply text that makes ``FakeResponse.text()`` fail the way Chrome does when
+#: it has dropped the body (#1009, #1010).
+LOST_BODY = "<lost body>"
+
+
 class FakeResponse:
     def __init__(self, url: str, text: str, status: int = 200) -> None:
         self.url, self._text, self.status = url, text, status
 
     async def text(self) -> str:
+        if self._text == LOST_BODY:
+            from playwright.async_api import Error as PlaywrightError
+
+            raise PlaywrightError(
+                "Response.text: Protocol error (Network.getResponseBody): "
+                "No data found for resource with given identifier"
+            )
         return self._text
 
 
@@ -634,6 +645,9 @@ class FakePage:
             # Presence alone, independent of `agent_mode` — that is the whole point of
             # the second selector: #799's cohort renders no chip in any state.
             return FakeLocator(self, "agent_chip_any", ["chip"] if dom.agent_chip_present else [])
+        if css == migrated_composer.AGENT_ONLY_ANCHOR:
+            # The agent composer's own settings button: rendered on the agent panel.
+            return FakeLocator(self, "agent_settings", ["tune"] if dom.agent_mode else [])
         if css == "flow-agent-panel button":
             buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
             return FakeLocator(self, "agent_close", buttons)
@@ -1332,6 +1346,46 @@ async def test_submit_observes_submit_then_poll_then_result() -> None:
     assert page.dom.submit_clicked == 1
 
 
+async def test_submit_rpcs_lets_another_surface_reuse_the_observer() -> None:
+    """Extend (#882 takeover) submits on fZytfe; the same observer must read it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL))),
+    ]
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_rpcs=("fZytfe",)
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+
+
+async def test_a_request_check_verdict_fails_the_run_before_any_reply() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=wrong-clip")
+    seen: list[tuple[str, str]] = []
+
+    def check(rpcid: str, body: str) -> WireFormatError | None:
+        seen.append((rpcid, body))
+        return WireFormatError(detail="wrong clip") if "wrong" in body else None
+
+    with pytest.raises(WireFormatError, match="wrong clip"):
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert seen == [("fZytfe", "f.req=wrong-clip")]
+
+
 async def test_submit_waits_for_the_button_to_enable_after_insert_text() -> None:
     """#670: the button reads disabled for a tick after the prompt lands; wait, don't raise."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -1415,6 +1469,24 @@ async def test_a_missing_submit_with_no_credits_warning_is_still_drift() -> None
         )
 
 
+async def test_a_missing_custom_submit_names_its_own_selector() -> None:
+    """Extend passes its own submit button; drift must name THAT, not arrow_forward."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    selector = "flow-edit-video-prompt-box button"
+    page = FakePage()
+    page.dom.credits_warning_present = False
+    modelled = page.locator
+    page.locator = lambda css, **kw: (  # type: ignore[method-assign]
+        FakeLocator(page, "submit", []) if css == selector else modelled(css, **kw)
+    )
+    with pytest.raises(UiSelectorDriftError, match="flow-edit-video-prompt-box") as caught:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, submit_selector=selector
+        )
+    assert "arrow_forward" not in caught.value.detail
+
+
 async def test_a_submit_that_never_enables_also_checks_the_wallet_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1496,6 +1568,17 @@ async def test_status_three_without_url_stands_after_the_grace(
     assert rec.is_done and rec.video_url is None
 
 
+def _saver(out_dir: Path) -> Any:
+    """A local stand-in for the transport's `_save_clip` (#1003)."""
+
+    async def save(media_id: str, body: bytes) -> Path:
+        path = out_dir / f"{media_id}.mp4"
+        path.write_bytes(body)
+        return path
+
+    return save
+
+
 async def test_download_uses_the_signed_url_before_the_redirect_route(tmp_path: Any) -> None:
     from gflow_cli.api.transports.batchexecute import GenerationRecord
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -1525,7 +1608,7 @@ async def test_download_uses_the_signed_url_before_the_redirect_route(tmp_path: 
     rec = GenerationRecord(
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
-    path = await MigratedComposer().download(page, rec, tmp_path)
+    path = await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert page.request.urls == [VIDEO_URL]
 
@@ -1567,7 +1650,7 @@ async def test_download_falls_back_to_the_other_url_when_the_first_is_a_jpeg(
         video_url="https://flow-content.google/p/x.jpg?Signature=a",  # mislabelled on purpose
         poster_url="https://flow-content.google/v/x.mp4?Signature=b",
     )
-    path = await MigratedComposer().download(page, rec, tmp_path)
+    path = await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert len(page.request.urls) == 2
 
@@ -1593,7 +1676,7 @@ async def test_download_refuses_a_foreign_host_before_any_request(tmp_path: Any)
         video_url="https://evil.example/v.mp4?Signature=s",
     )
     with pytest.raises(WireFormatError, match="evil.example"):
-        await MigratedComposer().download(page, rec, tmp_path)
+        await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert calls == []
 
 
@@ -1619,7 +1702,7 @@ async def test_download_never_follows_redirects(tmp_path: Any) -> None:
     rec = GenerationRecord(
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
-    await MigratedComposer().download(page, rec, tmp_path)
+    await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert seen.get("max_redirects") == 0
 
 
@@ -1643,7 +1726,7 @@ async def test_download_refuses_when_no_url_is_an_mp4(tmp_path: Any) -> None:
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
     with pytest.raises(WireFormatError, match="ftyp"):
-        await MigratedComposer().download(page, rec, tmp_path)
+        await MigratedComposer().download(page, rec, _saver(tmp_path))
 
 
 def test_migrated_can_serve_decides_what_the_new_host_takes() -> None:
@@ -1698,6 +1781,61 @@ async def test_submit_timeout_names_the_rpcs_it_did_see() -> None:
             page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
         )
     assert "rpcs seen: none" not in str(ei.value)
+
+
+async def test_a_video_submit_timeout_after_the_click_is_not_retryable() -> None:
+    """#1010: the click is the billed act. A timeout after it does not mean nothing was
+    made (the spike found the clip finished in the project), so ``retryable: true``
+    invites a second billed clip."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
+        )
+    assert not is_retryable(ei.value)
+    assert "30 s deadline" not in ei.value.remediation_hint
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_an_unreadable_video_submit_body_is_named_and_not_retryable() -> None:
+    """#1010: the reply arrived and Chrome lost its body. The detail used to say "no
+    YhhmEf reply" while listing YhhmEf under rpcs seen."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=30.0, on_started=None, project_id=PROJ
+        )
+    assert "YhhmEf" in ei.value.detail and "unreadable" in ei.value.detail
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_a_generation_not_terminal_in_time_is_not_retryable() -> None:
+    """#1010: the poll ran out after the clip was submitted. That is where the spike
+    found the clip finished and billed, so a re-run must not be invited."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    loop = asyncio.get_running_loop()
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer._await_terminal(  # pyright: ignore[reportPrivateUsage]
+            loop.create_future(),
+            loop.create_future(),
+            deadline=time.monotonic(),
+            workflow_id="wf-1",
+        )
+    assert "not terminal" in ei.value.detail
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
 
 
 async def test_submit_frame_without_record_is_wire_format_error() -> None:
@@ -2767,15 +2905,9 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
 ) -> None:
     """#799: the trigger is in the DOM under a bare `hidden` and there is NO chip.
 
-    This used to be ordinary selector drift, on the reasoning that with nothing to
-    click nothing may be promised. That was right about the recovery and wrong about
-    the diagnosis: #799 supplied the ground truth this state had been missing — a
-    third cohort whose composer is agent-only, with no classic arm to return to and
-    therefore no chip to un-press. The DOM is identical to a pressed chip's (#749),
-    which is why it read as drift, and why the chip's ABSENCE is what separates them.
-
-    Exit 25, not 23, and not retryable: a driver that does not exist will not appear
-    on a re-run.
+    The DOM is identical to a pressed chip's (#749), which is why it once read as drift,
+    and why the chip's ABSENCE is what separates them. Readiness now REPORTS the
+    composer kind instead of raising, so the caller can route to the agent-only driver.
     """
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -2783,20 +2915,26 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
     page.dom.agent_mode = True
     page.dom.agent_chip_present = False
 
-    with pytest.raises(FlowAgentUiError) as exc:
-        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    kind = await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
 
+    assert kind == "agent_only"
     assert page.dom.agent_chip_clicks == 0
-    assert EXIT_CODE_MAP[FlowAgentUiError] == 25
-    assert is_retryable(exc.value) is False
-    assert "agent-only" in str(exc.value).casefold()
-    # The class default talks about an A/B cohort and suggests another Chrome profile;
-    # neither applies when the composer is a property of the Google account.
-    hint = exc.value.remediation_hint
-    assert "#799" in hint
-    assert "A/B" not in hint
     events = [e["event"] for e in install_log_capture.entries]
     assert "migrated.agent_only_composer" in events
+
+
+async def test_ensure_editor_reports_classic_on_a_healthy_composer() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    assert await MigratedComposer().ensure_editor(FakePage(), "p1", timeout_s=1.0) == "classic"
+
+
+async def test_ensure_editor_reports_classic_after_leaving_agent_mode() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    assert await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0) == "classic"
 
 
 async def test_ensure_editor_does_not_claim_the_cohort_from_an_unreadable_page(
@@ -3075,6 +3213,42 @@ async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
         )
 
 
+async def test_an_image_reply_timeout_after_the_click_is_not_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1010 count arm, run 3: no reply was read, yet the image was in the project."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    monkeypatch.setattr(migrated_composer, "IMAGE_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error() -> None:
+    """#1010: the raw Playwright error reached the client's retry loop, which re-ran the
+    billed submit. It must arrive typed, named, and marked not retryable."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert "ogiZ0b" in ei.value.detail and "unreadable" in ei.value.detail
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
+
+
 # ----------------------------------------------------------------------------------
 # run_images — the migrated image entry point.
 #
@@ -3284,3 +3458,32 @@ async def test_upload_recovers_only_one_exact_unique_name(
             with pytest.raises(WireFormatError, match="body was unavailable"):
                 await migrated_composer.MigratedComposer().upload(page, PROJ, _png(tmp_path))
     readback.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "readback",
+    [
+        AsyncMock(side_effect=RuntimeError("probe tab died")),
+        AsyncMock(return_value=("t", [{"name": "unique.png", "id": "not-a-uuid"}])),
+        AsyncMock(return_value=("t", [{"name": "unique.png", "id": PROJ_UUID}])),
+        AsyncMock(return_value=("t", [{"name": "unique.png", "id": PROJ_UUID.upper()}])),
+    ],
+    ids=["readback-throws", "id-not-a-uuid", "id-is-the-project", "id-is-the-project-upper"],
+)
+async def test_upload_readback_that_proves_nothing_keeps_the_unknown_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, readback: AsyncMock
+) -> None:
+    from gflow_cli.errors import RpcResponseUnavailableError
+
+    page = FakePage()
+
+    async def fail_upload(self: Any, files: Any) -> None:
+        response = FakeResponse(_batch_url("maseQ"), "", 200)
+        response.text = AsyncMock(side_effect=RuntimeError("response body unavailable"))
+        page._fire_response(response)
+
+    monkeypatch.setattr(migrated_composer, "_unique_display_name", lambda p: "unique.png")
+    monkeypatch.setattr(migrated_composer, "_project_snapshot", readback)
+    with patch.object(FakeFileChooser, "set_files", fail_upload):
+        with pytest.raises(RpcResponseUnavailableError, match="body was unavailable"):
+            await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))

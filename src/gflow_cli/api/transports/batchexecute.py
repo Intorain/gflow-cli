@@ -194,7 +194,7 @@ def _is_record(node: list[Any]) -> bool:
     return all(isinstance(node[i], str) and _UUID_RE.match(node[i]) for i in (0, 1, 2))
 
 
-def _find_record(node: object, want: tuple[int, str] | None = None) -> list[Any] | None:
+def find_record(node: object, want: tuple[int, str] | None = None) -> list[Any] | None:
     """First record-shaped list, depth-first; with ``want=(slot, id)``, the first whose
     id slot matches — a project-wide reply can list another clip's record first."""
     items = _as_list(node)
@@ -203,7 +203,7 @@ def _find_record(node: object, want: tuple[int, str] | None = None) -> list[Any]
     if _is_record(items) and (want is None or items[want[0]] == want[1]):
         return items
     for child in items:
-        found = _find_record(child, want)
+        found = find_record(child, want)
         if found is not None:
             return found
     return None
@@ -258,7 +258,7 @@ def generation_record(
         want = (0, workflow_id)
     elif media_id is not None:
         want = (2, media_id)
-    rec = _find_record(payload, want)
+    rec = find_record(payload, want)
     if rec is None:
         raise WireFormatError(
             detail=(

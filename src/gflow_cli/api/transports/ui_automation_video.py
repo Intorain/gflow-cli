@@ -20,6 +20,7 @@ import random
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -63,6 +64,7 @@ from gflow_cli.errors import (
     FlowAgentUiError,
     FlowAppError,
     FlowHostMigratedError,
+    MediaDownloadError,
     MediaUploadRejectedError,
     RateLimitError,
     ReferenceNotFoundError,
@@ -1242,6 +1244,11 @@ class VideoGenerationMixin:
             msg,
         )
 
+    def _clip_dir(self, out_dir: Path | None) -> Path:
+        """Where a downloaded clip goes on either host: per-call, then the client's
+        ``--out-dir``, then the documented ``tmp/`` (#986)."""
+        return out_dir or self._out_dir or Path("tmp")
+
     async def _download_video(
         self,
         media_id: str,
@@ -1294,7 +1301,11 @@ class VideoGenerationMixin:
                 ),
                 route="media.getMediaUrlRedirect",
             )
-        body = await resp.body()
+        return await self._save_clip(media_id, await resp.body(), out_dir)
+
+    async def _save_clip(self, media_id: str, body: bytes, out_dir: Path | None) -> AnyPath:
+        """Store a downloaded clip on either host (#1003): under the configured cloud
+        ``storage_uri`` when set, otherwise in ``_clip_dir(out_dir)``."""
         storage_uri: str | None = getattr(self, "_storage_uri", None)
         if storage_uri:
             from datetime import date
@@ -1306,9 +1317,19 @@ class VideoGenerationMixin:
             output_dir = getattr(self, "_output_dir", None) or Path("tmp")
             target: AnyPath = storage_path(storage_uri, output_dir, key)
         else:
-            effective_dir = out_dir or self._out_dir or Path("tmp")
-            target = effective_dir / f"{media_id}.mp4"
-        await write_asset_async(target, body)
+            target = self._clip_dir(out_dir) / f"{media_id}.mp4"
+        try:
+            await write_asset_async(target, body)
+        except Exception as exc:
+            # The clip is already billed and still in Flow: type it so the recorder marks
+            # the asset generated and the user is sent to the free recovery, not a re-run.
+            raise MediaDownloadError(
+                media_id=media_id,
+                # Class name only, like get_signed_media: no bucket URI or home path in a
+                # detail that is persisted to the catalog.
+                detail=f"storing clip {media_id} failed ({type(exc).__name__})",
+                remediation_hint=recoverable_clip_hint(media_id),
+            ) from exc
         log.info(
             "ui_automation_video.video_saved",
             path=str(target),
@@ -4015,9 +4036,9 @@ class VideoGenerationMixin:
         # purpose, so the incident bundle is captured from a live page instead of
         # about:blank. Drain that deferred park HERE — before the route decision
         # reads page.url, and before anything re-enters a still-mounted composer.
-        # This is also the retry path: generate_images runs inside
-        # post_with_retry, so a retryable 5xx never reaches the client's failure
-        # boundary and attempt 2 would otherwise resume on a dirty composer.
+        # It also covers a client that still retries this call: since #1010 the
+        # page-owned image call runs once, but a caller re-entering after a failure
+        # must not resume on a dirty composer.
         await self.park_deferred_page()
         flow_host = get_settings().flow_host
         prefer = migrated_can_serve(request, project_id)
@@ -4037,7 +4058,7 @@ class VideoGenerationMixin:
                     page,
                     request,
                     project_id=project_id,
-                    out_dir=out_dir,
+                    save=partial(self._save_clip, out_dir=out_dir),
                     poll_timeout_s=poll_timeout_s,
                     download=download,
                     on_started=on_started,

@@ -103,14 +103,14 @@ Examples:
 # Choose one:
 export GFLOW_CLI_STORAGE_URI=gs://my-gcs-bucket/gflow/
 export GFLOW_CLI_STORAGE_URI=s3://my-s3-bucket/gflow/
-export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/   # MinIO local dev
+export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/   # local docker-compose stack (RustFS)
 ```
 
-S3 and MinIO use the standard AWS SDK environment variables:
+S3 and S3-compatible stores use the standard AWS SDK environment variables:
 
 ```bash
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_ACCESS_KEY_ID=rustfsadmin
+export AWS_SECRET_ACCESS_KEY=rustfsadmin
 export AWS_ENDPOINT_URL=http://localhost:9000   # omit for real AWS
 export AWS_DEFAULT_REGION=us-east-1
 ```
@@ -267,16 +267,19 @@ GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 
 ### `GFLOW_CLI_LOG_LEVEL`
 
-**What:** Logging verbosity.
+**What:** Logging verbosity. Logs go to stderr; stdout carries only the command's output.
 **Values:** `DEBUG` | `INFO` | `WARNING` | `ERROR`
-**Default:** `INFO`
+**Default:** `WARNING` — a command prints its result plus any warnings and errors. Set `INFO`
+to see progress events (engine, cookies, locale, page setup), for example on a long-running
+`gflow mcp run` / `gflow serve`.
 **CLI override:** `-v` / `--verbose` flag flips to `DEBUG`.
+Until the #1041 fix this setting was ignored and every command logged at `INFO` ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
 
 ### `GFLOW_CLI_LOG_FORMAT`
 
 **What:** Output format for log lines.
 **Values:**
-- `auto` (default) — text on TTY, JSON when stdout is piped/redirected
+- `auto` (default) — text when stderr is a terminal, JSON when stderr is piped/redirected
 - `text` — always pretty (Rich-styled, colours)
 - `json` — always machine-readable (one JSON object per line)
 
@@ -420,7 +423,7 @@ Measurement script: `scripts/dev/spike_offscreen_window.py`.
 **How it works:** before each generation, gflow determines the required arm, clicks the classic↔agentic toggle as a **prerequisite**, **verifies** with a DOM re-probe, then binds — or fails fast. The required arm is also **inferred**: `-i` instructions are agentic-only, so they force `agentic` automatically (and `--ui-mode classic` + `-i` is a hard conflict, not a silent drop).
 **Why `classic`:** the agentic cohort treats aspect ratio as a soft prompt hint (portrait 9:16 can come back landscape). `classic` enforces it or fails fast instead of silently degrading.
 **Retry note:** the cohort flaps per load, so an exit-28 abort is **retryable** — a re-run often lands the wanted arm. A server experiment can pin the arm, in which case it's unreachable from the client (the abort still saves the credits).
-**Video commands:** `gflow video t2v`/`i2v` joined the policy in [#299](https://github.com/ffroliva/gflow-cli/issues/299) PR-A. The video pipeline only has a classic driver, so `auto` ≡ `classic` there: both verify the classic editor pre-submit and abort with exit 28 if it is unreachable. An env-sourced `agentic` **degrades to classic with a logged warning** (so a value set for image workflows can't hard-fail your video runs); only an explicit agentic *request* errors — the `--ui-mode agentic` flag immediately at the CLI edge (exit 2), or the MCP `ui_mode="agentic"` param with a 400 envelope — because no agentic video driver exists yet. `video r2v` and `video chain` have no flag and follow the env-only path.
+**Video commands:** `gflow video t2v`/`i2v` joined the policy in [#299](https://github.com/ffroliva/gflow-cli/issues/299) PR-A. The video pipeline only has a classic driver, so `auto` ≡ `classic` there: both verify the classic editor pre-submit and abort with exit 28 if it is unreachable. An env-sourced `agentic` **degrades to classic with a logged warning** (so a value set for image workflows can't hard-fail your video runs); only an explicit agentic *request* errors — the `--ui-mode agentic` flag immediately at the CLI edge (exit 2), or the MCP `ui_mode="agentic"` param with a 400 envelope — because no agentic video driver exists yet. `video r2v` and `video chain` have no flag and follow the env-only path. This policy is the labs and classic-migrated one: an account whose `flow.google.com` project is served an **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) is routed to its driver before it, so supported `image t2i` / `video t2v` requests run there whatever this is set to.
 **Supersedes:** `GFLOW_CLI_PREFER_CLASSIC` and `GFLOW_CLI_FORCE_AGENT_UI` (below).
 
 ### `GFLOW_CLI_FLOW_HOST`
@@ -431,7 +434,18 @@ Measurement script: `scripts/dev/spike_offscreen_window.py`.
 - `flow.google.com` — force the migrated composer for everything, including what it cannot serve yet (those requests then exit 36/11 instead of falling back).
 - `labs.google` — never use the migrated composer; where Flow serves `flow.google.com`, requests fail with exit 36 (kill switch).
 **Default:** `auto`
-**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Image prompts may tag a character with `@Name` (or `--reference-entity` paired with `--reference-entity-name`; an id alone exits 36), attached through the composer's `@` picker (#723). Frames given by UUID/`@Name`, media references by UUID/`@Name`, character entities on video, Agent instructions, Imagen 4, scenes, extend, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call.
+**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Image prompts may tag a character with `@Name` (or `--reference-entity` paired with `--reference-entity-name`; an id alone exits 36), attached through the composer's `@` picker (#723). `video extend` is ported for a single segment from a clip (one PROMPT; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36, and `-o` saves the new extension clip only, #882). Frames given by UUID/`@Name`, media references by UUID/`@Name` (except an image `--ref <uuid>` the catalog records in the same `--project`, #995), character entities on video, Agent instructions, Imagen 4, scenes, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call.
+
+### `GFLOW_CLI_AGENT_CONFIRM`
+
+**What:** On an account Flow serves the agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), Agent settings carries a **Confirm before generating** choice. This sets it before a run.
+**Values:**
+- `account` (default) — leave the account's setting as it is. If Flow asks for confirmation, gflow approves exactly one request its own submit produced, and stops without approving if a second one appears. As with `always`, only that second confirmation is stopped before credits are spent: one confirmation can cover several generations, and an over-count under it is caught after the fact.
+- `always` — set **Always**. gflow approves the **first** confirmation without reading the count it names, and one confirmation can cover several generations. What this stops before credits are spent is a **second** confirmation in the same run; an agent that queues more than requested under the first one is caught only after the fact (gflow fails the run when more clips are pending, or more images appear, than were requested — the credits are already spent).
+- `never` — set **Never**. No approval step; a result count that differs from the request is detected only after the credits are spent.
+**Default:** `account`
+**Persistence:** unlike model / aspect / count (applied per run and restored afterwards), this value is saved to the Flow account and **not** restored — it is your standing choice, and it also applies when you use Flow in the browser.
+**MCP:** inherited from the server/daemon environment, not per call.
 
 ### `GFLOW_CLI_PREFER_CLASSIC` *(deprecated — use `GFLOW_CLI_UI_MODE=classic`)*
 

@@ -224,6 +224,7 @@ class AssetLookup:
     kind: AssetKind
     local_files: list[LocalFileRecord]
     metadata_json: JsonObject
+    seed: int | None = None
 
 
 @dataclass(frozen=True)

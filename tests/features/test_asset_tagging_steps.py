@@ -85,7 +85,9 @@ def _patch_client_lifecycle(
 
     # Mock _download_images as async function
     async def _fake_download_images(*args: Any, **kwargs: Any) -> list[Path]:
-        return [Path("/fake/path.png")]
+        saved: list[Path] = kwargs.get("saved_paths", [])
+        saved.append(Path("/fake/path.png"))  # the real helper appends into the caller's list
+        return saved
 
     monkeypatch.setattr("gflow_cli.cli_image._download_images", _fake_download_images)
 

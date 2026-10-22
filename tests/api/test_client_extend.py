@@ -198,3 +198,54 @@ async def test_reports_the_unit_cost(tmp_path: Path) -> None:
         media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="p"
     )
     assert started.unit_cost == 10
+
+
+# --- extend_video_migrated: the flow.google.com arm (#882) ---------------------
+
+
+def _migrated_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, video: bytes | None) -> Any:
+    from unittest.mock import MagicMock
+
+    from gflow_cli.api.transports import migrated_extend
+
+    c = FlowApiClient(profile_dir=tmp_path / "prof")
+    c.settings.storage_uri = None
+    page = MagicMock()
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    outcome = migrated_extend.ExtendOutcome(
+        record=MagicMock(), video=video, model_key="k", aspect="16:9", scene_id=SCENE
+    )
+    run = AsyncMock(return_value=outcome)
+    monkeypatch.setattr(migrated_extend, "run_extend", run)
+    return c, page, run, outcome
+
+
+@pytest.mark.asyncio
+async def test_migrated_extend_writes_the_new_clip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mp4 = b"\x00\x00\x00\x18ftypmp42"
+    c, page, run, outcome = _migrated_client(tmp_path, monkeypatch, mp4)
+    out = tmp_path / "out" / "x.mp4"
+    got, target = await c.extend_video_migrated(
+        media_id=MEDIA, project_id=PROJECT, prompt="go", aspect=None, out_path=out
+    )
+    assert got is outcome
+    assert Path(str(target)).read_bytes() == mp4
+    assert run.await_args.args == (page,)
+    c._checkin_page.assert_called_once_with(page)
+
+
+@pytest.mark.asyncio
+async def test_migrated_extend_without_a_video_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, page, _run, outcome = _migrated_client(tmp_path, monkeypatch, None)
+    out = tmp_path / "out" / "x.mp4"
+    got, target = await c.extend_video_migrated(
+        media_id=MEDIA, project_id=PROJECT, prompt="go", aspect=None, out_path=out
+    )
+    assert (got, target) == (outcome, None)
+    assert not out.exists()
+    c._checkin_page.assert_called_once_with(page)

@@ -194,3 +194,40 @@ def test_a_failed_upload_fails_that_row_and_a_later_row_retries(tmp_path: Path) 
     assert [o.status for o in outcomes] == ["fail", "ok"]
     assert "reference upload failed" in (outcomes[0].error or "")
     assert len(client.uploads) == 3  # 1 failed; row 2 retried (its own call + the base's)
+
+
+class LostReplyUploadClient(UploadingClient):
+    async def upload_reference(self, project_id: str, path: Path) -> Any:
+        from gflow_cli.errors import RpcResponseUnavailableError
+
+        self.uploads.append(path)
+        raise RpcResponseUnavailableError(detail="maseQ response body was unavailable")
+
+
+def test_an_upload_with_an_unknown_outcome_is_never_uploaded_again(tmp_path: Path) -> None:
+    # #1009: the first upload may have saved; a second would duplicate the asset.
+    photo = tmp_path / "photo.png"
+    photo.write_bytes(b"\x89PNG")
+    client = LostReplyUploadClient(fail_generate=set(), fail_download=set())
+    rows = (
+        BatchPromptItem("green", index=0, ref=str(photo)),
+        BatchPromptItem("blue", index=1, ref=str(photo)),
+    )
+    outcomes = asyncio.run(
+        run_image_batch(
+            profile_dir=tmp_path,
+            headless=True,
+            transport=None,
+            prompts=rows,
+            output_dir=tmp_path / "out",
+            continue_on_error=True,
+            project_title="t",
+            client_factory=lambda **_: client,
+            jitter_range=(0, 0),
+            _command="run",
+        )
+    )
+    assert [o.status for o in outcomes] == ["fail", "fail"]
+    assert all("RpcResponseUnavailableError" in (o.error or "") for o in outcomes)
+    assert [o.exit_code for o in outcomes] == [7, 7]
+    assert client.uploads == [photo]

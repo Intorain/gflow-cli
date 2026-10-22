@@ -131,8 +131,11 @@ class _FakeClient:
         self._listing = listing
         self.submitted: list[dict[str, Any]] = []
         self.concat_calls = 0
+        self.downloads: list[str] = []
         self.created_scene = False
         self.scene_clips: list[Any] = []
+        self.served = "labs"
+        self.listed = False
 
     async def __aenter__(self) -> _FakeClient:
         return self
@@ -140,7 +143,11 @@ class _FakeClient:
     async def __aexit__(self, *_exc: object) -> None:
         return None
 
+    def served_route(self, *, prefer_migrated: bool) -> str:
+        return self.served
+
     async def capability_listing(self, _project_id: str) -> dict[str, Any]:
+        self.listed = True
         return self._listing
 
     async def create_scene(self, *, project_id: str, workflow_ids: list[str]) -> _FakeScene:
@@ -167,6 +174,10 @@ class _FakeClient:
 
     async def concatenate_scene(self, inputs: Any, *, out_path: Any) -> Any:
         self.concat_calls += 1
+        return out_path
+
+    async def download_video(self, media_id: str, out_path: Path) -> Path:
+        self.downloads.append(media_id)
         return out_path
 
 
@@ -249,9 +260,12 @@ async def test_session_refuses_when_the_balance_cannot_finish_the_run(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("segments", [1, 2])
 async def test_session_renders_when_output_is_given(
-    _patched_client: _FakeClient, tmp_path: Path
+    _patched_client: _FakeClient, tmp_path: Path, segments: int
 ) -> None:
+    # labs: the scene render is "original + N extensions" (KNOWN_ISSUES), even for N=1;
+    # downloading the lone new segment would drop the source clip from --output.
     from gflow_cli.cli_video import _extend_session
 
     await _extend_session(
@@ -259,7 +273,7 @@ async def test_session_renders_when_output_is_given(
         profile_dir=tmp_path,
         media_id=MEDIA,
         prompts=("a",),
-        segments=1,
+        segments=segments,
         aspect="16:9",
         jitter_range=(0.0, 0.0),
         output_file=tmp_path / "out.mp4",
@@ -270,6 +284,45 @@ async def test_session_renders_when_output_is_given(
         recorder=None,
     )
     assert _patched_client.concat_calls == 1
+    assert _patched_client.downloads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("segments", "scene_id", "seed"), [(2, None, None), (1, MEDIA, None), (1, None, 7)]
+)
+async def test_an_unported_form_on_a_page_served_flow_google_com_is_exit_36(
+    _patched_client: _FakeClient,
+    tmp_path: Path,
+    segments: int,
+    scene_id: str | None,
+    seed: int | None,
+) -> None:
+    # Default host `auto` routes an unported form to the labs arm; if Flow then serves
+    # flow.google.com, the retired projectInitialData read would be exit 7. Refuse first.
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import FlowHostMigratedError
+    from gflow_cli.json_output import exit_code_for
+
+    _patched_client.served = "migrated"
+    with pytest.raises(FlowHostMigratedError, match="not ported") as info:
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=segments,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=None,
+            project_id=PROJECT,
+            scene_id=scene_id,
+            seed=seed,
+            as_json=False,
+            recorder=None,
+        )
+    assert exit_code_for(info.value) == 36
+    assert not _patched_client.listed and _patched_client.submitted == []
 
 
 @pytest.mark.asyncio
@@ -479,6 +532,194 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     assert payload["aborted"] is True
     assert payload["segments_completed"] == 1
     assert payload["credits_spent"] == 10
+    # The video_result shape t2v/i2v emit, so one parser reads all three (#882, @stgmt).
+    assert payload["status"] == "fail"
+    assert payload["succeeded"] is False
+    assert payload["media_id"] == "m1"
+    assert payload["request"]["mode"] == "extend"
+
+
+# --------------------------------------------------------------------------
+# flow.google.com arm (#882 takeover): route chosen before any browser
+# --------------------------------------------------------------------------
+
+SCENE = "cccccccc-0000-4000-8000-000000000000"
+
+
+@pytest.fixture
+def _host(monkeypatch: pytest.MonkeyPatch) -> Any:
+    from gflow_cli.config import reset_settings
+
+    def set_host(value: str | None) -> None:
+        if value is None:
+            monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+        else:
+            monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", value)
+        reset_settings()
+
+    yield set_host
+    reset_settings()
+
+
+@pytest.fixture
+def _run_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    seen: dict[str, Any] = {}
+
+    async def _fake(**kwargs: Any) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr("gflow_cli.cli_video._run_extend", _fake)
+    monkeypatch.setattr("gflow_cli.cli_video._make_provider_dir", lambda _p: Path("."))
+    monkeypatch.setattr("gflow_cli.cli_video._resolve_profile", lambda _p: "p")
+    return seen
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["-n", "2"],
+        ["--scene", SCENE],
+        ["--resume-from", SCENE],
+        ["--seed", "7"],
+    ],
+)
+def test_unported_forms_exit_36_before_anything_on_flow_google_com(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any], extra: list[str]
+) -> None:
+    _host("flow.google.com")
+    result = runner.invoke(
+        cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, "--yes", *extra]
+    )
+    assert result.exit_code == 36, result.output
+    assert _run_spy == {}  # no client, no browser
+    assert "Extend plan" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("host", "extra", "migrated"),
+    [
+        (None, [], True),  # auto: the default host serves a single segment
+        ("flow.google.com", [], True),
+        ("labs.google", [], False),  # the kill switch keeps the labs arm
+        # auto + unported form: the labs arm, which refuses (exit 36) once the page
+        # shows Flow served flow.google.com — see the session test above.
+        (None, ["-n", "2"], False),
+    ],
+)
+def test_the_arm_is_chosen_before_the_browser(
+    runner: CliRunner,
+    _host: Any,
+    _run_spy: dict[str, Any],
+    host: str | None,
+    extra: list[str],
+    migrated: bool,
+) -> None:
+    _host(host)
+    result = runner.invoke(
+        cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, "--yes", *extra]
+    )
+    assert result.exit_code == 0, result.output
+    assert _run_spy["migrated"] is migrated
+    assert _run_spy["aspect"] is None  # no hidden 9:16 sent to the migrated arm
+
+
+def test_the_migrated_plan_claims_no_price(runner: CliRunner, _host: Any) -> None:
+    _host("flow.google.com")
+    result = runner.invoke(cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, "--dry-run"])
+    assert result.exit_code == 0
+    assert "does not report the price" in result.output
+    assert "exact amount" not in result.output
+    assert "scene" in result.output
+
+
+class _MigratedClient:
+    def __init__(self, *, done: bool) -> None:
+        self.done = done
+        self.calls: list[dict[str, Any]] = []
+
+    async def __aenter__(self) -> _MigratedClient:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    async def extend_video_migrated(self, **kwargs: Any) -> Any:
+        from gflow_cli.api.transports.batchexecute import GenerationRecord
+        from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+        from gflow_cli.api.video_extend import ExtendStarted
+
+        self.calls.append(kwargs)
+        kwargs["on_started"](
+            ExtendStarted(media_id="new-media", workflow_id="new-wf", model_key="k"), "16:9"
+        )
+        record = GenerationRecord(
+            workflow_id="new-wf",
+            project_id=PROJECT,
+            media_id="new-media",
+            status=3 if self.done else 4,
+            video_url=None,
+            poster_url=None,
+            size_bytes=None,
+        )
+        outcome = ExtendOutcome(
+            record=record, video=None, model_key="k", aspect="16:9", scene_id=SCENE
+        )
+        return outcome, (kwargs["out_path"] if self.done else None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("done", [True, False])
+async def test_the_migrated_session_reports_one_video_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    done: bool,
+) -> None:
+    from gflow_cli.cli_video import _extend_migrated_session
+
+    fake = _MigratedClient(done=done)
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+    rows: list[tuple[str, str]] = []
+
+    class _Recorder:
+        def record_started_extend(self, *, started: Any, aspect: str, **_kw: Any) -> None:
+            rows.append((started.media_id, aspect))
+
+    async def _go() -> None:
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="go",
+            aspect=None,
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            as_json=True,
+            recorder=_Recorder(),  # type: ignore[arg-type]
+        )
+
+    if done:
+        await _go()
+    else:
+        with pytest.raises(SystemExit) as info:
+            await _go()
+        assert info.value.code != 0
+    payload = json.loads(capsys.readouterr().out)  # exactly one document
+    assert payload["succeeded"] is done
+    assert payload["media_id"] == "new-media"
+    assert payload["request"]["mode"] == "extend"
+    assert payload["scene_id"] == SCENE
+    assert rows == [("new-media", "16:9")]  # recorded at submit, with the page's aspect
+    assert fake.calls[0]["aspect"] is None
+
+
+def test_json_mode_prints_no_human_plan(runner: CliRunner) -> None:
+    """The plan preamble on stdout corrupted the JSON document (#882, @stgmt)."""
+    result = runner.invoke(
+        cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, "--dry-run", "--json"]
+    )
+    assert result.exit_code == 0
+    assert "Extend plan" not in result.output
 
 
 @pytest.mark.asyncio

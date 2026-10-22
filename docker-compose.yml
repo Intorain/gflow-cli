@@ -3,26 +3,27 @@
 # Start:  docker compose up -d
 # Stop:   docker compose down
 #
-# S3 credentials/bucket:  minioadmin / minioadmin  →  bucket "gflow-test"
+# S3 credentials/bucket:  rustfsadmin / rustfsadmin  →  bucket "gflow-test"
 # GCS emulator:           set STORAGE_EMULATOR_HOST=http://localhost:4443
 
 services:
-  # S3-compatible local storage — for testing the [s3] extra without real AWS.
+  # S3-compatible local storage (RustFS) — for testing the [s3] extra without real AWS.
+  # Replaces MinIO, whose community images were removed from Docker Hub in Sep 2026.
   # Endpoint: http://localhost:9000
   # Console:  http://localhost:9001
-  minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
-    command: server /data --console-address ":9001"
+  rustfs:
+    image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      RUSTFS_CONSOLE_ENABLE: "true"
     volumes:
-      - minio_data:/data
+      - rustfs_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      test: ["CMD-SHELL", "curl -fs http://localhost:9000/health || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -43,5 +44,5 @@ services:
       retries: 5
 
 volumes:
-  minio_data:
+  rustfs_data:
   fake_gcs_data:

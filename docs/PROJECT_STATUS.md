@@ -4,6 +4,77 @@
 
 ## Current release
 
+**v0.87.1 — alpha.** `gflow credits` reads a balance again, and 2K image upscales stop
+failing when Chrome loses Flow's reply.
+
+**`gflow credits` works again, on flow.google.com (#795).** The labs.google session token it
+used is gone (#1023). It now reads the balance from the request Flow's own page makes on
+load, the number its account menu shows. Measured on two accounts, neither on a paid plan; tier fields (`sku` and
+the rest) are now always null.
+
+**2K image upscale no longer fails on a lost reply (#1027).** Chrome dropped Flow's reply on
+6 of 12 measured upscales; the image is now taken from the page's own download when that
+happens.
+
+**Also:** a video run into an existing `--project` keeps that project's title in the local
+catalog (#1022); `opentelemetry-api` locked at 1.45.1 (CVE-2026-114603). A login with
+`--browser internal` (#1026) is fixed for the next release, verified live on Windows.
+
+Full ledger: [LIVE_VERIFICATION_v0.87.1](LIVE_VERIFICATION_v0.87.1.md).
+
+<details><summary>v0.87.0 — sign-in after labs.google's session URL went away</summary>
+
+Sign-in works again after labs.google's session URL went away, and a
+failure after the submit click no longer bills twice.
+
+**`gflow auth login --browser chrome` and `auth status` work again (#1023).** Since
+2026-10-22 labs.google's session URL answers HTTP 410 to every account, and every session
+check failed. A 410 now hands the verdict to the server-attested flow.google.com check
+(#791). A login with `--browser internal` cannot finish yet (#1026). (`gflow credits` was
+ported to flow.google.com after this release, #795.)
+
+**No second billed generation after the submit click (#1010).** A lost image submit reply
+used to make gflow submit the image again; a lost video reply, or any timeout after the
+click, was reported as retryable. Both now report exit 9 with `retryable: false` and say to
+check the project before re-running.
+
+**Also:** `image i2i --ref <uuid>` references an earlier image in place (#995); MCP image
+results report the seed Flow used, and `gflow_generate_image` no longer takes `seed`
+(#1013, breaking for MCP callers); `video upscale` no longer reports a working export as
+failed (#1014); the 4th `@` reference keeps its order (#997); flow.google.com clips save
+under `tmp/` without `--out-dir` and honour a cloud `GFLOW_CLI_STORAGE_URI` (#986, #1003);
+dependency CVEs fixed.
+
+Full ledger: [LIVE_VERIFICATION_v0.87.0](LIVE_VERIFICATION_v0.87.0.md).
+
+</details>
+
+<details><summary>v0.86.0 — video extend and the agent-only composer on flow.google.com</summary>
+
+**`gflow video extend` runs on flow.google.com, one segment at a time (#991, #639).**
+gflow drives Flow's own extend UI. The page mints its own reCAPTCHA token and builds
+the request; gflow observes it and never replays it. A route guard aborts any scene or
+extend request that names the wrong clip before Flow bills it. A media id that is not a
+video in the project exits 11 before any click. Chained extends, `--scene`/`--resume-from`,
+`--seed` and an `--aspect` other than the source's are not ported yet and exit 36 before
+anything is billed. Built on @stgmt's
+wire research (#882).
+
+**Text-to-image and text-to-video on Flow's agent-only composer (#989, #799).** On accounts
+that Flow serves only the agent-only composer, `gflow image t2i` and `gflow video t2v` now
+run instead of exiting 25. That includes their MCP twins. Every other form exits 36 before
+any click. `GFLOW_CLI_AGENT_CONFIRM` sets how the run treats Flow's credit confirmation.
+Reading the gate's clip count is #988. Contributed by @WAOmaster (#824).
+
+**`gflow auth renew` and `gflow credits … --refresh` (#982).** Saved sessions are refreshed
+headlessly, without signing in again. Contributed by @ziyedbe.
+
+Full ledger: [LIVE_VERIFICATION_v0.86.0](LIVE_VERIFICATION_v0.86.0.md).
+
+</details>
+
+<details><summary>v0.85.0 — images on flow.google.com can tag a character</summary>
+
 **v0.85.0 — alpha.** Images on flow.google.com can tag a character.
 
 **`@Character` on `gflow image t2i`/`i2i` (#723, #979).** On an account Flow serves from
@@ -20,6 +91,8 @@ Contributed by @BeckZero.
 **`gflow image t2i --project-name` titles a multi-prompt run's project (#975).**
 
 Full ledger: [LIVE_VERIFICATION_v0.85.0](LIVE_VERIFICATION_v0.85.0.md).
+
+</details>
 
 <details><summary>v0.84.0 — batch image runs target an existing project</summary>
 
@@ -487,6 +560,9 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `gflow credits` reads the balance from flow.google.com (#795); 2K image upscale survives a lost reply (#1027) | ✅ done (v0.87.1) |
+| Session checks survive labs.google's session URL answering 410 (#1023); no second billed generation after a lost submit reply (#1010) | ✅ done (v0.87.0) |
+| `video extend` driven through Flow's own UI on flow.google.com, single segment, with a route guard on the billed request (#991); t2i/t2v on the agent-only composer (#989); `auth renew` / `credits --refresh` (#982) | ✅ done (v0.86.0) |
 | `@Character` mentions on flow.google.com images attach the Flow character by exact picker title, verified as an entity chip, with an exact-set submit guard (#723, #979); multi-prompt `t2i --project-name` titles its project (#975) | ✅ done (v0.85.0) |
 | `gflow run --project` (#970) and multi-prompt `gflow image t2i --project` (#971) generate into an existing Flow project and create none | ✅ done (v0.84.0) |
 | `--duration` binds in a non-English Flow UI (#963), a notice-only cookie bar is acknowledged, image upscale clicks through locators (#957), and `auth status` probes with the profile's own channel (#962) | ✅ done (v0.83.2) |

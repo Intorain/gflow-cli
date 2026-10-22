@@ -134,6 +134,59 @@ def record_failed_operation_safe(
         logger.warning("failure_record_skipped", error=str(record_exc))
 
 
+def record_undownloaded_images_safe(
+    recorder: OperationRecorder | None,
+    *,
+    logger: FilteringBoundLogger,
+    profile_name: str,
+    profile_dir: Path,
+    project: ProjectInfo,
+    request: GenerateImageRequest,
+    images: Sequence[GeneratedImage],
+    saved_paths: Sequence[Path],
+    operation_kind: str,
+    input_media_ids: Sequence[str] = (),
+    project_created: bool = True,
+) -> list[str]:
+    """Keep images Flow generated when their download fails (#1035); return their ids.
+
+    Writes them as a STARTED operation with only the files written so far. The
+    caller passes the returned ids as ``flow_media_ids`` to
+    :func:`record_failed_operation_safe`, which turns that row FAILED — one
+    operation, never a SUCCEEDED + FAILED pair. Runs inside the caller's
+    ``except`` before it re-raises, so any fault here only warns (same
+    double-fault guard as :func:`record_failed_operation_safe`).
+    """
+    from gflow_cli.storage import cloud_info_from_path
+
+    media_ids = [image.media_name for image in images]
+    logger.warning(
+        "image.download_failed_after_generation",
+        flow_media_ids=media_ids,
+        flow_project_id=project.project_id,
+        saved=len(saved_paths),
+    )
+    if recorder is None:
+        return media_ids
+    try:
+        recorder.record_generated_images(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            project=project,
+            project_created=project_created,
+            request=request,
+            images=list(images),
+            saved_paths=list(saved_paths),
+            cloud_storage_infos=[cloud_info_from_path(p) for p in saved_paths],
+            input_media_ids=list(input_media_ids),
+            operation_kind=operation_kind,
+            status=OperationStatus.STARTED,
+        )
+    except Exception as record_exc:  # noqa: BLE001 — double-fault guard, see docstring
+        logger.warning("failure_record_skipped", error=str(record_exc))
+    return media_ids
+
+
 def escalate_asset_collision(
     exc: DataIntegrityError,
     *,
@@ -478,15 +531,16 @@ class OperationRecorder:
         op_id: str,
         i: int,
         image: GeneratedImage,
-        saved_path: Path,
+        saved_path: Path | None,
         profile_name: str,
         flow_project_id: str,
         cloud_info: CloudStorageInfo | None,
     ) -> None:
-        """Upsert one generated image asset + local-file row and link it to the operation."""
-        # Use the saved_path name for mime-type detection; for cloud paths
-        # str(saved_path) returns the full URI but .name gives the filename.
-        media_type = mimetypes.guess_type(saved_path.name)[0]
+        """Upsert one generated image asset + local-file row and link it to the operation.
+
+        ``saved_path`` is ``None`` when Flow generated the image but its download
+        failed (#1035): the asset is still recorded, with no local-file row.
+        """
         asset_id = _new_id()
         width, height = image.dimensions
         # Persist the Flow-assigned display name (when present) so a generated
@@ -517,6 +571,8 @@ class OperationRecorder:
             ),
         )
         repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, i)
+        if saved_path is None:
+            return
         is_cloud = cloud_info is not None
         repo.upsert_local_file(
             LocalFileRecord(
@@ -524,7 +580,8 @@ class OperationRecorder:
                 profile_name=profile_name,
                 asset_id=asset_id,
                 path=saved_path.resolve() if not is_cloud else None,
-                media_type=media_type,
+                # The name, not str(): for a cloud path str() is the full URI.
+                media_type=mimetypes.guess_type(saved_path.name)[0],
                 bytes=_file_bytes(saved_path) if not is_cloud else None,
                 sha256=_file_sha256(saved_path) if not is_cloud else None,
                 storage_provider=cloud_info.provider if cloud_info else None,
@@ -545,7 +602,16 @@ class OperationRecorder:
         operation_kind: str,
         cloud_storage_infos: list[CloudStorageInfo | None] | None = None,
         project_created: bool = True,
+        status: OperationStatus = OperationStatus.SUCCEEDED,
     ) -> None:
+        """Record a generation and its output images.
+
+        ``status=STARTED`` is the #1035 download-failure path: Flow returned the
+        images, but not every file was written. ``saved_paths`` then holds only the
+        files written so far (a prefix, aligned by index with ``images``), and the
+        caller's failure funnel turns this STARTED row into the one FAILED row
+        (``record_failed_operation`` with ``flow_media_ids``).
+        """
         repo = self.repository
 
         repo.upsert_profile(profile_name, profile_dir)
@@ -572,7 +638,7 @@ class OperationRecorder:
                 flow_project_id=project.project_id,
                 command=f"image {operation_kind}",
                 mode=OperationKind(operation_kind),
-                status=OperationStatus.SUCCEEDED,
+                status=status,
                 flow_operation_id=None,
                 flow_batch_id=None,
                 prompt=pf.prompt,
@@ -589,7 +655,8 @@ class OperationRecorder:
         # operation is already terminal at insert time. Stamp completed_at so
         # downstream queries like "SELECT * FROM operations WHERE completed_at
         # IS NULL" don't surface successful runs.
-        repo.update_operation_status(op_id, OperationStatus.SUCCEEDED, _now_utc_iso(), None, None)
+        if status == OperationStatus.SUCCEEDED:
+            repo.update_operation_status(op_id, status, _now_utc_iso(), None, None)
         metadata = self._generation_metadata(request)
         if metadata:
             repo.set_operation_metadata(op_id, metadata)
@@ -601,7 +668,9 @@ class OperationRecorder:
                 repo.link_operation_asset(op_id, input_asset.id, OperationAssetRole.INPUT, i)
 
         # Persist each output image
-        for i, (image, saved_path) in enumerate(zip(images, saved_paths, strict=False)):
+        # By index, never zip: a short `saved_paths` must not drop an image (#1035).
+        for i, image in enumerate(images):
+            saved_path = saved_paths[i] if i < len(saved_paths) else None
             cloud_info = (
                 cloud_storage_infos[i]
                 if cloud_storage_infos and i < len(cloud_storage_infos)

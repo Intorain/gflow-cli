@@ -368,9 +368,10 @@ class NetworkError(FlowApiError):
 class MediaDownloadError(NetworkError):
     """The signed-media GET failed AFTER Flow reported the generation done (#896).
 
-    Raised only by ``get_signed_media``, so catching it means the clip exists and was
-    billed — the recorder uses it to mark the asset generated instead of leaving it
-    ``pending`` forever. Exits 6 like its parent.
+    Raised by ``get_signed_media`` and by the clip writer when storing the bytes fails
+    (#1003), so catching it means the clip exists and was billed — the recorder uses it
+    to mark the asset generated instead of leaving it ``pending`` forever. Exits 6 like
+    its parent.
     """
 
     problem_type = "https://gflow-cli.dev/errors/media-download"
@@ -423,6 +424,11 @@ class RpcResponseUnavailableError(WireFormatError):
 
     problem_type = "https://gflow-cli.dev/errors/rpc-response-unavailable"
     title = "Flow response body could not be read"
+    _default_remediation = (
+        "The outcome is unknown: Flow may have saved this write. Open the project on "
+        "flow.google.com and check its title or the uploaded file before re-running. "
+        "Do not resubmit blindly, or you may get a duplicate project or upload."
+    )
 
 
 class SceneConcatError(FlowApiError):
@@ -778,10 +784,11 @@ class FlowAgentUiError(GFlowError):
     **Two producers, and they differ on retry.** On labs.google this is the Agentic
     UI A/B cohort, which is server-assigned per page load and flaps — hence class
     membership in ``RETRYABLE_ERRORS``, and hence the default remediation's advice to
-    try another profile. On the migrated ``flow.google.com`` host it is also raised
-    for an account whose composer is **agent-only** (#799): no classic arm exists at
-    all, so that raise site passes ``retryable=False`` and its own
-    ``remediation_hint``, because no retry or profile change can reach it.
+    try another profile. On the migrated ``flow.google.com`` host an account whose
+    composer is **agent-only** (#799) is driven by ``agent_only_composer``; there this
+    error means the agent did something other than what was asked — a second credit
+    confirmation, more results than requested, or a turn that produced nothing — and
+    those raise sites pass ``retryable=False``, because a blind re-run repeats the ask.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-agent-ui"
@@ -860,8 +867,9 @@ class FlowHostMigratedError(GFlowError):
         "Google has moved this account's Flow from labs.google to flow.google.com. "
         "gflow drives that frontend for text-to-video, image-to-video from local "
         "start (and end) frames, reference-to-video from local --ref files, "
-        "text-to-image, and image-to-image from local files (no UUID or @Name "
-        "frame; images take a character by name, video none; --project required) "
+        "text-to-image, and image-to-image from local files or an image the catalog "
+        "records in the same --project (no UUID or @Name video frame; images take "
+        "a character by name, video none; --project required) "
         "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
         "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
         "off, or because this request type is not ported to the migrated host yet. "

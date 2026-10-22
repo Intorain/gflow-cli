@@ -39,7 +39,7 @@ class TestMcpToolListing:
         )
 
     def test_generate_image_tool_has_required_params(self, mcp_server: Any) -> None:
-        """gflow_generate_image should accept prompt + model/aspect/count/seed/tools/profile."""
+        """gflow_generate_image should accept prompt + model/aspect/count/tools/profile."""
         tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema = tool.parameters
         required_fields = {"prompt"}
@@ -419,10 +419,15 @@ class TestCliMcpParameterSymmetry:
         tool = mcp_server._tool_manager._tools["gflow_generate_image"]
         schema_props = set(tool.parameters.get("properties", {}).keys())
         # Core params that must be mirrored
-        required_in_both = {"prompt", "model", "aspect", "count", "seed", "profile", "instructions"}
+        required_in_both = {"prompt", "model", "aspect", "count", "profile", "instructions"}
         assert required_in_both.issubset(schema_props), (
             f"MCP tool missing CLI params: {required_in_both - schema_props}"
         )
+
+    def test_image_tool_has_no_seed_param(self, mcp_server: Any) -> None:
+        """#1013: the image path never sends a seed (CLI --seed went in v0.8.0), so no param."""
+        tool = mcp_server._tool_manager._tools["gflow_generate_image"]
+        assert "seed" not in tool.parameters.get("properties", {})
 
     def test_video_t2v_params_mirrored(self, mcp_server: Any) -> None:
         """Key parameters of `gflow video t2v` must appear in gflow_generate_video."""

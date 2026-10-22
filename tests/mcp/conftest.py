@@ -15,6 +15,18 @@ import gflow_cli.mcp.resources
 import gflow_cli.mcp.tools  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limiter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test its own token bucket.
+
+    The module-level bucket holds 8 tokens per process, so under pytest-xdist whichever
+    worker happened to run a 9th generation-tool call got a rate-limited envelope
+    (`KeyError: 'params'` in CI, #1017).
+    """
+    tools = gflow_cli.mcp.tools
+    monkeypatch.setattr(tools, "_rate_limiter", tools._TokenBucket())  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.fixture()
 def mcp_server():
     """Return the MCPServer instance with all tools/resources registered."""

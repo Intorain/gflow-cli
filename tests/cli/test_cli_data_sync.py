@@ -241,3 +241,21 @@ def test_sync_real_bridge_opens_store_in_worker_thread(
 def test_sync_partial_error_exit_code_and_retryability_pinned() -> None:
     assert EXIT_CODE_MAP[SyncPartialError] == 34
     assert is_retryable(SyncPartialError("partial"))
+
+
+@pytest.mark.parametrize(
+    ("level", "fmt", "narrated"),
+    [
+        ("WARNING", "text", False),  # #1041 default: INFO events hidden, so echo progress
+        ("INFO", "text", True),
+        ("DEBUG", "text", True),
+        ("INFO", "json", False),
+    ],
+)
+def test_sync_progress_echo_follows_the_log_level(
+    monkeypatch: pytest.MonkeyPatch, level: str, fmt: str, narrated: bool
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_LOG_LEVEL", level)
+    monkeypatch.setenv("GFLOW_CLI_LOG_FORMAT", fmt)
+    reset_settings()
+    assert cli_data._logs_narrate_progress() is narrated  # pyright: ignore[reportPrivateUsage]

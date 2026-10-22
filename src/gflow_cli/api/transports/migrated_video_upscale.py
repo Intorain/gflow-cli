@@ -18,8 +18,10 @@ from gflow_cli.api.transports.migrated_recover import MIGRATED_CLIP_URL
 from gflow_cli.api.transports.migrated_upscale import (
     DOWNLOAD_BUTTON_SELECTOR,
     find_download_menu_item,
+    install_capture_hooks,
     is_menu_item_disabled,
     open_tile_download_menu,
+    restore_capture_hooks,
     settle_exception,
     wait_for_or_none,
 )
@@ -169,82 +171,35 @@ def _unavailable_error(scale_norm: str) -> UpscaleUnavailableError:
 def _export_refusal_listener(
     failed: asyncio.Future[None],
 ) -> Callable[[Response], Awaitable[None]]:
-    """A response listener that fails ``failed`` on an export RPC refusal or bad reply."""
+    """A response listener that fails ``failed`` on an export RPC refusal.
+
+    An unreadable body is skipped, not treated as a failure: Chrome routinely evicts
+    unrelated batchexecute bodies (``as29s`` polls) mid-export (#1014). An export that
+    never arrives is still caught by the capture timeout.
+    """
 
     async def on_response(response: Response) -> None:
         if "batchexecute" not in response.url:
             return
         try:
             text = await response.text()
-            for err in rpc_errors(text):
-                if err.rpcid in _EXPORT_RPCIDS:
-                    settle_exception(
-                        failed,
-                        WireFormatError(
-                            detail=(
-                                f"Video export RPC {err.rpcid} refused: code={err.code} "
-                                f"reasons={err.reasons}"
-                            ),
-                            route="video_upscale",
+        except Exception as exc:  # noqa: BLE001 - evicted body (Network.getResponseBody)
+            log.debug("migrated_video_upscale.body_unreadable", url=response.url, error=str(exc))
+            return
+        for err in rpc_errors(text):
+            if err.rpcid in _EXPORT_RPCIDS:
+                settle_exception(
+                    failed,
+                    WireFormatError(
+                        detail=(
+                            f"Video export RPC {err.rpcid} refused: code={err.code} "
+                            f"reasons={err.reasons}"
                         ),
-                    )
-        except Exception as exc:  # noqa: BLE001 - any unreadable reply fails the export
-            log.warning("migrated_video_upscale.parse_error", error=str(exc))
-            settle_exception(
-                failed,
-                WireFormatError(
-                    detail=f"Failed to read a video export response: {exc}",
-                    route="video_upscale",
-                ),
-            )
+                        route="video_upscale",
+                    ),
+                )
 
     return on_response
-
-
-async def _install_capture_hooks(page: Page, expected_type: str) -> None:
-    """Hook URL.createObjectURL and HTMLAnchorElement.prototype.click."""
-    await page.evaluate(
-        """(expected) => {
-            window._videoCapturedBase64 = null;
-            window._capturing = true;
-            window._origVideoCreateObjectURL = URL.createObjectURL;
-            window._origVideoAnchorClick = HTMLAnchorElement.prototype.click;
-
-            URL.createObjectURL = function(blob) {
-                if (window._capturing && blob && blob.size > 1000) {
-                    const mime = (blob.type || '').toLowerCase();
-                    if (mime.includes(expected) || (expected === 'video' && mime.includes('mp4'))) {
-                        const reader = new FileReader();
-                        reader.onloadend = function() {
-                            window._videoCapturedBase64 = reader.result.split(',')[1];
-                        };
-                        reader.readAsDataURL(blob);
-                    }
-                }
-                return window._origVideoCreateObjectURL.call(URL, blob);
-            };
-
-            HTMLAnchorElement.prototype.click = function() {};
-        }""",
-        expected_type,
-    )
-
-
-async def _restore_capture_hooks(page: Page) -> None:
-    try:
-        await page.evaluate("""() => {
-            window._capturing = false;
-            if (window._origVideoCreateObjectURL) {
-                URL.createObjectURL = window._origVideoCreateObjectURL;
-                delete window._origVideoCreateObjectURL;
-            }
-            if (window._origVideoAnchorClick) {
-                HTMLAnchorElement.prototype.click = window._origVideoAnchorClick;
-                delete window._origVideoAnchorClick;
-            }
-        }""")
-    except Exception:  # noqa: BLE001 - best-effort restore on a page that may be gone
-        pass
 
 
 async def _await_capture(
@@ -257,7 +212,7 @@ async def _await_capture(
         if failed.done():
             await failed  # re-raises the export refusal / unreadable reply
         await asyncio.sleep(1.0)
-        b64_data: str | None = await page.evaluate("() => window._videoCapturedBase64")
+        b64_data: str | None = await page.evaluate("() => window._gflowCapturedBase64")
         if b64_data:
             return b64_data
     raise TransportTimeoutError(
@@ -324,7 +279,7 @@ async def upscale_video_migrated(
     on_response = _export_refusal_listener(failed)
     try:
         page.on("response", on_response)
-        await _install_capture_hooks(page, "gif" if scale_norm == "270p" else "video")
+        await install_capture_hooks(page, "gif" if scale_norm == "270p" else "video")
         await btn_target.click()
         budget = timeout_s if timeout_s is not None else export_timeout_s(scale_norm)
         b64_data = await _await_capture(page, failed, scale_norm, budget)
@@ -342,4 +297,4 @@ async def upscale_video_migrated(
             failed.cancel()
         elif not failed.cancelled():
             failed.exception()  # mark retrieved: a late refusal after a capture is moot
-        await _restore_capture_hooks(page)
+        await restore_capture_hooks(page)

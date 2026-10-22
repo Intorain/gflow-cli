@@ -39,7 +39,7 @@ You have a Google account with Flow access, you have Veo credits, and you run re
 - **Consistent subjects.** `gflow character create` mints a Flow Character (face and body reference) so the same person appears from one generation to the next.
 - **Prompt tools.** `--tool creative-director` rewrites a terse prompt into a vivid one (Google's 5-component formula) before generating — on any command. Bring your own with [My Tools](docs/TOOLS.md).
 - **Pipelines.** Wire Veo into your content automation, AI-video stack, or batch experiments.
-- **Terminal-native.** After one `gflow auth login`, you stay in the shell. No clicking through dialogs.
+- **Terminal-native.** After one `gflow auth login`, you stay in the shell. No clicking through dialogs. A stale session renews headlessly with `gflow auth renew`.
 
 Same Veo and Imagen models, same quality, same billing against your own Google account, now programmatic.
 
@@ -54,8 +54,9 @@ uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 # 2 · Authenticate (one-time, opens a real Chrome window)
 gflow auth login --browser chrome
 
-# Check the current balance (or use `credits list` for every saved profile)
-gflow credits user
+# Check the session (spends nothing)
+gflow auth status
+gflow credits user          # Veo credit balance (opens Flow in the browser; spends nothing)
 
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
@@ -155,7 +156,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 **Current transport:** `ui_automation` drives Flow through a persistent Playwright Chromium profile. It is production-stable and verified end-to-end every release (see the per-release `LIVE_VERIFICATION_*` evidence files).
 
-**Two Flow frontends:** Google is moving accounts from `labs.google` onto `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)) — same product, different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). The migrated driver covers text-to-video, image-to-video from a local start frame, reference-to-video from local files, text-to-image, and image-to-image from local files. Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ffroliva/gflow-cli/issues/958)) / 2 Lite / Pro, the five aspect ratios measured on that host (16:9, 4:3, 1:1, 3:4, 9:16), and counts 1–4; an existing project is required at the transport boundary. Images can tag a character by `@Name` ([#723](https://github.com/ffroliva/gflow-cli/issues/723)). UUID media references, an entity id without a name, instructions, Imagen 4, and the rest of the matrix keep the labs driver until ported (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
+**Two Flow frontends:** Google is moving accounts from `labs.google` onto `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)) — same product, different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). The migrated driver covers text-to-video, image-to-video from a local start frame, reference-to-video from local files, text-to-image, image-to-image from local files, and a single-segment `video extend`. Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ffroliva/gflow-cli/issues/958)) / 2 Lite / Pro, the five aspect ratios measured on that host (16:9, 4:3, 1:1, 3:4, 9:16), and counts 1–4; an existing project is required at the transport boundary. Images can tag a character by `@Name` ([#723](https://github.com/ffroliva/gflow-cli/issues/723)). An account served the **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gets text-to-image and text-to-video only. An image `--ref <uuid>` is referenced in place when the catalog records it in the same `--project` ([#995](https://github.com/ffroliva/gflow-cli/issues/995)). Other UUID media references, an entity id without a name, instructions, Imagen 4, and the rest of the matrix keep the labs driver until ported (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
 
 **What's blocked:** a pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers plus a reCAPTCHA mint we cannot reproduce headlessly. Three earlier HTTP strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` for research, off the production path.
 
@@ -222,12 +223,3 @@ No sponsors yet. <a href="https://github.com/sponsors/ffroliva/sponsorships?freq
 </picture>
 
 If `gflow-cli` saves you time, please ⭐ the repo. It is the cheapest way to support the project.
-
-### Recovering an unreadable Flow response
-
-When Chrome cannot retrieve a create, rename, or upload RPC's response body,
-gflow reads the persisted result from a separate project tab. Recovery requires
-the newly navigated project ID, the exact saved title, or one uploaded media ID
-with the run's unique filename. It does not submit the write again. If readback
-cannot prove the result, `RpcResponseUnavailableError` (exit 7, not automatically
-retryable) preserves the existing project and upload name for inspection.

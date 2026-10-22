@@ -964,6 +964,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # #792: set when a migrated run FAILED, so the park that would otherwise
         # run in a `finally` is deferred past FlowApiClient's incident capture.
         self._deferred_park_pending: bool = False
+        # The route the last image call took ("labs" / "migrated"): the page is
+        # parked on about:blank afterwards, so its URL no longer says (#1035).
+        self.last_image_route: str | None = None
         # Cross-process profile lease (D3). Held ONLY on the standalone-context
         # path (setup with page=None), where this transport owns the persistent
         # context. On the shared-page path the caller (FlowApiClient) owns both
@@ -1502,9 +1505,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         Draining it at the START of the next run -- before the route decision reads
         ``page.url`` -- is what makes deferring safe. Doing it at the client's
-        failure boundary was not enough: ``generate_images`` is retried inside
-        ``post_with_retry`` (``client.py``), so a retryable 5xx never reaches that
-        boundary and attempt 2 would re-enter a still-mounted composer. Draining
+        failure boundary was not enough: ``generate_images`` used to be retried inside
+        ``post_with_retry`` (``client.py``; once per call since #1010), so a failure
+        could skip that boundary and re-enter a still-mounted composer. Draining
         here holds the invariant at the only point that consumes it, and resets the
         latch on every path (success, retry, or a later unrelated run).
         """
@@ -3106,7 +3109,10 @@ class UiAutomationTransport(VideoGenerationMixin):
                 raise_if_migrated(page, at="reference_upload_kill_switch")
             composer = MigratedComposer(out_dir=self._out_dir)
             try:
-                await composer.ensure_editor(page, project_id)
+                if await composer.ensure_editor(page, project_id) == "agent_only":
+                    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415
+
+                    raise agent.refuse_unported("image-to-image")
                 media_id, display_name = await composer.upload(page, project_id, path)
             except Exception:
                 # Same failure discipline as image generation (#792): keep the page for
@@ -3146,9 +3152,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # purpose, so the incident bundle is captured from a live page instead of
         # about:blank. Drain that deferred park HERE — before the route decision
         # reads page.url, and before anything re-enters a still-mounted composer.
-        # This is also the retry path: generate_images runs inside
-        # post_with_retry, so a retryable 5xx never reaches the client's failure
-        # boundary and attempt 2 would otherwise resume on a dirty composer.
+        # It also covers a client that still retries this call: since #1010 the
+        # page-owned image call runs once, but a caller re-entering after a failure
+        # must not resume on a dirty composer.
         await self.park_deferred_page()
         flow_host = get_settings().flow_host
         prefer = migrated_images_prefer(request, page_url=page.url, project_id=project_id)
@@ -3162,6 +3168,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
         if route == "blocked":
             raise_if_migrated(page, at="image_flow_host_kill_switch")
+        self.last_image_route = route
         if route == "migrated":
             try:
                 result = await run_images(page, request, project_id=project_id, out_dir=out_dir)

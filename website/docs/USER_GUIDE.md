@@ -422,9 +422,10 @@ Your Google plan includes a finite Veo credit allowance — the video journeys s
 
 ### 10.1 Check the balance
 
-Check the current Veo video-credit balance for the selected profile. The normal path uses direct
-HTTP and does not open a browser; a browser remains the fallback when saved-cookie decryption or
-the HTTP path fails:
+Check the current Veo video-credit balance for the selected profile. gflow opens flow.google.com
+in the profile's browser and reads the balance the app itself loads, the number in Flow's
+account menu ([#795](https://github.com/ffroliva/gflow-cli/issues/795)). Nothing is clicked and
+nothing is spent:
 
 ```bash
 gflow credits user
@@ -432,8 +433,8 @@ gflow credits user
 # Or inspect every saved profile while preserving partial results.
 gflow credits list
 
-# A profile unused for weeks may report an expired session; --refresh renews it
-# in a headless browser and asks again (no credits, one Chrome launch per expired profile).
+# A profile unused for weeks may land on a sign-in page; --refresh renews it
+# in a headless browser and reads again (no credits, one more Chrome launch per profile).
 gflow credits list --refresh
 ```
 
@@ -949,7 +950,7 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-For MinIO, also set:
+For a self-hosted S3-compatible store (RustFS, MinIO, ...), also set:
 
 ```bash
 export AWS_ENDPOINT_URL=http://localhost:9000

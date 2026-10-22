@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from gflow_cli.config import LogFormat
+from gflow_cli.config import LogFormat, LogLevel
 from gflow_cli.errors import ContentPolicyError, GFlowError, WireFormatError
 
 if TYPE_CHECKING:
@@ -43,11 +43,15 @@ if TYPE_CHECKING:
 # Single point of definition prevents the half-and-half state the council
 # flagged (cli.py inlined 10, observability.py imported logging.INFO).
 DEBUG_LEVEL: int = 10
-INFO_LEVEL: int = 20
+_LEVELS: dict[LogLevel, int] = {
+    LogLevel.DEBUG: DEBUG_LEVEL,
+    LogLevel.INFO: 20,
+    LogLevel.WARNING: 30,
+    LogLevel.ERROR: 40,
+}
 
 __all__ = [
     "DEBUG_LEVEL",
-    "INFO_LEVEL",
     "configure_logging",
     "emit_error_event",
     "emit_unhandled_event",
@@ -60,14 +64,16 @@ def resolves_to_json(fmt: LogFormat) -> bool:
 
     ``LogFormat.AUTO`` renders TEXT only on a stderr TTY (logs go to stderr).
     Single point of truth for the AUTO resolution — shared by
-    :func:`configure_logging` and ``cli_data._logs_emit_json``.
+    :func:`configure_logging` and ``cli_data._logs_narrate_progress``.
     """
     if fmt == LogFormat.AUTO:
         return not bool(getattr(sys.stderr, "isatty", lambda: False)())
     return fmt == LogFormat.JSON
 
 
-def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
+def configure_logging(
+    log_format: LogFormat = LogFormat.AUTO, log_level: LogLevel = LogLevel.WARNING
+) -> None:
     """Bootstrap structlog.
 
     Logs are written to **stderr** (stdout is reserved for command output such
@@ -106,7 +112,8 @@ def configure_logging(log_format: LogFormat = LogFormat.AUTO) -> None:
         renderer = structlog.processors.JSONRenderer()
     structlog.configure(
         processors=[*shared_processors, renderer],
-        wrapper_class=structlog.make_filtering_bound_logger(INFO_LEVEL),
+        # WARNING by default: a command prints its result, not its progress (#1041).
+        wrapper_class=structlog.make_filtering_bound_logger(_LEVELS[log_level]),
         # Route to stderr: the default PrintLoggerFactory writes to stdout,
         # which corrupts `--json` output (logs interleave with the payload).
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),

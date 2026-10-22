@@ -205,6 +205,21 @@ def aspect_choices() -> dict[str, str]:
     return {ratio: aspect.value for ratio, aspect in _ASPECT_FROM_CLI.items()}
 
 
+def recorded_in_project(recorded_project_id: object, target_project_id: str | None) -> bool:
+    """True when the catalog records an image in the very project a generation targets (#995).
+
+    Such a ref is already in the project, so on flow.google.com it is referenced in
+    place instead of refused as a foreign media UUID. This is a routing hint only: the
+    migrated composer still proves the tile is in the page's project grid before it
+    selects it (``await_existing_references``) and fails loud when it is not.
+    """
+    return (
+        isinstance(recorded_project_id, str)
+        and bool(target_project_id)
+        and recorded_project_id == target_project_id
+    )
+
+
 @dataclass(frozen=True)
 class ImageRef:
     """A reference image for I2I, identified by the upload's media UUID.
@@ -229,7 +244,8 @@ class ImageRef:
     #: True only for an image already in the project being driven: one this run
     #: generated (``"ref": "batch:N"``) or uploaded (a local-file ref), #913. On
     #: flow.google.com only such a ref is referenced in place; a UUID ref from anywhere
-    #: else stays unported (exit 36).
+    #: else stays unported (exit 36). A catalogued image recorded in the target project
+    #: counts too (#995, :func:`recorded_in_project`).
     in_project: bool = False
 
     def __post_init__(self) -> None:

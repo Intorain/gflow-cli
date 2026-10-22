@@ -42,7 +42,7 @@ from gflow_cli.api._engine import (
     resolve_async_playwright,
     run_teardown_step,
 )
-from gflow_cli.api._retry import parse_retry_after, post_with_retry
+from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import (
     AssetInfo,
@@ -129,6 +129,7 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef, ProjectBrief
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -213,6 +214,7 @@ MAX_UPSAMPLE_B64_LEN = 50 * 1024 * 1024
 _AISANDBOX_CONTENT_TYPE = "text/plain;charset=UTF-8"
 # Content type for the labs.google BFF (tRPC) endpoints, which DO accept JSON.
 _APPLICATION_JSON = "application/json"
+_MIGRATED_FLOW_HOST = "flow.google.com"
 
 # aisandbox-pa POSTs return 401 to page.request unless an Authorization: Bearer
 # <access_token> is attached — the SPA's OAuth2 token, fetched from the BFF
@@ -1589,17 +1591,18 @@ class FlowApiClient:
             # #803/#795: labs answering 200 with no token is the migrated-account
             # shape, not an expired session. aisandbox-pa has not been contacted
             # yet, so nothing has rejected anything — and SAPISID is what made
-            # this probe answer at all. Mirrors the wording live-verified for
-            # `gflow credits` in api/credits.py.
+            # this probe answer at all. (`gflow credits` no longer uses this token:
+            # it reads flow.google.com's `nzlxg` reply, #795.)
             raise AisandboxAuthError(
                 detail="no access_token in /fx/api/auth/session",
                 status=resp.status,
                 instance=_make_instance(),
                 route="auth/session",
                 remediation_hint=(
-                    "Flow's labs.google session carries no API token for this account. "
-                    "On accounts Google serves from flow.google.com this is expected "
-                    "and re-authenticating will not help — it can also roll this "
+                    "Flow's labs.google session carries no API token. Since 2026-10-22 "
+                    "its session URL answers 410 for every account, including those Flow "
+                    "serves from flow.google.com (#1023), so this is expected and "
+                    "re-authenticating will not help — it can also roll this "
                     "profile's Chrome-strategy marker back and start the #791 "
                     "re-login loop. Generation still works; the routes that need this "
                     "token do not. See issue #803."
@@ -1868,7 +1871,7 @@ class FlowApiClient:
         page when that route refuses (#864, see :meth:`_labs_project_route_refused`).
         """
         title = title or _default_project_title()
-        if self.settings.flow_host != "flow.google.com":
+        if self.settings.flow_host != _MIGRATED_FLOW_HOST:
             body = {"json": {"projectTitle": title, "toolName": "PINHOLE"}}
             try:
                 data = await self._post_json(
@@ -1902,23 +1905,19 @@ class FlowApiClient:
         return refused
 
     async def get_credits(self) -> CreditsInfo:
-        """Return the authenticated profile's current Flow credit balance."""
+        """Return the profile's current Flow credit balance.
 
-        data = await self._get_json(routes.CREDITS, route_name="credits")
-        if not isinstance(data, dict):
-            raise WireFormatError(
-                detail="unexpected credits response shape: expected an object",
-                instance=_make_instance(),
-                route="credits",
-            )
+        Read from flow.google.com's own ``nzlxg`` reply (#795): the labs session that
+        issued the token for ``GET /v1/credits`` answers 410 to every account since
+        2026-10-22, and the app on flow.google.com sends no Bearer to aisandbox-pa.
+        """
+        from gflow_cli.api.transports import migrated_composer  # noqa: PLC0415
+
+        page = await self._checkout_page()
         try:
-            return CreditsInfo.from_response(cast("JsonObject", data))
-        except ValueError as exc:
-            raise WireFormatError(
-                detail=str(exc),
-                instance=_make_instance(),
-                route="credits",
-            ) from exc
+            return await migrated_composer.read_credits(page)
+        finally:
+            self._checkin_page(page)
 
     async def rename_project(self, project_id: str, new_title: str) -> JsonObject:
         """Rename an existing Flow project.
@@ -1926,7 +1925,7 @@ class FlowApiClient:
         Maps to `POST .../trpc/project.renameProject`, and to the project's header title
         on flow.google.com when that route refuses (#864). Returns ``{}`` there.
         """
-        if self.settings.flow_host != "flow.google.com":
+        if self.settings.flow_host != _MIGRATED_FLOW_HOST:
             body = {"json": {"projectId": project_id, "projectTitle": new_title}}
             try:
                 return await self._post_json(
@@ -2128,6 +2127,7 @@ class FlowApiClient:
                 self._checkin_page(page)
 
         resp = await self._run_with_retry(attempt, route=route)
+        _validate_fife_final_url(str(resp.url))
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
         body = await resp.body()
@@ -2521,7 +2521,8 @@ class FlowApiClient:
         await write_asset_async(target, video_bytes)
         return target
 
-    def _upscale_route(self, *, prefer_migrated: bool) -> str:
+    def served_route(self, *, prefer_migrated: bool) -> str:
+        """``migrated_route`` for the host this client's page was actually served."""
         return migrated_route(
             getattr(self._page, "url", None),
             self.settings.flow_host,
@@ -2609,7 +2610,7 @@ class FlowApiClient:
             target_resolution=target_resolution,
             out_path=out_path,
         )
-        route = self._upscale_route(prefer_migrated=False)
+        route = self.served_route(prefer_migrated=False)
         if route == "blocked":
             raise_if_migrated(self._page, at="image_upscale_flow_host_kill_switch")
         if route == "migrated":
@@ -2618,7 +2619,7 @@ class FlowApiClient:
         try:
             token = await self._mint_recaptcha_token(recaptcha_action)
         except FlowHostMigratedError:
-            if self._upscale_route(prefer_migrated=True) != "migrated":
+            if self.served_route(prefer_migrated=True) != "migrated":
                 raise
             return await migrated()
         req: UpsampleImageRequest = _dc_replace(base_req, recaptcha_token=token)
@@ -2704,7 +2705,7 @@ class FlowApiClient:
         """
         from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
 
-        if self._upscale_route(prefer_migrated=True) != "migrated":
+        if self.served_route(prefer_migrated=True) != "migrated":
             raise FlowHostMigratedError(
                 detail=(
                     "video upscale is driven only on flow.google.com (there is no "
@@ -2748,6 +2749,47 @@ class FlowApiClient:
                 self._checkin_page(page)
         except Exception as exc:
             await self._raise_with_incident(exc, phase="video_upscale")
+
+    async def extend_video_migrated(  # noqa: PLR0913
+        self,
+        *,
+        media_id: str,
+        project_id: str,
+        prompt: str,
+        aspect: str | None,
+        out_path: Path,
+        on_started: ExtendStartedCallback | None = None,
+        poll_timeout_s: float = 900.0,
+    ) -> tuple[ExtendOutcome, AnyPath | None]:
+        """One extend segment through Flow's own UI on flow.google.com. Costs credits.
+
+        The page mints and sends ``fZytfe`` itself; see
+        :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome and the
+        written mp4 (``None`` when the generation did not finish).
+        """
+        from gflow_cli.api.transports.migrated_extend import run_extend
+
+        try:
+            page = await self._checkout_page()
+            try:
+                outcome = await run_extend(
+                    page,
+                    project_id=project_id,
+                    media_id=media_id,
+                    prompt=prompt,
+                    aspect=aspect,
+                    poll_timeout_s=poll_timeout_s,
+                    on_started=on_started,
+                )
+            finally:
+                self._checkin_page(page)
+        except Exception as exc:
+            await self._raise_with_incident(exc, phase="video_extend")
+        if outcome.video is None:
+            return outcome, None
+        target = self._write_target(out_path)
+        await write_asset_async(target, outcome.video)
+        return outcome, target
 
     async def _mint_recaptcha_token(self, action: str) -> str:
         """Mint a single-use reCAPTCHA Enterprise token via the client's Page.
@@ -2875,8 +2917,9 @@ class FlowApiClient:
             raise RuntimeError(
                 msg,
             )
-        page_owned = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
-        if callable(page_owned) and page_owned():
+        page_owned_fn = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
+        page_owned = callable(page_owned_fn) and bool(page_owned_fn())
+        if page_owned:
             # #891: a transport that drives Flow's own page never reads
             # `recaptcha_token` -- the page mints its own on click -- so a client
             # mint here is dead weight at best. At worst it runs on whatever page the
@@ -2895,7 +2938,9 @@ class FlowApiClient:
             {} if name_resolver is None else {"name_resolver": name_resolver}
         )
         images: list[GeneratedImage] = []
-        async for retrying in post_with_retry():
+        # #1010: a page-owned call IS the billed click, and an error after it does not
+        # mean nothing was made, so retrying it re-submits (one run left 2 images).
+        async for retrying in post_with_retry(max_attempts=1 if page_owned else MAX_ATTEMPTS):
             with retrying:
                 images = await self.transport.generate_images(
                     project_id=project_id,
@@ -3719,7 +3764,8 @@ def _validate_fife_url(url: str) -> None:
     constructed from untrusted input), the URL could point to internal
     services (``http://169.254.169.254/``, ``http://localhost:6006/``,
     ``http://127.0.0.1/``, ...). Playwright's ``max_redirects`` does not
-    constrain the redirect target host, so we validate up-front.
+    constrain the redirect target host, so this up-front check is paired with
+    :func:`_validate_fife_final_url` on the host the response ended on.
 
     Allowlist: scheme must be ``https`` AND host must be ``flow-content.google``
     or any subdomain of ``.google``. The captured samples (see
@@ -3732,9 +3778,32 @@ def _validate_fife_url(url: str) -> None:
         msg = f"Refusing non-HTTPS download URL: scheme={parts.scheme!r}"
         raise ValueError(msg)
     host = parts.hostname or ""
-    if not (host == "flow-content.google" or host.endswith(".google")):
+    # flow.google.com: agent-only image tiles serve from an opaque /asb/ URL there (2026-10-04).
+    if not (
+        host == "flow-content.google" or host.endswith(".google") or host == _MIGRATED_FLOW_HOST
+    ):
         msg = f"Refusing download from unexpected host: {host!r}"
         raise ValueError(msg)
+
+
+def _validate_fife_final_url(url: str) -> None:
+    """Refuse a download whose redirects ended off Google's hosts (SSRF guard, part 2).
+
+    ``flow.google.com/asb/...`` answers with a redirect to ``lh3.google.com``, so the
+    final host is checked against the same allowlist the agent-only clip download uses.
+    """
+    from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - cycle
+        _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    if _is_allowed_download_host(url):
+        return
+    try:
+        _validate_fife_url(url)
+    except ValueError:
+        parts = urlsplit(url)
+        msg = f"Refusing image download redirected to {parts.scheme}://{parts.hostname!r}"
+        raise ValueError(msg) from None
 
 
 def _make_instance() -> str:
