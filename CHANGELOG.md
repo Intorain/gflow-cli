@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.88.0] — 2026-10-22
+
 ### Added
 
 - **`GFLOW_CLI_BROWSER_PROXY` routes the browser through a proxy**
@@ -6403,7 +6405,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.88.0...HEAD
+[0.88.0]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...v0.88.0
 [0.87.1]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...v0.87.1
 [0.87.0]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0
