@@ -25,8 +25,8 @@ from structlog.testing import capture_logs
 
 from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
 from gflow_cli.auth.real_chrome import (
-    _UNVERIFIED_HINT,
     GEMINI_URL,
+    UNVERIFIED_HINT,
     RealChromeStrategy,
     _await_chrome_close,
     _build_chrome_args,
@@ -832,4 +832,4 @@ def test_login_instructions_say_gflow_closes_chrome(capsys: pytest.CaptureFixtur
 
 
 def test_google_session_only_hint_drops_close_chrome() -> None:
-    assert "before closing Chrome" not in _UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]
+    assert "before closing Chrome" not in UNVERIFIED_HINT[FlowSessionOutcome.GOOGLE_SESSION_ONLY]

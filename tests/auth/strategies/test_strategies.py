@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from structlog.testing import capture_logs
 
-from gflow_cli.auth.real_chrome import _UNVERIFIED_HINT, _UNVERIFIED_MESSAGE, GEMINI_URL
+from gflow_cli.auth.real_chrome import GEMINI_URL, UNVERIFIED_HINT, UNVERIFIED_MESSAGE
 from gflow_cli.auth.strategies import InternalChromiumStrategy, RealChromeStrategy
 from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
 from gflow_cli.errors import (
@@ -221,8 +221,8 @@ class TestRealChromeStrategy:
             with pytest.raises(AuthMissingError) as exc_info:
                 await strategy.login(profile_dir, headless=False)
 
-        assert exc_info.value.detail == _UNVERIFIED_MESSAGE[outcome]
-        assert exc_info.value.remediation_hint == _UNVERIFIED_HINT[outcome]
+        assert exc_info.value.detail == UNVERIFIED_MESSAGE[outcome]
+        assert exc_info.value.remediation_hint == UNVERIFIED_HINT[outcome]
         assert not (profile_dir / ".gflow_browser_strategy").exists()
 
     @pytest.mark.asyncio
@@ -449,6 +449,12 @@ class TestInternalChromiumStrategy:
         with (
             patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+            patch(
+                "gflow_cli.auth.internal_chromium.verify_flow_profile",
+                AsyncMock(
+                    return_value=_status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
+                ),
+            ),
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_settings.return_value.home = gflow_home
@@ -528,6 +534,12 @@ class TestInternalChromiumStrategy:
         with (
             patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+            patch(
+                "gflow_cli.auth.internal_chromium.verify_flow_profile",
+                AsyncMock(
+                    return_value=_status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
+                ),
+            ),
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_settings.return_value.home = gflow_home
@@ -645,13 +657,87 @@ class TestInternalChromiumStrategy:
         mock_ctx.close.assert_called_once()
 
 
+class TestInternalChromiumLabsGone:
+    """#1026 — since 2026-10-22 labs answers `410 {"error"}` to every account, so the
+    labs probe can never say AUTHENTICATED. The internal strategy must stop on the
+    migrated-cookie signal and let `verify_flow_profile` (the #791 server-attested
+    check) decide, exactly as the chrome strategy does — not wait to its deadline."""
+
+    MIGRATED_JAR = [
+        {"name": "SAPISID", "value": "x", "domain": ".google.com"},
+        {"name": "__Secure-OSID", "value": "y", "domain": ".flow.google.com"},
+    ]
+
+    def _playwright(self) -> tuple[MagicMock, MagicMock]:
+        resp = MagicMock(name="resp")
+        resp.status = 410
+        resp.text = AsyncMock(return_value='{"error":"gone"}')
+        page = MagicMock(name="page")
+        page.url = "https://flow.google.com/project/abc123"
+        page.goto = AsyncMock()
+        page.is_closed = MagicMock(return_value=False)
+        page.request.get = AsyncMock(return_value=resp)
+        ctx = MagicMock(name="ctx")
+        ctx.pages = [page]
+        ctx.cookies = AsyncMock(return_value=self.MIGRATED_JAR)
+        ctx.close = AsyncMock()
+        pw = MagicMock(name="pw")
+        pw.chromium.launch_persistent_context = AsyncMock(return_value=ctx)
+        cm = MagicMock(name="cm")
+        cm.__aenter__ = AsyncMock(return_value=pw)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        return MagicMock(name="async_playwright", return_value=cm), ctx
+
+    async def _login(self, tmp_path: Path, verdict: FlowSessionStatus) -> tuple[Path, AsyncMock]:
+        gflow_home = tmp_path / "gflow_home"
+        gflow_home.mkdir()
+        profile_dir = gflow_home / "profile_internal"
+        mock_ap, _ = self._playwright()
+        verify = AsyncMock(return_value=verdict)
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+            patch("gflow_cli.auth.internal_chromium.verify_flow_profile", verify, create=True),
+            patch("asyncio.sleep", AsyncMock()),
+        ):
+            mock_settings.return_value.home = gflow_home
+            # 1 s, not 600: before the fix this spins on real time until the deadline.
+            await InternalChromiumStrategy(timeout_seconds=1).login(profile_dir, headless=False)
+        return profile_dir, verify
+
+    @pytest.mark.asyncio
+    async def test_410_stream_with_migrated_cookies_is_verified_on_disk(
+        self, tmp_path: Path
+    ) -> None:
+        verdict = FlowSessionStatus(
+            outcome=FlowSessionOutcome.AUTHENTICATED,
+            user_email="test@example.com",
+            source="internal",
+        )
+        profile_dir, verify = await self._login(tmp_path, verdict)
+
+        verify.assert_awaited_once_with(profile_dir, source="internal")
+        assert (profile_dir / ".gflow_account").read_text(encoding="utf-8") == "test@example.com"
+        # Bundled Chromium is not a chrome-strategy profile; never claim it is.
+        assert not (profile_dir / ".gflow_browser_strategy").exists()
+
+    @pytest.mark.asyncio
+    async def test_unverified_disk_raises_auth_missing(self, tmp_path: Path) -> None:
+        verdict = _status(FlowSessionOutcome.GOOGLE_SESSION_ONLY)
+        with pytest.raises(AuthMissingError) as excinfo:
+            await self._login(tmp_path, verdict)
+
+        assert UNVERIFIED_MESSAGE[FlowSessionOutcome.GOOGLE_SESSION_ONLY] in str(excinfo.value)
+        assert not (tmp_path / "gflow_home" / "profile_internal" / ".gflow_account").exists()
+
+
 class TestRaiseOnCloseDefault:
     """`raise_on_close` defaults to True, and that default is load-bearing.
 
-    The keyword was added so the chrome strategy could treat a hand-closed window as
-    "fall through to the on-disk probe" rather than an error. `InternalChromiumStrategy`
-    keeps the opposite contract: it has no second probe to fall through to, so a browser
-    closed before the Flow sign-in completes must raise. Nothing pinned that default —
+    The keyword means "the caller owns an on-disk fallback oracle": both login
+    strategies now pass False and run `verify_flow_profile` afterwards (#1026). Any
+    caller WITHOUT that oracle must keep the default, so a browser closed before the
+    Flow sign-in completes raises. Nothing pinned that default —
     flipping it to False left the whole auth suite green while silently turning a failed
     login into a reported success with no `.gflow_account` written.
     """
@@ -921,9 +1007,9 @@ class TestMigratedHostStopSignal:
 
     @pytest.mark.asyncio
     async def test_a_caller_without_a_fallback_oracle_keeps_waiting(self) -> None:
-        """`InternalChromiumStrategy` never runs `verify_flow_profile`, so stopping
-        on a signal that proves nothing would hand it an unverified profile and call
-        the login a success."""
+        """A caller that never runs `verify_flow_profile` must not stop on a signal
+        that proves nothing: it would hold an unverified profile and call the login
+        a success."""
         from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
 
         page = self._page()
