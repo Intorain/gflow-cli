@@ -13,7 +13,7 @@ import pytest
 import structlog
 from packaging.requirements import Requirement
 
-from gflow_cli.config import LogFormat
+from gflow_cli.config import LogFormat, LogLevel, Settings
 from gflow_cli.errors import AuthExpiredError, ContentPolicyError, WireFormatError
 from gflow_cli.observability import (
     configure_logging,
@@ -40,7 +40,7 @@ def test_auto_detects_tty_renders_text(monkeypatch):
     fake_tty = StringIO()
     fake_tty.isatty = lambda: True  # type: ignore[method-assign]
     monkeypatch.setattr("sys.stderr", fake_tty)
-    configure_logging(LogFormat.AUTO)
+    configure_logging(LogFormat.AUTO, LogLevel.INFO)
     log = structlog.get_logger("test")
     log.info("hello", extra="value")
     output = fake_tty.getvalue()
@@ -54,7 +54,7 @@ def test_auto_detects_pipe_renders_json(monkeypatch):
     fake_pipe = StringIO()
     fake_pipe.isatty = lambda: False  # type: ignore[method-assign]
     monkeypatch.setattr("sys.stderr", fake_pipe)
-    configure_logging(LogFormat.AUTO)
+    configure_logging(LogFormat.AUTO, LogLevel.INFO)
     log = structlog.get_logger("test")
     log.info("hello", extra="value")
     output = fake_pipe.getvalue().strip().splitlines()[0]
@@ -92,10 +92,50 @@ def test_logs_go_to_stderr_not_stdout(monkeypatch):
     fake_err.isatty = lambda: False  # type: ignore[method-assign]
     monkeypatch.setattr("sys.stdout", fake_out)
     monkeypatch.setattr("sys.stderr", fake_err)
-    configure_logging(LogFormat.JSON)
+    configure_logging(LogFormat.JSON, LogLevel.INFO)
     structlog.get_logger("test").info("diagnostic-event")
     assert fake_out.getvalue() == ""  # stdout untouched
     assert "diagnostic-event" in fake_err.getvalue()  # log on stderr
+
+
+def _stderr(monkeypatch: pytest.MonkeyPatch) -> StringIO:
+    err = StringIO()
+    err.isatty = lambda: False  # type: ignore[method-assign]
+    monkeypatch.setattr("sys.stderr", err)
+    return err
+
+
+def test_default_level_keeps_info_off_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1041: a command prints its result, not ~10 info lines; warnings still show."""
+    err = _stderr(monkeypatch)
+    configure_logging(LogFormat.JSON, Settings().log_level)
+    log = structlog.get_logger("test")
+    log.info("chatter")
+    log.warning("worth-seeing")
+    assert "chatter" not in err.getvalue()
+    assert "worth-seeing" in err.getvalue()
+
+
+def test_log_level_setting_is_honoured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1041: GFLOW_CLI_LOG_LEVEL was documented but configure_logging ignored it."""
+    monkeypatch.setenv("GFLOW_CLI_LOG_LEVEL", "INFO")
+    err = _stderr(monkeypatch)
+    configure_logging(LogFormat.JSON, Settings().log_level)
+    structlog.get_logger("test").info("chatter")
+    assert "chatter" in err.getvalue()
+
+
+def test_cli_passes_the_log_level_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli import cli
+
+    seen: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli, "configure_logging", lambda *a: seen.append(a))
+    monkeypatch.setenv("GFLOW_CLI_LOG_LEVEL", "ERROR")
+    result = CliRunner().invoke(cli.main, ["docs"])
+    assert result.exit_code == 0, result.output
+    assert seen and seen[0][1] == LogLevel.ERROR
 
 
 def _install_log_capture() -> structlog.testing.LogCapture:

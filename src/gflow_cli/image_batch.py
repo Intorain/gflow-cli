@@ -607,6 +607,11 @@ async def run_one_image_prompt(
         # record it (#1035): STARTED here, turned FAILED by record_failure.
         logger.warning("batch.download_failed", index=idx, error_class=type(exc).__name__)
         started: list[str] = []
+        # shortcut: with no project_id here (or no recorder context) the ids are only in
+        # the outcome and this log line, not the catalog; record_failure writes a bare row.
+        logger.warning(
+            "batch.download_failed_ids", index=idx, flow_media_ids=[i.media_name for i in images]
+        )
         if profile_name is not None and profile_dir is not None and project_id:
             started = record_undownloaded_images_safe(
                 recorder,

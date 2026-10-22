@@ -1291,7 +1291,7 @@ async def _generate_verify_download(
     recorder.verify_media_attribution(profile_name=profile_name, images=images)
     saved_paths: list[Path] = []
     try:
-        saved_paths = await _download_images(
+        await _download_images(
             client, images, out, output_root, output_file=output_file, saved_paths=saved_paths
         )
     except BaseException:  # Ctrl-C mid-download must keep the ids too

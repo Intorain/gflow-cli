@@ -193,6 +193,8 @@ only the download failed (a video whose transfer dropped, #895; an image whose l
 failed, #1035), the `status: "failed"` reply of `gflow_generate_image` /
 `gflow_generate_video` also carries `flow_media_id` and, when the catalog knows it,
 `flow_project_id`. Both keys are absent when the task failed before Flow named any media.
+With `count` > 1, `flow_media_id` is the first image's id only; every image's id is in the
+catalog (`gflow data list images`; there is no MCP twin for that listing).
 A video is then recoverable with `gflow_download_media`; an image is not (that tool is
 video-only, #877), so open the project in Flow. The catalog keeps the image's asset row,
 with no local copy, under one FAILED operation.

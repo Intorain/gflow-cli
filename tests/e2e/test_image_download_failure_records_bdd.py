@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -142,11 +143,15 @@ def _cli_failed(world: dict[str, Any]) -> None:
     media_id = rows[0]["media_id"]
     assert media_id in text, text
     assert rows[0]["project_id"] in text, text
-    # The link names the host the image was generated on, not an assumed one.
-    events = [line for line in proc.stderr.splitlines() if line.lstrip().startswith("{")]
-    migrated = any('"event": "migrated.' in line for line in events)
-    host = "https://flow.google.com/project/" if migrated else "https://labs.google/"
-    assert host in text, (host, text)
+    # The link is a project URL for THIS project, on one of Flow's two hosts. Not
+    # inferred from INFO log lines: the default log level hides them since #1041.
+    pid = rows[0]["project_id"]
+    shapes = (
+        re.compile(rf"https://flow\.google\.com/project/{pid}$"),
+        re.compile(rf"https://labs\.google/fx/(?:[a-z]{{2,3}}/)?tools/flow/project/{pid}$"),
+    )
+    url_lines = [ln.split("project:", 1)[1].strip() for ln in hint if "project:" in ln]
+    assert len(url_lines) == 1 and any(r.match(url_lines[0]) for r in shapes), url_lines
     print(f"[1035-cli] media={media_id} project={rows[0]['project_id']}")
     print("[1035-cli] hint:\n" + text)
 

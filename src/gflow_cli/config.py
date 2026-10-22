@@ -674,7 +674,7 @@ class Settings(BaseSettings):
     )
 
     # --- logging ----------------------------------------------------------
-    log_level: LogLevel = LogLevel.INFO
+    log_level: LogLevel = LogLevel.WARNING
     log_format: LogFormat = LogFormat.AUTO
 
     # --- daemon -----------------------------------------------------------
