@@ -854,6 +854,39 @@ async def test_migrated_host_error_crosses_the_queued_path(temp_db: DataStore) -
     worker.close()
 
 
+async def test_a_create_with_an_unknown_outcome_is_not_retryable_on_the_queue(
+    temp_db: DataStore,
+) -> None:
+    """#1037: the worker creates the project itself. A create whose click was sent but
+    whose outcome is unknown must reach an MCP caller as exit 7, ``retryable: False``:
+    an agent that retried on it would make a second project."""
+    from gflow_cli.errors import RpcResponseUnavailableError
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-create-unknown",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape"},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.side_effect = RpcResponseUnavailableError(
+        detail="no readable jHPbke reply", route="batchexecute:jHPbke"
+    )
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-t2i-create-unknown")
+    assert updated is not None and updated.error is not None
+    assert updated.status == "failed"
+    assert updated.error["exit_code"] == 7
+    assert updated.error["retryable"] is False
+    fake_client.generate_image.assert_not_called()
+    worker.close()
+
+
 async def test_the_no_flow_access_verdict_crosses_the_queued_path(temp_db: DataStore) -> None:
     """The MCP twin of exit 39, run rather than reasoned about (AGENTS.md § second law).
 

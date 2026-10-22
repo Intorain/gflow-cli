@@ -491,7 +491,8 @@ class Settings(BaseSettings):
     )
 
     # --- runtime ----------------------------------------------------------
-    timeout_seconds: int = Field(default=600, ge=1, le=3600)
+    # GFLOW_CLI_TIMEOUT_SECONDS was removed in #1037: nothing read it. extra="ignore"
+    # keeps an old .env that still sets it loading.
     auth_login_timeout: int = Field(
         default=600,
         ge=1,

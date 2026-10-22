@@ -447,12 +447,12 @@ class SceneConcatError(FlowApiError):
 
 
 class TransportTimeoutError(GFlowError):
-    """Raised when a transport strategy hangs > 30s on a single API call."""
+    """Raised when a single API call or page wait exceeds its deadline (named in ``detail``)."""
 
     problem_type = "https://gflow-cli.dev/errors/transport-timeout"
     title = "Transport strategy timed out"
     _default_remediation = (
-        "A single API call exceeded the 30 s deadline. "
+        "A single API call exceeded its deadline (the detail names it). "
         "Check connectivity or reduce request complexity."
     )
 
