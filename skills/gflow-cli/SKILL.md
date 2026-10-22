@@ -62,6 +62,8 @@ gflow auth logout                                         # delete a saved sessi
 
 # Veo video-credit balance (read-only; image models use separate daily quotas).
 # Opens flow.google.com in the profile's browser and reads the balance Flow itself shows.
+# Exit 3 = sign-in page (fix: --refresh); 31 = /about or no balance reply (NOT an auth
+# problem, do not loop on login); 11 = profile in use; 7 = unrecognised reply. Tier fields are null.
 gflow credits user [--profile NAME] [--refresh] [--json]
 gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews signed-out sessions
 

@@ -874,7 +874,7 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ### No in-CLI quota visibility — resolved (balance read from flow.google.com)
 
-- **Status:** **Resolved** in the release after v0.87.0 ([#795](https://github.com/ffroliva/gflow-cli/issues/795)); open on every account from 2026-10-22 until then
+- **Status:** **Resolved** in v0.87.1 ([#795](https://github.com/ffroliva/gflow-cli/issues/795)); open on every account from 2026-10-22 until then
 
 **Fixed.** `gflow credits` now opens flow.google.com in the profile's browser and reads the
 balance from the app's own `nzlxg` reply, the number Flow's account menu shows (measured 5/5,
@@ -882,8 +882,8 @@ including after a spend:
 [spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-10-22-credits-balance-on-nzlxg.md)). It no longer needs a
 labs.google token. It costs one browser launch per profile, and the tier fields (`sku`,
 `service_tier`, `user_paygate_tier`, `subscription_credits`) are always `null`, because
-flow.google.com does not report them. It was verified on one account; a different plan may
-shape the reply differently. A page that never sends the reply fails with exit 31
+flow.google.com does not report them. It was verified on two accounts, neither on a paid plan; a paid plan may put a different
+balance in the field gflow reads, which would show a wrong number without an error. A page that never sends the reply fails with exit 31
 (`FlowAppError`), never an auth error. The rest of this section is the history.
 
 From 2026-10-22, labs.google's session URL, which minted the token below, answered HTTP 410
