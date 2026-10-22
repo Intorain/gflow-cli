@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer kept as a real one. CLI and MCP share the fix. A title already overwritten is not
   recoverable locally: run `gflow project rename <id> <title>` to restore it. Reported, with
   the fix, by @error-Sench.
+- **2K image upscale on flow.google.com no longer fails when Chrome loses Flow's reply**
+  ([#1027](https://github.com/ffroliva/gflow-cli/issues/1027)). `gflow image upscale` and
+  the MCP upscale tool failed with `WireFormatError: Failed to parse SPrCad response ...
+  No data found for resource with given identifier` although Flow had upscaled the image.
+  Chrome dropped DevTools' copy of that reply on 6 of 12 measured upscales. The image is
+  now also taken from the file Flow's page builds for its own download, which held the same
+  bytes on 12 of 12. A refusal Flow does send still fails the run.
 
 ## [0.87.0] — 2026-10-22
 

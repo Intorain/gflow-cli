@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,7 +16,7 @@ from gflow_cli.errors import (
     UpscaleUnavailableError,
     WireFormatError,
 )
-from tests.api._upscale_fakes import FakeItem, emit_response, fake_page
+from tests.api._upscale_fakes import BATCHEXECUTE_URL, FakeItem, emit_response, fake_page
 
 _PROJECT_ID = "00000000-0000-4000-8000-000000000001"
 _MEDIA_ID = "00000000-0000-4000-8000-000000000002"
@@ -156,3 +157,25 @@ async def test_migrated_upscale_non_image_payload_raises_wireformat() -> None:
 
     with pytest.raises(WireFormatError, match="not a valid PNG/JPEG"):
         await _run(page)
+
+
+async def test_migrated_upscale_unreadable_reply_still_returns_the_image() -> None:
+    """#1027: Chrome lost the SPrCad body; the image the page received is still returned."""
+    holder: list = []
+
+    async def lost() -> None:
+        res = MagicMock()
+        res.url = f"{BATCHEXECUTE_URL}?rpcids=SPrCad"
+        res.text = AsyncMock(
+            side_effect=RuntimeError(
+                "Response.text: Protocol error (Network.getResponseBody): "
+                "No data found for resource with given identifier"
+            )
+        )
+        for handler in list(holder[0].response_handlers):
+            await handler(res)
+
+    page = fake_page([FakeItem("2K", on_click=lost)], captured_b64=_PNG_B64)
+    holder.append(page)
+
+    assert await _run(page) == _PNG_BYTES

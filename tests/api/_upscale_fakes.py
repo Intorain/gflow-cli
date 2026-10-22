@@ -95,7 +95,7 @@ def fake_page(
 ) -> MagicMock:
     """A page whose tile/download/menu lookups are driven by the arguments.
 
-    ``captured_b64`` is what the video transport's ``window._videoCapturedBase64``
+    ``captured_b64`` is what the upscale transports' ``window._gflowCapturedBase64``
     poll returns. ``page.response_handlers`` holds the registered response hooks.
     """
     page = MagicMock()
@@ -117,7 +117,7 @@ def fake_page(
     page.remove_listener = MagicMock(side_effect=_off)
 
     async def _evaluate(expr: str, *_: Any) -> Any:
-        return captured_b64 if "window._videoCapturedBase64" in expr else None
+        return captured_b64 if "window._gflowCapturedBase64" in expr else None
 
     page.evaluate = AsyncMock(side_effect=_evaluate)
 
