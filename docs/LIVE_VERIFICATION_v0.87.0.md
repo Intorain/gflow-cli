@@ -54,13 +54,20 @@ Runs on the release tree (`ffroliva`, `GFLOW_CLI_E2E_PROJECT` set for the projec
   [#1027](https://github.com/ffroliva/gflow-cli/issues/1027). The first pass's filtered log
   does not name its other failures; every test in that batch passed when re-run.
 
+## Verified after the tag, by the #1023 reporter
+
+- **Interactive `auth login` and Linux** (2026-10-22, [comment](https://github.com/ffroliva/gflow-cli/issues/1023#issuecomment-6341075836),
+  branch at `031c33a5`, Linux, real Chrome 155): `auth status` on a Google-only profile reported
+  "Signed in to Google, but not to the Flow app" instead of the 410 error; an interactive
+  `gflow auth login --browser chrome` completed with "Flow session verified", exit 0, and
+  `auth status` then verified; one `image t2i` produced a 1024x1024 image. Not run there:
+  `credits`, video, and the 410 path in `auth renew` (that one is covered by the e2e above).
+
 ## Not verified
 
 - **`gflow credits`**: cannot read a balance on any account since labs' session URL answers
   410 (#795). Documented, not fixed.
 - **`auth login --browser internal`**: cannot finish (#1026); `--browser chrome` is verified.
-- **The interactive `auth login` window and Linux**: needs a person at the window; the #1023
-  reporter was asked to test.
 - **The agent-only composer (#1012)**: external blocker, no account we hold is in that cohort.
 - **A cloud `GFLOW_CLI_STORAGE_URI` (#1003)**: needs a local S3 bucket, not running this
   session; verified when #1007 merged.

@@ -47,7 +47,12 @@ GenerationCheckpointObserver = Callable[[GenerationCheckpoint], None]
 
 @dataclass(frozen=True)
 class CreditsInfo:
-    """Current Flow balance and account tier returned by ``GET /v1/credits``."""
+    """Current Flow balance, read from flow.google.com's ``nzlxg`` reply (#795).
+
+    The tier fields came from the retired labs ``GET /v1/credits`` route. ``nzlxg`` carries
+    no tier or SKU that has been identified, so they stay ``None``; they are kept so the
+    JSON shape of ``gflow credits`` and ``gflow_get_credits`` does not change.
+    """
 
     credits: int
     subscription_credits: int | None = None
@@ -56,40 +61,19 @@ class CreditsInfo:
     sku: str | None = None
 
     @classmethod
-    def from_response(cls, data: dict[str, Any]) -> CreditsInfo:
-        """Parse the credits response without coercing malformed values to zero."""
+    def from_nzlxg(cls, payload: object) -> CreditsInfo:
+        """Parse ``nzlxg``'s reply without coercing a malformed balance to zero.
 
-        credits = cls._optional_non_negative_int(data, "credits", required=True)
-        assert credits is not None
-        return cls(
-            credits=credits,
-            subscription_credits=cls._optional_non_negative_int(
-                data, "subscriptionCredits", required=False
-            ),
-            user_paygate_tier=cls._optional_string(data, "userPaygateTier"),
-            service_tier=cls._optional_string(data, "serviceTier"),
-            sku=cls._optional_string(data, "sku"),
-        )
-
-    @staticmethod
-    def _optional_non_negative_int(data: dict[str, Any], key: str, *, required: bool) -> int | None:
-        value = data.get(key)
-        if value is None and not required:
-            return None
+        ``[0]`` is the balance the account menu shows: it matched in 5/5 reads, one of
+        them after a 10-credit spend (docs/superpowers/spikes/2026-10-22-credits-balance-
+        on-nzlxg.md). ``[5]`` moved with it and is not read.
+        """
+        items = cast("list[object]", payload) if isinstance(payload, list) else []
+        value = items[0] if items else None
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            msg = f"unexpected credits response shape: {key} must be a non-negative integer"
+            msg = "unexpected nzlxg reply shape: [0] must be a non-negative integer"
             raise ValueError(msg)
-        return value
-
-    @staticmethod
-    def _optional_string(data: dict[str, Any], key: str) -> str | None:
-        value = data.get(key)
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            msg = f"unexpected credits response shape: {key} must be a string"
-            raise ValueError(msg)
-        return value
+        return cls(credits=value)
 
 
 @dataclass(frozen=True)

@@ -130,7 +130,7 @@ is a per-account setting the labs.google app applies on every load (measured
 once the account is flagged, re-running will not land the old frontend. Earlier text here said the rollout
 "flaps" and told you to retry; that observation straddled the account's one-time
 switch and is withdrawn. The REST surface (`gflow project list`, `gflow data …`)
-is unaffected; `gflow credits` is **not** — its token comes from `labs.google`, which mints none for a moved account ([#795](https://github.com/ffroliva/gflow-cli/issues/795), open; see the quota entry below). Automated callers now receive `retryable: false` so retry loops
+is unaffected, and so is `gflow credits` since [#795](https://github.com/ffroliva/gflow-cli/issues/795): it reads the balance from flow.google.com, not from a `labs.google` token (see the quota entry below). Automated callers now receive `retryable: false` so retry loops
 stop instead of burning a doomed attempt each time.
 
 **What gflow does today for the rest of the matrix:** recognises the migrated
@@ -751,8 +751,9 @@ A profile that has just sat unused usually has rotated-out cookies, not a dead G
 `auth renew` loads Flow in a headless browser, which rotates them with no prompt, then verifies
 the result like `auth status`. Its labs.google step (measured 2026-10-14: 7 of 10 stale profiles
 recovered a credits token) is a no-op since 2026-10-22, when labs' session URL started answering
-HTTP 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so `credits --refresh`
-cannot bring a balance back either ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
+HTTP 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)). `credits --refresh` no
+longer depends on it: since [#795](https://github.com/ffroliva/gflow-cli/issues/795) the balance
+is read from flow.google.com, so a renewal that gets the profile back into Flow brings it back.
 
 **Workaround, revoked session:**
 ```bash
@@ -871,25 +872,33 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ---
 
-### No in-CLI quota visibility — open on every account since 2026-10-22
+### No in-CLI quota visibility — resolved (balance read from flow.google.com)
 
-- **Status:** **Open** on every account since 2026-10-22 (resolved 2026-09-05 for `labs.google` accounts, until labs' session URL went) · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+- **Status:** **Resolved** in v0.87.1 ([#795](https://github.com/ffroliva/gflow-cli/issues/795)); open on every account from 2026-10-22 until then
 
-**Since 2026-10-22 no account can read a balance.** labs.google's session URL, which minted
-the token below, answers HTTP 410 Gone for everyone
-([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so every account now fails the
-first way listed below. The rest of this section is the history of how it got there.
+**Fixed.** `gflow credits` now opens flow.google.com in the profile's browser and reads the
+balance from the app's own `nzlxg` reply, the number Flow's account menu shows (measured 5/5,
+including after a spend:
+[spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-10-22-credits-balance-on-nzlxg.md)). It no longer needs a
+labs.google token. It costs one browser launch per profile, and the tier fields (`sku`,
+`service_tier`, `user_paygate_tier`, `subscription_credits`) are always `null`, because
+flow.google.com does not report them. It was verified on two accounts, neither on a paid plan; a paid plan may put a different
+balance in the field gflow reads, which would show a wrong number without an error. A page that never sends the reply fails with exit 31
+(`FlowAppError`), never an auth error. The rest of this section is the history.
+
+From 2026-10-22, labs.google's session URL, which minted the token below, answered HTTP 410
+Gone for everyone ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so every
+account failed the first way listed below until this fix.
 
 Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
-profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
-session; `--json` provides a stable automation contract. The equivalent MCP surface is
+profiles; `--json` provides a stable automation contract. The equivalent MCP surface is
 `gflow_get_credits`. The reported balance funds Veo video generation; image generation consumes
 separate per-model daily quotas.
 
-**On accounts served from `flow.google.com` there is still no in-CLI quota visibility.** The
-credits endpoint is reached with a token minted by `labs.google`, and the move takes that
-away in **two stages**, so `gflow credits user` / `list` and `gflow_get_credits` fail in one
-of two ways:
+**History: before the fix, accounts served from `flow.google.com` had no in-CLI quota
+visibility.** The credits endpoint was reached with a token minted by `labs.google`, and the
+move took that away in **two stages**, so `gflow credits user` / `list` and
+`gflow_get_credits` failed in one of two ways:
 
 - labs answers `200` with no `access_token` — it never mints one → *"the labs.google session
   returned no access token"*.
@@ -910,8 +919,8 @@ hint. Fixed in v0.79.0 ([#803](https://github.com/ffroliva/gflow-cli/issues/803)
 three remaining raise sites now states what was actually rejected, the 401 site names the route
 that refused, and the class default no longer asserts a SAPISID failure at all.
 
-Reading a balance on the migrated host is **not** implemented
-([#795](https://github.com/ffroliva/gflow-cli/issues/795), open). Generation is unaffected.
+Reading a balance on the migrated host is implemented since the #795 fix, from flow.google.com's
+own `nzlxg` reply (see the top of this entry).
 
 ---
 
@@ -1512,7 +1521,7 @@ here, because the run gives up within 30 s (see [CONFIGURATION](CONFIGURATION.md
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
-- **Status:** Mitigated for real-Chrome profiles; **open** for `gflow credits` and for logins with `--browser internal` · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+- **Status:** Mitigated for real-Chrome profiles and for `gflow credits` (#795); **open** for logins with `--browser internal` · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 `gflow auth login` verifies a real Flow sign-in by calling
 `https://labs.google/fx/api/auth/session` (see `src/gflow_cli/auth/verification.py`)
@@ -1531,8 +1540,8 @@ without cookies ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023),
 read as "no labs session": a profile without Google cookies is `NO_SESSION`, and one with
 them is checked by the server-attested migrated-host probe (#791), which needs the Google
 SSO and flow.google.com session cookies, then reads `myaccount.google.com`. **Still open:**
-the access-token consumers that read the same URL are not ported, so `gflow credits`
-cannot read a balance on any account (#795). And a login with `--browser internal` (bundled
+some access-token consumers that read the same URL are not ported. `gflow credits` is
+(#795: it reads flow.google.com's own balance reply). And a login with `--browser internal` (bundled
 Chromium, also what `--browser auto` picks when Chrome is missing) cannot finish: it has no
 on-disk check to hand the verdict to, so it waits until its timeout. Use `--browser chrome`.
 

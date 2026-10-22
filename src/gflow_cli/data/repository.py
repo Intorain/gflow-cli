@@ -111,6 +111,9 @@ class DataRepository:
     # ------------------------------------------------------------------
 
     def upsert_project(self, record: ProjectRecord) -> ProjectRecord:
+        # #1022: a run's title for a project it did not create is a placeholder
+        # ("gflow-cli video"). Only an explicit create (source "gflow-cli") replaces a
+        # stored title, and that source sticks; rename goes through update_project_title.
         now = _utc_now()
         created_at = record.created_at or now
         try:
@@ -122,8 +125,15 @@ class DataRepository:
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(profile_name, flow_project_id) DO UPDATE SET
-                        title = COALESCE(excluded.title, projects.title),
-                        source = excluded.source
+                        title = CASE
+                            WHEN excluded.source = 'gflow-cli'
+                                THEN COALESCE(NULLIF(excluded.title, ''), projects.title)
+                            ELSE COALESCE(NULLIF(projects.title, ''), excluded.title)
+                        END,
+                        source = CASE
+                            WHEN projects.source = 'gflow-cli' THEN projects.source
+                            ELSE excluded.source
+                        END
                     """,
                     (
                         record.id,

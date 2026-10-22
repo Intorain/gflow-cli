@@ -127,40 +127,46 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-> **Unavailable on every account since 2026-10-22.** The balance is read with a token that
-> labs.google's session URL used to issue. That URL now answers HTTP 410 Gone for everyone
-> ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so the command fails with "no
-> access token". The session is fine, re-authenticating and `--refresh` will not help, and
-> generation still works. Reading the balance from flow.google.com is not ported yet; tracked in
-> [#795](https://github.com/ffroliva/gflow-cli/issues/795).
+The balance is read from flow.google.com: gflow opens the app in the profile's browser and reads
+the number the app itself loads, which is the one Flow's account menu shows
+([#795](https://github.com/ffroliva/gflow-cli/issues/795)). Nothing is clicked. It costs one
+browser launch per profile, and the profile must not be in use by another gflow process
+(`ProfileLockedError`, exit 11). Before #795 the balance came from a labs.google token; labs'
+session URL has answered HTTP 410 to every account since 2026-10-22
+([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
 
 ```text
 gflow credits user [--profile NAME] [--refresh] [--json]
 gflow credits list [--refresh] [--json]
 ```
 
-`--refresh` renews an expired session instead of reporting it. When the fast path says the
-session has expired, gflow opens that profile in a headless browser, loads Flow so Google and Flow
+`--refresh` renews a signed-out session instead of reporting it. When the read lands on a
+Google sign-in page instead of the app, gflow opens that profile in a headless browser, loads Flow so Google and Flow
 rotate the saved cookies (the same renewal as [`gflow auth renew`](AUTHENTICATION.md#gflow-auth-renew)),
-then asks for the balance again. That costs one Chrome launch per expired profile and no credits.
-Without `--refresh`, nothing launches. A session Google has revoked cannot be renewed, so the row
+then reads the balance again. That costs one more Chrome launch per signed-out profile and no
+credits. A session Google has revoked cannot be renewed, so the row
 keeps its original diagnosis. A profile another gflow process is using is recorded as
-`ProfileLockedError` and the list carries on. `--refresh` cannot help an account whose labs
-session issues no token at all (#795, above), and it does not clear Flow's public `/about` page
-(see [KNOWN_ISSUES](../KNOWN_ISSUES.md)). Both keep their original diagnosis.
+`ProfileLockedError` and the list carries on. `--refresh` does not clear Flow's public `/about`
+page (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)); that row keeps its original diagnosis.
 
 `credits user` applies the normal profile precedence chain. `credits list` inspects every saved
 profile sequentially and returns successful balances even when another profile is expired or
 unavailable. Its JSON envelope contains `profiles`, `total_credits`, and `count`; each profile
 includes `authenticated`, `credits`, `subscription_credits`, `user_paygate_tier`, `service_tier`,
-and `sku`. Failed profiles have `authenticated: false`, a safe error name, and a null balance.
+and `sku`. flow.google.com does not report a tier, so `subscription_credits`, `user_paygate_tier`,
+`service_tier` and `sku` are always `null`; the keys stay so existing parsers keep working.
+Failed profiles have `authenticated: false`, a safe error name, and a null balance.
 
-The command first reads the saved Chrome cookies and uses ordinary HTTP requests (the equivalent
-of a `curl` session request followed by the credits request). The cookie-bearing client is closed
-before a separate, Bearer-only client contacts the credits host, so `labs.google` cookies never
-cross that host boundary. A browser opens only when cookie decryption or the HTTP path cannot
-complete. The short-lived OAuth token remains in memory and is never printed or stored; no copied
-bearer token or browser API key is accepted.
+The balance field was matched against Flow's account menu on two accounts, neither on a paid
+plan. A paid plan may carry a different balance in that field, which would show a wrong number
+without an error.
+
+The failures are typed. A sign-in landing is exit 3 (`AuthExpiredError`, fixable with
+`--refresh`). Flow's public `/about` page and an app that loads but never fetches the balance
+are exit 31 (`FlowAppError`). An account without Flow access is exit 39. A balance reply in a
+shape gflow does not recognise is exit 7 (`WireFormatError`). None of them tells you
+to re-authenticate a session that is working. No cookie, token or browser API key is printed
+or stored.
 
 ## `gflow image upload`
 
@@ -208,7 +214,8 @@ Upscale a **platform-generated** image to 2K or 4K (the same 1K/2K/4K options Fl
 download menu offers) and save it locally. Uploaded images are not supported.
 
 > **When Flow serves `flow.google.com` (#639):** gflow drives the image detail view's download
-> menu, which answers on the `SPrCad` batchexecute wire with the upscaled JPEG. Verified for 2K
+> menu, which answers on the `SPrCad` batchexecute wire with the upscaled JPEG. When Chrome
+> drops that reply, gflow takes the same JPEG from the page's own download (#1027). Verified for 2K
 > on 2026-10-07; 4K was seen only as a disabled option (exit 22) on the account used.
 
 ```text
@@ -1368,6 +1375,13 @@ has multiple local copies (e.g. re-downloaded to different paths), they appear
 as a single row with a `COPIES` count and the path of the latest copy. Use
 `--all-copies` to see every path as a separate row.
 
+A project's `title` is the one gflow recorded when it first saw the project: the real title
+for one `gflow project create` made, but a placeholder (`gflow-cli video`, or empty for an image
+run) for one first met through a generation. `gflow project create` / `rename` replace it. A generation into an existing `--project`
+never rewrites it ([#1022](https://github.com/ffroliva/gflow-cli/issues/1022)).
+The catalog does not import titles set on the website, so a project renamed there keeps
+its old title here.
+
 Output:
 - TTY stdout → Rich-formatted table.
 - Pipe / non-TTY / `--json` → JSONL.
@@ -2096,7 +2110,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `0`  | —                     | Success                                          | —                                                          |
 | `1`  | unhandled / unmapped  | Anything not derived from `GFlowError`, a typed error with no code of its own (e.g. a reCAPTCHA mint failure, `type` `…/errors/recaptcha-mint`, [#915](https://github.com/ffroliva/gflow-cli/issues/915) — branch on the `--json` `type`) — **or a deliberate CLI verdict**: `gflow auth status` exits 1 for a dead/unverifiable session | Re-run with `--verbose`; for `auth status` follow the printed hint; file a bug if it persists |
 | `2`  | usage error (Click)   | Bad usage / missing arg / profile missing        | Standard CLI usage error                                   |
-| `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403), or Flow served one of its OAuth/sign-in routes instead of the page gflow asked for ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | `gflow auth login --profile <name>` — **but read the error's own `remediation_hint` first.** `AisandboxAuthError` shares this code, and when `gflow credits` fails on an account migrated to `flow.google.com` re-logging in cannot help and can roll the profile's browser-strategy marker back ([#795](https://github.com/ffroliva/gflow-cli/issues/795), [#791](https://github.com/ffroliva/gflow-cli/issues/791)) |
+| `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403), or Flow served one of its OAuth/sign-in routes instead of the page gflow asked for ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | `gflow auth login --profile <name>` — **but read the error's own `remediation_hint` first.** `AisandboxAuthError` shares this code. (Before v0.87.1, when `gflow credits` failed on an account migrated to `flow.google.com`, re-logging in could not help and could roll the profile's browser-strategy marker back ([#795](https://github.com/ffroliva/gflow-cli/issues/795), [#791](https://github.com/ffroliva/gflow-cli/issues/791)).) Since v0.87.1 a credits exit 3 means a sign-in landing, fixable with `gflow credits --refresh` |
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
 | `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
 | `6`  | `NetworkError`        | Network failure persisted across 3 attempts — including a signed-media download whose connection dropped on every attempt ([#895](https://github.com/ffroliva/gflow-cli/issues/895)) | Check connectivity — **but read the error's own `remediation_hint` first.** When a *generation* download fails this way the clip was already produced and billed: the hint names it, and `gflow data download <media_id>` recovers it for free. Re-generating pays twice |

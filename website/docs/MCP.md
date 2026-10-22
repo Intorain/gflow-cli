@@ -95,7 +95,7 @@ The server registers three protocol surfaces:
 > `gflow_character_list` to discover ids. See [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md).
 
 * `gflow_auth_status(profile)`: Credit-free, non-interactive Flow session probe (#497) — wraps the same fail-closed `verify_flow_profile` check as `gflow auth status`. Returns `{"status": "authenticated", "profile", "user_email"}` or a problem-details error with a `remediation_hint`; a `verification_error` outcome (HTTP 503, `retryable: true`) means a network/endpoint problem, which re-login does not fix, and a `profile_marker_missing` outcome (HTTP 409, `retryable: false`, #796) means the profile lost its `.gflow_browser_strategy` marker so its cookies cannot be read — neither a retry nor a re-login helps; re-run `gflow auth login --browser chrome` for that profile. Any other unauthenticated outcome is a dead session (HTTP 401). Call it before a generation tool to fail fast on dead auth (the queue is async — without it, an auth failure surfaces only later from the daemon). Login/logout remain CLI-only (genuinely interactive).
-* `gflow_get_credits(profile, all_profiles, refresh)`: Current Flow balance query; spends no credits. With `all_profiles=true`, inspects every saved profile sequentially and preserves successful balances plus `total_credits` when another profile fails. With `refresh=true`, a profile whose session has expired is renewed in a headless browser and asked again: one Chrome launch per expired profile, no credits. This is the MCP twin of `gflow credits user|list --refresh`. It runs the same renewal as `gflow auth renew`, but only for a profile whose credits read fails with an expired session. `auth renew` itself has no MCP tool; see the exemption in `tests/mcp/test_cli_parity.py`. Without `refresh` the call is read-only; with it, an expired profile's saved cookies are rewritten. This tool spends no credits and returns no cookies, bearer tokens, or browser API keys. The balance funds Veo video generation; image generation uses separate per-model daily quotas. **Not available on any account since 2026-10-22:** labs.google's session URL, which issued the API token, answers HTTP 410 Gone for everyone (#1023), so no balance can be read, the tool reports that there is no access token, and `refresh=true` does not change it. It is not an auth fault. Reading the balance from flow.google.com is not ported yet; tracked in #795.
+* `gflow_get_credits(profile, all_profiles, refresh)`: Current Flow balance query; spends no credits. With `all_profiles=true`, inspects every saved profile sequentially and preserves successful balances plus `total_credits` when another profile fails. The balance is read from flow.google.com in the profile's browser: the number the app itself loads, which is the one Flow's account menu shows (#795). That is one browser launch per profile, and the tier fields (`sku`, `service_tier`, `user_paygate_tier`, `subscription_credits`) are always `null`. With `refresh=true`, a profile that lands on a sign-in page is renewed in a headless browser and read again: one more Chrome launch per such profile, no credits. This is the MCP twin of `gflow credits user|list --refresh`. It runs the same renewal as `gflow auth renew`, but only for a profile whose credits read lands on a sign-in page. `auth renew` itself has no MCP tool; see the exemption in `tests/mcp/test_cli_parity.py`. Without `refresh` the call is read-only; with it, an expired profile's saved cookies are rewritten. This tool spends no credits and returns no cookies, bearer tokens, or browser API keys. The balance funds Veo video generation; image generation uses separate per-model daily quotas. A page that loads but never fetches the balance is a `FlowAppError` (exit 31), never an auth error.
 * `gflow_character_list(project, profile)`: Lists a project's saved Flow CHARACTER entities with their **entity ids** — read-only, spends no credits, drives a browser session. This is how an agent discovers what it can attach: an `entity_id` goes to `reference_entities`, a `display_name` can be used as an `@Name` mention. An empty list means the project genuinely has none.
 * `gflow_character_show(project, entity_id, name, profile)`: Shows one character by id or exact display name (exactly one selector required). An ambiguous name is refused rather than resolved arbitrarily — which is the reason to prefer the id. Read-only; drives a browser session.
 * `gflow_character_voices()`: Lists the preset voices available for Character TTS (name, description, sample URL). A static in-process lookup — no network, no browser, no profile, no cost. Call it to pick a valid voice name.
@@ -422,13 +422,13 @@ is a $0, read-only check:
 
 ```bash
 gflow auth status          # which host minted the session, and for whom
-gflow credits user         # does the Bearer path still work for this account?
+gflow credits user         # reads the balance from flow.google.com (#795)
 ```
 
-> **Since 2026-10-22 the `credits user` column reads "no access token" on every account.**
-> labs.google's session URL answers HTTP 410 Gone ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)),
-> so no account gets a token and the first three rows collapse into the second. The table is kept
-> for the `auth status` column and for when the credits read is ported ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
+> **History.** The `credits user` column describes builds before the #795 fix, when the balance
+> came from a labs.google token. Since that fix, `credits user` reads the balance from
+> flow.google.com ([#795](https://github.com/ffroliva/gflow-cli/issues/795)), so it no longer
+> tells these rows apart. The table is kept for the `auth status` column.
 
 | `auth status` | `credits user` | What you are on | Consequence |
 |---|---|---|---|
@@ -439,17 +439,21 @@ gflow credits user         # does the Bearer path still work for this account?
 | "Signed in to Google, but not to the Flow app" | — | **or** the account has no Flow access at all | Same sentence, second cause. The session endpoint answers 200 with an empty `user` for an abandoned sign-in *and* for an account with no Google AI Plus/Pro/Ultra (or qualifying Workspace) plan, so `auth status` cannot tell them apart. Open `https://flow.google.com` in a browser on that account: a landing on `/unavailable` means this row. A generation command says so directly — **exit 39**, `FlowAccessUnavailableError` |
 
 In every migrated row above except the no-Flow-access one, **generation over the migrated composer still works** — only
-the aisandbox REST reads fail. On the agent-only composer described below that holds for
+the aisandbox REST reads fail (`credits` no longer is one, #795). On the agent-only composer described below that holds for
 text-to-image and text-to-video only.
 
-> **A `credits` failure does not mean your cookies are stale.** Two raise sites produce it
-> — labs answering with no token, and aisandbox-pa rejecting the token labs did issue —
-> and since v0.74.0 **both name the real cause**. On a migrated account SAPISID is
-> typically present and fine, and **re-running `gflow auth login` will not help**. If the
-> profile has no browser-strategy marker yet, it can make things worse: a failed *first*
-> login rolls that marker back. **If `auth status` says verified and only `credits` fails,
-> believe `auth status`.** Through v0.73.2 the second site carried the class-default
-> SAPISID advice instead — see the CHANGELOG for why.
+> **A `credits` failure names its cause.** Since #795 the balance is read from flow.google.com's
+> own reply, not from a labs.google token. A sign-in landing is exit 3 (`AuthExpiredError`,
+> renewable with `refresh=true` / `--refresh`). Flow's public `/about` page, or an app that loads
+> without a readable balance reply, is exit 31 (`FlowAppError`). An account with no Flow access
+> is exit 39. A balance reply in an unexpected shape is exit 7 (`WireFormatError`), and a profile
+> another gflow process holds is exit 11 (`ProfileLockedError`). **Only exit 3 is about your
+> session.** The other codes do not mean "re-run `gflow auth login`". If the profile has no
+> browser-strategy marker yet, a re-login can make things worse, because a failed *first* login
+> rolls that marker back. *History:* before #795, two raise sites in the since-deleted
+> `api/credits.py` (labs issuing no token, aisandbox-pa rejecting the token) produced every
+> `credits` failure. Through v0.73.2 the second one carried the class-default SAPISID advice;
+> see the CHANGELOG.
 
 The migrated composer itself also comes in more than one shape. An account whose composer
 is **agent-only** — no classic composer at all — is driven through its chat agent for
