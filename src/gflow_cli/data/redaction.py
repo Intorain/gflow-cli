@@ -19,8 +19,9 @@ SENSITIVE_QUERY_KEYS = ("signature=", "x-goog-signature=", "x-goog-credential=",
 _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Credentials inside a URL ("http://user:pass@127.0.0.1:7897", #1036's proxy).
     # First, so the email rule below cannot half-redact "pass@host" and leave "user:".
+    # The password runs to the LAST "@" before the host: an unencoded "@" in it is common.
     (
-        re.compile(r"\b([a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/@]*@", re.IGNORECASE),
+        re.compile(r"\b([a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/]*@", re.IGNORECASE),
         r"\1<redacted:secret>@",
     ),
     (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "<redacted:secret>"),

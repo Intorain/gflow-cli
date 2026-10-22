@@ -320,8 +320,9 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
-        # A rejected value can carry a secret (GFLOW_CLI_BROWSER_PROXY's password);
-        # keep it out of ValidationError text. Messages still name the setting.
+        # Applies to EVERY setting: no rejected value is echoed in ValidationError
+        # text, because one can carry a secret (GFLOW_CLI_BROWSER_PROXY's password).
+        # The field name and message still say what is wrong.
         hide_input_in_errors=True,
     )
 
@@ -549,30 +550,28 @@ class Settings(BaseSettings):
             "GFLOW_CLI_BROWSER_WINDOW_POSITION."
         ),
     )
-    browser_proxy: SecretStr | None = Field(
+    browser_proxy: str | None = Field(
         default=None,
         description=(
             "Proxy for every browser gflow launches (#1036): 'http://host:port', "
-            "'https://host:port' or 'socks5://host:port', optionally "
-            "'http://user:pass@host:port' (SOCKS5 cannot carry credentials). Opt-in: "
-            "unset, the browser connects as before (on Windows, through the system "
-            "proxy). It is never derived from HTTPS_PROXY, which only gflow's own HTTP "
-            "calls follow — point both at the same proxy. Override via "
-            "GFLOW_CLI_BROWSER_PROXY."
+            "'https://host:port' or 'socks5://host:port', without credentials (see "
+            "docs/CONFIGURATION.md for why). Opt-in: unset, the browser connects as "
+            "before (on Windows, through the system proxy). It is never derived from "
+            "HTTPS_PROXY, which only gflow's own HTTP calls follow — point both at the "
+            "same proxy. Override via GFLOW_CLI_BROWSER_PROXY."
         ),
     )
 
     @field_validator("browser_proxy", mode="before")
     @classmethod
     def _validate_browser_proxy(cls, v: object) -> object:
-        """Refuse a value Chromium cannot use, at load (exit 11), never echoing it."""
+        """Refuse a value the browser cannot use, at load (exit 11), never echoing it."""
         if v is None or v == "":
             return None
-        raw = v.get_secret_value() if isinstance(v, SecretStr) else v
-        if not isinstance(raw, str):
-            msg = "GFLOW_CLI_BROWSER_PROXY must be a string"
+        if not isinstance(v, str):
+            msg = "invalid proxy: not a string"
             raise ValueError(msg)  # noqa: TRY004 — pydantic wants ValueError
-        url = urlsplit(raw.strip())
+        url = urlsplit(v.strip())
         try:
             port = url.port
         except ValueError:
@@ -580,20 +579,22 @@ class Settings(BaseSettings):
         problem = None
         if url.scheme not in ("http", "https", "socks5"):
             problem = "scheme must be http://, https:// or socks5://"
-        elif not url.hostname or port == -1 or url.path not in ("", "/") or url.query:
-            problem = "expected scheme://host:port with nothing after the port"
-        elif "@" in url.netloc and not url.username:
-            problem = "credentials need a user name (scheme://user:pass@host:port)"
-        elif url.scheme == "socks5" and url.username:
+        elif "@" in url.netloc:
+            # Measured 2026-10-22: with Playwright's proxy credentials the Flow page
+            # never loads (45 s timeout, both engines) while the same proxy without
+            # them loads it in ~1 s — tests/e2e/test_browser_proxy_e2e.py.
             problem = (
-                "Chromium cannot authenticate to a SOCKS5 proxy; use a proxy without "
-                "credentials, or an http:// one"
+                "proxy credentials (user:pass@) are not supported: Flow does not load "
+                "through them. Use a proxy without credentials, such as a local client "
+                "(Clash: http://127.0.0.1:7897) that holds them for you"
             )
+        elif not url.hostname or port in (None, -1) or url.path not in ("", "/") or url.query:
+            problem = "expected scheme://host:port with nothing after the port"
         if problem:
-            # The value may hold a password, so the message never repeats it.
-            msg = f"GFLOW_CLI_BROWSER_PROXY is invalid: {problem}"
+            # A rejected value may hold a password, so the message never repeats it.
+            msg = f"invalid proxy: {problem}"
             raise ValueError(msg)
-        return raw.strip()
+        return v.strip()
 
     browser_engine: BrowserEngine = Field(
         default=BrowserEngine.PLAYWRIGHT,

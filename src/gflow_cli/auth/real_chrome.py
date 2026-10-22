@@ -9,13 +9,12 @@ from typing import TYPE_CHECKING
 import structlog
 from rich.console import Console
 
-from gflow_cli.browser_manager import browser_proxy_kwargs, is_playwright_chrome_channel_available
+from gflow_cli.browser_manager import is_playwright_chrome_channel_available
 from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthLoginTimeoutError,
     AuthMissingError,
-    ConfigurationError,
     IdentityRecheckPendingError,
     SecurityError,
 )
@@ -33,8 +32,6 @@ from .verification import verify_flow_profile
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
-
-    from pydantic import SecretStr
 
 logger = structlog.get_logger(__name__)
 _console = Console()
@@ -57,26 +54,9 @@ def _validate_profile_dir(profile_dir: Path, settings: Settings) -> None:
 
 
 def _build_chrome_args(
-    chrome_exe: str, profile_dir: Path, headless: bool, proxy: SecretStr | None = None
+    chrome_exe: str, profile_dir: Path, headless: bool, proxy: str | None = None
 ) -> list[str]:
     """Build the Chrome command-line argument list for passive-capture login."""
-    spec = browser_proxy_kwargs(proxy).get("proxy")
-    if spec and "username" in spec:
-        # Chrome's --proxy-server has no place for credentials, and argv is readable
-        # by every local user — so this window would ask for them in its own dialog.
-        msg = (
-            "GFLOW_CLI_BROWSER_PROXY carries credentials, which the plain Chrome "
-            "sign-in window cannot use"
-        )
-        raise ConfigurationError(
-            msg,
-            remediation_hint=(
-                "Point GFLOW_CLI_BROWSER_PROXY at a proxy without credentials for "
-                "`gflow auth login` (a local one such as Clash's http://127.0.0.1:7897), "
-                "or make Chrome's Playwright channel available so the login runs in the "
-                "browser gflow drives."
-            ),
-        )
     args = [
         chrome_exe,
         f"--user-data-dir={profile_dir}",
@@ -86,8 +66,8 @@ def _build_chrome_args(
         "--password-store=basic",
         # No --remote-debugging-port: zero automation surface.
     ]
-    if spec:
-        args.append(f"--proxy-server={spec['server']}")
+    if proxy:
+        args.append(f"--proxy-server={proxy}")
     if headless:
         args.append("--headless=new")
     # Open Flow directly (ONCE) so the user lands on the sign-in / app surface

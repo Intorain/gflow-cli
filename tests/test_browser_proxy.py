@@ -1,8 +1,8 @@
 """GFLOW_CLI_BROWSER_PROXY routes every browser gflow launches through one proxy (#1036).
 
-Opt-in: unset changes nothing. The value is validated when settings load, its
-credentials never reach ``server`` (so never Chrome's argv, a launch log or a
-Playwright error), and every non-experimental launch site carries it.
+Opt-in: unset changes nothing. The value is validated when settings load (proxy
+credentials are refused: Flow does not load through Playwright's proxy auth, see
+tests/e2e/test_browser_proxy_e2e.py), and every non-experimental launch site carries it.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from gflow_cli.browser_manager import browser_proxy_kwargs
 from gflow_cli.config import Settings, get_settings, reset_settings
@@ -22,8 +22,8 @@ from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import ConfigurationError
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "gflow_cli"
-PROXY = "http://user:s3cretPW@127.0.0.1:7897"
-EXPECTED = {"server": "http://127.0.0.1:7897", "username": "user", "password": "s3cretPW"}
+PROXY = "http://127.0.0.1:7897"
+EXPECTED = {"server": PROXY}
 
 
 # --- the pure helper -------------------------------------------------------
@@ -34,15 +34,8 @@ def test_unset_adds_nothing() -> None:
 
 
 def test_plain_proxy_is_the_server() -> None:
-    assert browser_proxy_kwargs(SecretStr("socks5://127.0.0.1:1080")) == {
+    assert browser_proxy_kwargs("socks5://127.0.0.1:1080") == {
         "proxy": {"server": "socks5://127.0.0.1:1080"}
-    }
-
-
-def test_credentials_are_split_out_of_the_server_and_unquoted() -> None:
-    spec = browser_proxy_kwargs(SecretStr("http://us%40er:p%3Ass@proxy.example:3128"))
-    assert spec == {
-        "proxy": {"server": "http://proxy.example:3128", "username": "us@er", "password": "p:ss"}
     }
 
 
@@ -51,7 +44,7 @@ def test_credentials_are_split_out_of_the_server_and_unquoted() -> None:
 
 @pytest.mark.parametrize(
     "good",
-    ["http://127.0.0.1:7897", "https://proxy.example:443", "socks5://127.0.0.1:1080", PROXY],
+    ["http://127.0.0.1:7897", "https://proxy.example:443", "socks5://127.0.0.1:1080"],
 )
 def test_valid_values_load(good: str) -> None:
     assert Settings(browser_proxy=good).browser_proxy is not None
@@ -71,20 +64,40 @@ def test_empty_means_unset() -> None:
         "http://h:1/path",
         "http://h:1?x=1",
         "http://:pw@h:1",
-        "socks5://user:s3cretPW@127.0.0.1:1080",  # Chromium cannot authenticate SOCKS5
+        "http://127.0.0.1",  # no port: required, so the message's scheme://host:port is true
+        "http://user:s3cretPW@127.0.0.1:7897",  # credentials: Flow never loads through them
+        "socks5://user:s3cretPW@127.0.0.1:1080",
     ],
 )
 def test_malformed_values_are_refused_without_echoing_them(bad: str) -> None:
     with pytest.raises(ValidationError) as info:
         Settings(browser_proxy=bad)
-    assert "GFLOW_CLI_BROWSER_PROXY" in str(info.value)
+    assert "browser_proxy" in str(info.value)
+    assert "invalid proxy" in str(info.value)
     assert "s3cretPW" not in str(info.value)
 
 
-def test_settings_repr_and_dump_never_show_the_password() -> None:
-    settings = Settings(browser_proxy=PROXY)
-    assert "s3cretPW" not in repr(settings)
-    assert "s3cretPW" not in settings.model_dump_json()
+def test_cli_names_the_setting_once_without_pydantic_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+
+    monkeypatch.setenv("GFLOW_CLI_BROWSER_PROXY", "socks5://user:s3cretPW@127.0.0.1:1080")
+    reset_settings()
+    result = CliRunner().invoke(main, ["doctor"])
+    assert result.exit_code == 11
+    assert "GFLOW_CLI_BROWSER_PROXY — invalid proxy:" in result.output
+    assert "Value error" not in result.output
+    assert "s3cretPW" not in result.output
+
+
+def test_credentials_message_says_why_and_what_to_use() -> None:
+    with pytest.raises(ValidationError) as info:
+        Settings(browser_proxy="http://user:s3cretPW@127.0.0.1:7897")
+    assert "not supported" in str(info.value)
+    assert "127.0.0.1:7897" in str(info.value)  # the suggested local client, not the value
 
 
 # --- every launch site carries it -----------------------------------------
@@ -196,7 +209,7 @@ async def test_every_launch_site_carries_the_proxy(
         assert seen[0]["proxy"] == EXPECTED
     else:
         assert "proxy" not in seen[0]
-    # Never the flag form: argv is world-readable and lands in launch logs.
+    # Never the flag form: one kwarg, carried the same way by every site.
     assert not any("proxy" in str(a) for a in seen[0].get("args", []))
 
 
@@ -225,7 +238,7 @@ def test_the_site_table_covers_every_launch_in_src() -> None:
 def test_raw_chrome_gets_the_server_flag_only() -> None:
     from gflow_cli.auth.real_chrome import _build_chrome_args  # noqa: PLC2701
 
-    args = _build_chrome_args("chrome", Path("p"), False, SecretStr("http://127.0.0.1:7897"))
+    args = _build_chrome_args("chrome", Path("p"), False, PROXY)
     assert "--proxy-server=http://127.0.0.1:7897" in args
     assert args[-1].startswith("http")  # the start URL stays last
 
@@ -234,15 +247,6 @@ def test_raw_chrome_without_proxy_is_unchanged() -> None:
     from gflow_cli.auth.real_chrome import _build_chrome_args  # noqa: PLC2701
 
     assert not any("proxy" in a for a in _build_chrome_args("chrome", Path("p"), False, None))
-
-
-def test_raw_chrome_refuses_proxy_credentials() -> None:
-    from gflow_cli.auth.real_chrome import _build_chrome_args  # noqa: PLC2701
-
-    with pytest.raises(ConfigurationError) as info:
-        _build_chrome_args("chrome", Path("p"), False, SecretStr(PROXY))
-    assert "GFLOW_CLI_BROWSER_PROXY" in str(info.value)
-    assert "s3cretPW" not in str(info.value) + (info.value.remediation_hint or "")
 
 
 # --- redaction --------------------------------------------------------------
@@ -254,6 +258,7 @@ def test_raw_chrome_refuses_proxy_credentials() -> None:
         "launch failed: --proxy-server=http://user:s3cretPW@127.0.0.1:7897",
         "socks5://user:s3cretPW@proxy.example.com:1080 refused",
         "HTTPS://user:s3cretPW@[::1]:3128",
+        "http://user:s3cretPW@ss@127.0.0.1:7897",  # unencoded "@" inside the password
     ],
 )
 def test_url_userinfo_is_redacted(text: str) -> None:
@@ -261,14 +266,13 @@ def test_url_userinfo_is_redacted(text: str) -> None:
     assert "s3cretPW" not in out
     assert "user:" not in out
     assert "<redacted:secret>@" in out
+    assert out.count("@") == 1  # nothing of the password survives past the redaction
 
 
 # --- launch log -------------------------------------------------------------
 
 
-def test_launch_log_names_the_proxy_but_never_the_password(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_launch_log_names_the_proxy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from structlog.testing import capture_logs
 
     from gflow_cli.api.client import FlowApiClient
@@ -281,9 +285,7 @@ def test_launch_log_names_the_proxy_but_never_the_password(
     with capture_logs() as logs:
         client._log_and_guard_launch(client._persistent_context_kwargs())  # noqa: SLF001
     event = next(e for e in logs if e["event"] == "client.persistent_context_launch")
-    assert event["proxy"] == "http://127.0.0.1:7897"
-    assert event["proxy_auth"] is True
-    assert "s3cretPW" not in repr(logs)
+    assert event["proxy"] == PROXY
 
 
 # --- dead proxy -------------------------------------------------------------
@@ -305,7 +307,6 @@ async def test_unreachable_proxy_names_the_setting(tmp_path: Path, net_error: st
     with pytest.raises(ConfigurationError) as info:
         await client._bootstrap_and_resolve_locale()  # noqa: SLF001
     assert "GFLOW_CLI_BROWSER_PROXY" in (info.value.remediation_hint or "")
-    assert "s3cretPW" not in str(info.value) + (info.value.remediation_hint or "")
 
 
 @pytest.mark.asyncio

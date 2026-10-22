@@ -440,22 +440,16 @@ def _check_browsers_missing() -> list[Finding]:
 
 
 def _check_browser_proxy(settings: Settings) -> list[Finding]:
-    """Report GFLOW_CLI_BROWSER_PROXY (#1036) as scheme://host:port; never its password."""
-    spec = browser_manager.browser_proxy_kwargs(settings.browser_proxy).get("proxy")
-    if not spec:
+    """Report GFLOW_CLI_BROWSER_PROXY (#1036): info when set, never flipping status."""
+    if not settings.browser_proxy:
         return [
-            _finding(
-                "env.browser_proxy",
-                "pass",
-                "no browser proxy set (GFLOW_CLI_BROWSER_PROXY)",
-            )
+            _finding("env.browser_proxy", "pass", "no browser proxy set (GFLOW_CLI_BROWSER_PROXY)")
         ]
-    auth = "yes" if "username" in spec else "no"
     return [
         _finding(
             "env.browser_proxy",
             "info",
-            f"browser proxy {spec['server']} (auth: {auth})",
+            f"browser proxy {settings.browser_proxy}",
             "sign in, renew and generate through this same proxy, and point HTTPS_PROXY at it too",
         )
     ]

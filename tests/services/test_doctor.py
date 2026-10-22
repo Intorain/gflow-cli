@@ -582,19 +582,17 @@ def test_display_name_missing_is_info_under_redacted_privacy(
 # ---------------------------------------------------------------------------
 
 
-def test_browser_proxy_reported_redacted_and_never_flips_status(
+def test_browser_proxy_reported_and_never_flips_status(
     tmp_path: Path,
     healthy_doctor_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GFLOW_CLI_BROWSER_PROXY", "http://user:s3cretPW@127.0.0.1:7897")
+    monkeypatch.setenv("GFLOW_CLI_BROWSER_PROXY", "http://127.0.0.1:7897")
     reset_settings()
     report = run_all(_clean_db(tmp_path), get_settings())
     [row] = [f for f in report.findings if f.check == "env.browser_proxy"]
     assert row.severity == "info"
     assert "http://127.0.0.1:7897" in row.summary
-    assert "auth: yes" in row.summary
-    assert "s3cretPW" not in repr(report)
     assert report.overall_status == "ok"
 
 

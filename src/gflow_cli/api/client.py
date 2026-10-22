@@ -602,7 +602,7 @@ class FlowApiClient:
         except FileNotFoundError:
             pass
         launch_args: list[str] = kwargs.get("args") or []
-        proxy: dict[str, str] = kwargs.get("proxy") or {}
+        proxy_spec: dict[str, str] = kwargs.get("proxy") or {}
         logger.info(
             "client.persistent_context_launch",
             channel=channel,
@@ -618,9 +618,8 @@ class FlowApiClient:
             launch_args=launch_args,
             ignore_default_args=kwargs.get("ignore_default_args"),
             password_store_basic="--password-store=basic" in launch_args,
-            # #1036: scheme://host:port only — credentials never live in `server`.
-            proxy=proxy.get("server"),
-            proxy_auth="username" in proxy,
+            # #1036: scheme://host:port (credentials are refused by Settings).
+            proxy=proxy_spec.get("server"),
         )
         if wants_chrome and channel is None:
             msg = (

@@ -14,13 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   On a network where Google is reachable only through a local proxy (Clash on
   `127.0.0.1:7897`, say), gflow's HTTP calls followed `HTTPS_PROXY` but the browser it
   launches did not, so every page step timed out. The new setting takes
-  `http://`, `https://` or `socks5://host:port`, optionally with `user:pass@` (not for
-  SOCKS5), and applies to every browser launch: generation over the CLI and MCP,
-  `auth login`, `auth renew` and the `auth status` check. Opt-in: unset changes nothing,
-  and it is never derived from `HTTPS_PROXY`. A bad value fails at startup (exit 11), a
-  dead proxy stops at the first page load with a hint naming the setting (exit 11), the
-  password never reaches Chrome's command line, logs or `gflow doctor` (which now reports
-  the proxy as `scheme://host:port`), and URL credentials are redacted from error details.
+  `http://`, `https://` or `socks5://host:port` and applies to every browser launch:
+  generation over the CLI and MCP, `auth login`, `auth renew` and the `auth status`
+  check. Opt-in: unset changes nothing, and it is never derived from `HTTPS_PROXY`. A bad
+  value fails at startup (exit 11), and so do proxy credentials (`user:pass@`): measured,
+  Flow never loads through Playwright's proxy authentication, so a local client such as
+  Clash should hold them. A dead proxy stops a generation run at its first page load with
+  a hint naming the setting (exit 11). `gflow doctor` reports the proxy, and credentials
+  inside any URL are now redacted from error details.
   `docs/ACCOUNT_SAFETY.md` now says: no IP rotation, no proxy unless you set one, and sign
   in through the proxy you generate through.
 

@@ -251,10 +251,9 @@ profile. There is no flag and no prompt for this — the fallback simply happens
 
 **Behind a proxy.** Set [`GFLOW_CLI_BROWSER_PROXY`](CONFIGURATION.md#gflow_cli_browser_proxy)
 before `gflow auth login`, so you sign in from the same IP you will generate from. Both
-login paths use it. The Passive Capture fallback runs Chrome as a plain process, whose
-`--proxy-server` switch cannot carry credentials, so a proxy with `user:pass@` is refused
-there (exit 11). Point the setting at a credential-less local proxy (Clash's
-`http://127.0.0.1:7897`, for example) for the sign-in.
+login paths use it, including the Passive Capture fallback (as Chrome's
+`--proxy-server` switch). Use a proxy without credentials, such as a local Clash on
+`http://127.0.0.1:7897`.
 
 **Privacy guard:** The `chrome` strategy strictly refuses to use any profile directory
 outside `GFLOW_CLI_HOME`. This protects your primary system Chrome profile from

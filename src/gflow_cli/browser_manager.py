@@ -62,10 +62,8 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit
 
 import structlog
-from pydantic import SecretStr
 
 from gflow_cli.errors import ConfigurationError, ProfileEngineDowngradeError
 
@@ -219,22 +217,13 @@ def window_position_args(position: str) -> list[str]:
     return [f"--window-position={position}"] if position else []
 
 
-def browser_proxy_kwargs(proxy: object) -> dict[str, Any]:
+def browser_proxy_kwargs(proxy: str | None) -> dict[str, Any]:
     """Playwright ``proxy`` launch kwarg for GFLOW_CLI_BROWSER_PROXY (#1036); {} when unset.
 
-    Always the kwarg, never ``--proxy-server`` in ``args``: credentials are split out
-    of ``server`` so they never reach Chrome's argv, a launch log or a launch error.
-    The value is already validated by ``Settings``; anything that is not its
-    ``SecretStr`` (unset, or a mocked settings object) means no proxy.
+    Always the kwarg, never ``--proxy-server`` in ``args``, so every launch site
+    carries it the same way. The value is already validated by ``Settings``.
     """
-    if not isinstance(proxy, SecretStr):
-        return {}
-    url = urlsplit(proxy.get_secret_value())
-    spec: dict[str, str] = {"server": f"{url.scheme}://{url.netloc.rpartition('@')[2]}"}
-    if url.username:
-        spec["username"] = unquote(url.username)
-        spec["password"] = unquote(url.password or "")
-    return {"proxy": spec}
+    return {"proxy": {"server": proxy}} if proxy else {}
 
 
 def channel_for_profile(profile_dir: Path) -> str | None:

@@ -30,8 +30,6 @@ from .verification import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pydantic import SecretStr
-
     from .verification import FlowSessionStatus
 
 logger = structlog.get_logger(__name__)
@@ -81,7 +79,7 @@ def login_launch_kwargs(
     headless: bool,
     *,
     channel: str | None = None,
-    proxy: SecretStr | None = None,
+    proxy: str | None = None,
 ) -> dict[str, Any]:
     """Launch kwargs for a browser a HUMAN signs into — shared by both strategies.
 

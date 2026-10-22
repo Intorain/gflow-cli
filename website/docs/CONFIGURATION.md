@@ -407,8 +407,8 @@ Measurement script: `scripts/dev/spike_offscreen_window.py`.
 **What:** A proxy for every browser gflow launches: generation (CLI and MCP),
 `gflow auth login`, `auth renew` and the session check behind `auth status`
 ([#1036](https://github.com/ffroliva/gflow-cli/issues/1036)).
-**Values:** `http://host:port` | `https://host:port` | `socks5://host:port` |
-`http://user:pass@host:port` (percent-encode `@` or `:` inside the password)
+**Values:** `http://host:port` | `https://host:port` | `socks5://host:port`; the port is
+required, and credentials (`user:pass@`) are refused, see below
 **Default:** unset. The browser then connects as it always has: on Windows that means
 through the system proxy (Settings → Network → Proxy), if one is on.
 
@@ -424,13 +424,17 @@ same proxy so Google sees one IP per session, and sign in through it. See
 | Situation | What happens |
 |---|---|
 | unset | no change from earlier versions |
-| set | every browser launch routes through it; `gflow doctor` shows `scheme://host:port (auth: yes/no)` |
-| `socks5://` with credentials, a missing host, a bad port, a path or an unknown scheme | refused at startup, exit 11, naming the setting and never repeating the value |
-| with credentials, on the plain-Chrome `auth login` fallback | refused, exit 11: that window cannot carry proxy credentials. Use a credential-less local proxy for sign-in |
-| the proxy is down or refuses the tunnel | the run stops at its first page load, exit 11, with a hint naming this setting |
+| set | every browser launch routes through it; `gflow doctor` shows it |
+| credentials (`user:pass@`), a missing host or port, a path or an unknown scheme | refused at startup, exit 11, naming the setting and never repeating the value |
+| the proxy is down or refuses the tunnel | a generation run stops at its first page load, exit 11, with a hint naming this setting. `auth status` and `auth renew` report an unverified session instead (the usual "check your connection" wording), so check the proxy first |
 
-**Credentials** are split out of the address before the browser starts, so they never
-appear in Chrome's command line, the launch log, `gflow doctor` or an incident bundle.
+**Why no credentials.** Through a proxy that asks for a password, the Flow page never
+finishes loading: measured 2026-10-22 on Playwright 1.61 with bundled Chromium and
+Chrome alike, the labs → flow.google.com navigation timed out at 45 s, while the same
+proxy without a password loaded it in about a second (and plain sites loaded either way).
+Run your proxy client locally and let it hold the upstream credentials; that is how
+Clash and v2ray work by default. `tests/e2e/test_browser_proxy_e2e.py` re-measures this,
+so the restriction can be lifted once Playwright handles it.
 
 **Long-running servers** (`gflow mcp run`, `gflow serve`) read it once at start; restart
 them after changing it. For MCP, set it in `$GFLOW_CLI_HOME/.env` or the client's `env`
