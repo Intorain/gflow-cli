@@ -1599,9 +1599,10 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route="auth/session",
                 remediation_hint=(
-                    "Flow's labs.google session carries no API token for this account. "
-                    "On accounts Google serves from flow.google.com this is expected "
-                    "and re-authenticating will not help — it can also roll this "
+                    "Flow's labs.google session carries no API token. Since 2026-10-22 "
+                    "its session URL answers 410 for every account, including those Flow "
+                    "serves from flow.google.com (#1023), so this is expected and "
+                    "re-authenticating will not help — it can also roll this "
                     "profile's Chrome-strategy marker back and start the #791 "
                     "re-login loop. Generation still works; the routes that need this "
                     "token do not. See issue #803."

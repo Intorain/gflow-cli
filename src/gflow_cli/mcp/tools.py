@@ -1128,8 +1128,9 @@ async def gflow_generate_video(  # NOSONAR
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
-        'seed' is the catalogued seed of 'flow_media_id' — for video, the requested
-        seed, not one observed from Flow (null when none was recorded).
+        'seed' is the catalogued seed of 'flow_media_id' — for video, one a CLI
+        ``--seed`` recorded (this tool takes none), never one observed from Flow; null
+        when none was recorded.
         On failure, 'status' is 'failed' or 'error' with an RFC 9457 'error' dict.
     """
     if (proj_err := _validate_project(project)) is not None:
@@ -1304,7 +1305,9 @@ async def gflow_list_tools() -> dict[str, Any]:
         "Set refresh=true to renew an expired session (rewrites that profile's saved "
         "cookies) in a headless browser and ask again "
         "(slower — one Chrome launch per expired profile; a revoked session still needs "
-        "`gflow auth login`)."
+        "`gflow auth login`). Since 2026-10-22 no balance can be read on any account: "
+        "labs.google's session URL, which issued the token, answers HTTP 410 (#1023, #795), "
+        "and refresh=true does not change that. Generation is unaffected."
     ),
 )
 @_guarded

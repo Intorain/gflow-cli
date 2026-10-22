@@ -39,7 +39,7 @@ You have a Google account with Flow access, you have Veo credits, and you run re
 - **Consistent subjects.** `gflow character create` mints a Flow Character (face and body reference) so the same person appears from one generation to the next.
 - **Prompt tools.** `--tool creative-director` rewrites a terse prompt into a vivid one (Google's 5-component formula) before generating — on any command. Bring your own with [My Tools](docs/TOOLS.md).
 - **Pipelines.** Wire Veo into your content automation, AI-video stack, or batch experiments.
-- **Terminal-native.** After one `gflow auth login`, you stay in the shell. No clicking through dialogs. A stale session renews headlessly with `gflow auth renew` (or `gflow credits user|list --refresh`).
+- **Terminal-native.** After one `gflow auth login`, you stay in the shell. No clicking through dialogs. A stale session renews headlessly with `gflow auth renew`.
 
 Same Veo and Imagen models, same quality, same billing against your own Google account, now programmatic.
 
@@ -54,8 +54,9 @@ uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 # 2 · Authenticate (one-time, opens a real Chrome window)
 gflow auth login --browser chrome
 
-# Check the current balance (or use `credits list` for every saved profile)
-gflow credits user
+# Check the session (no browser, no credits)
+gflow auth status
+# `gflow credits user` cannot read a balance at the moment (#795)
 
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
