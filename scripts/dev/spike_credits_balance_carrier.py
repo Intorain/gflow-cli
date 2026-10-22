@@ -195,7 +195,7 @@ async def _one_run(page: Page, run: int, state: dict[str, Any]) -> dict[str, Any
 
 async def _credits_with_page_bearer(page: Page, bearer: str) -> dict[str, Any]:
     resp = await page.context.request.get(
-        routes.CREDITS,
+        f"{routes.FLOW_API_BASE}/credits",  # the retired credits route (#795)
         headers={
             "authorization": bearer,
             "origin": "https://flow.google.com",

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.87.1] — 2026-10-22
+
 ### Security
 
 - **Locked `opentelemetry-api` 1.45.1 (CVE-2026-114603).** Transitive only, via `fastapi`
@@ -25,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The JSON keys are unchanged, but `sku`, `service_tier`, `user_paygate_tier` and
   `subscription_credits` are now always `null`, because flow.google.com does not report them.
   A sign-in landing is exit 3 (`--refresh` renews it). An app that never fetches the balance is
-  exit 31 (`FlowAppError`), never an auth error. Measured on one account; another plan may shape
+  exit 31 (`FlowAppError`), never an auth error. Measured on two accounts, neither on a paid plan; a paid plan may shape
   the reply differently.
 
 - **A video run into an existing `--project` no longer rewrites that project's title in
@@ -6306,7 +6308,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...HEAD
+[0.87.1]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...v0.87.1
 [0.87.0]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0
 [0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0

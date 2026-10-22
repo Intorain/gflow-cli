@@ -54,7 +54,7 @@ uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 # 2 · Authenticate (one-time, opens a real Chrome window)
 gflow auth login --browser chrome
 
-# Check the session (no browser, no credits)
+# Check the session (spends nothing)
 gflow auth status
 gflow credits user          # Veo credit balance (opens Flow in the browser; spends nothing)
 
