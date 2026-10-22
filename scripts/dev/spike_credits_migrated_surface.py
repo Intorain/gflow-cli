@@ -9,8 +9,8 @@ extend-route-recon.md). On accounts served flow.google.com, #795 says the balanc
 Nobody has measured either on this host. This does.
 
 COST: $0. Two navigations, DOM reads, and typing a throwaway prompt into the composer that
-is cleared again. Nothing is submitted, created, uploaded or deleted. The balance read
-through `api/credits.py` is an HTTP GET.
+is cleared again. Nothing is submitted, created, uploaded or deleted. (Runs 1-2 also made
+the labs-token HTTP balance read; that read and its module were removed in #795.)
 
 WHAT IT RECORDS
   * the host that actually served (never assumed from the account)
@@ -21,7 +21,7 @@ WHAT IT RECORDS
   * DOM, before and after typing a prompt: text lines that pair a number with "credit"
     (discovery only, never a production anchor), aria-labels mentioning credits, the
     `prompt-warning-button` count, and `mat-icon` ligatures present.
-  * `fetch_credits_http` outcome for the same profile, before the browser starts.
+  * (runs 1-2 only) the labs-token HTTP balance read, removed in #795.
 
 PRE-REGISTERED READING (written before the run; commit this file before the data exists)
   * A batchexecute response on project load carries credit-shaped keys with numbers
@@ -37,7 +37,7 @@ PRE-REGISTERED READING (written before the run; commit this file before the data
        What would settle it: the HAR harness with a human opening the settings panel.
   * The profile is signed out, lands on /about, or is served labs
     -> UNMEASURED for this host. Say which, and stop.
-  * `fetch_credits_http` succeeds on this profile
+  * (runs 1-2 only) the labs-token HTTP balance read succeeds on this profile
     -> #795's premise no longer holds for this account; re-read #795 before planning.
 
 RUN 1 (2026-09-14, before v2 existed): `denon82` landed on /about -> UNMEASURED. `ci-probe`
@@ -141,16 +141,6 @@ def _route(url: str) -> str:
     return re.sub(r"\?.*$", "", url.split("//", 1)[-1])[:120]
 
 
-async def _balance_via_http(profile_dir: Path) -> dict[str, Any]:
-    from gflow_cli.api.credits import fetch_credits_http
-
-    try:
-        info = await fetch_credits_http(profile_dir)
-        return {"ok": True, "info": repr(info)[:300]}
-    except Exception as exc:  # noqa: BLE001 - a spike records every outcome
-        return {"ok": False, "error_type": type(exc).__name__, "detail": str(exc)[:300]}
-
-
 async def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -163,8 +153,6 @@ async def main() -> int:
     profile_dir = resolve_profile_dir(args.profile)
     out: dict[str, Any] = {"profile": args.profile, "responses": [], "dom": {}}
 
-    step("http", "fetch_credits_http before the browser starts")
-    out["balance_http"] = await _balance_via_http(profile_dir)
 
     async with build_client(profile_dir) as client:
         page: Page | None = None
@@ -287,7 +275,6 @@ async def main() -> int:
             path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
             step("wrote", str(path))
 
-    print("\nbalance_http:", {k: v for k, v in out["balance_http"].items() if k != "info"})
     for name, dom in out["dom"].items():
         if isinstance(dom, dict):
             print(

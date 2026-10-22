@@ -1591,8 +1591,8 @@ class FlowApiClient:
             # #803/#795: labs answering 200 with no token is the migrated-account
             # shape, not an expired session. aisandbox-pa has not been contacted
             # yet, so nothing has rejected anything — and SAPISID is what made
-            # this probe answer at all. Mirrors the wording live-verified for
-            # `gflow credits` in api/credits.py.
+            # this probe answer at all. (`gflow credits` no longer uses this token:
+            # it reads flow.google.com's `nzlxg` reply, #795.)
             raise AisandboxAuthError(
                 detail="no access_token in /fx/api/auth/session",
                 status=resp.status,
@@ -1905,23 +1905,19 @@ class FlowApiClient:
         return refused
 
     async def get_credits(self) -> CreditsInfo:
-        """Return the authenticated profile's current Flow credit balance."""
+        """Return the profile's current Flow credit balance.
 
-        data = await self._get_json(routes.CREDITS, route_name="credits")
-        if not isinstance(data, dict):
-            raise WireFormatError(
-                detail="unexpected credits response shape: expected an object",
-                instance=_make_instance(),
-                route="credits",
-            )
+        Read from flow.google.com's own ``nzlxg`` reply (#795): the labs session that
+        issued the token for ``GET /v1/credits`` answers 410 to every account since
+        2026-10-22, and the app on flow.google.com sends no Bearer to aisandbox-pa.
+        """
+        from gflow_cli.api.transports import migrated_composer  # noqa: PLC0415
+
+        page = await self._checkout_page()
         try:
-            return CreditsInfo.from_response(cast("JsonObject", data))
-        except ValueError as exc:
-            raise WireFormatError(
-                detail=str(exc),
-                instance=_make_instance(),
-                route="credits",
-            ) from exc
+            return await migrated_composer.read_credits(page)
+        finally:
+            self._checkin_page(page)
 
     async def rename_project(self, project_id: str, new_title: str) -> JsonObject:
         """Rename an existing Flow project.

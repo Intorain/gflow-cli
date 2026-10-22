@@ -2,7 +2,7 @@
 
 The class default asserted a SAPISID failure, and three of the five raise sites
 took it unchanged — on routes where SAPISID is never read. #795 fixed the two
-sites in `api/credits.py`; these are the three that were left, reachable from
+sites in the (since retired) `api/credits.py`; these are the three that were left, reachable from
 `createScene`, `commitWorkflow`, `createEntity`, `projectInitialData`,
 `upsampleImage` and every other aisandbox route through
 `_run_with_aisandbox_retry`.

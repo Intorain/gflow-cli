@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security
-
-- **Locked `opentelemetry-api` 1.45.1 (CVE-2026-114603).** Transitive only, via `fastapi`
-  and `mcp`; no gflow code imports it. The advisory turned the `pip-audit` gate red on every
-  open PR.
-
 ### Fixed
 
 - **`gflow auth login --browser internal` no longer waits until its timeout**
@@ -27,6 +21,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows only, and on macOS that read is expected to fail, which now ends the login with
   "re-run with `--browser chrome`".
 
+## [0.87.1] — 2026-10-22
+
+### Security
+
+- **Locked `opentelemetry-api` 1.45.1 (CVE-2026-114603).** Transitive only, via `fastapi`
+  and `mcp`; no gflow code imports it. The advisory turned the `pip-audit` gate red on every
+  open PR.
+
+### Fixed
+
+- **`gflow credits` reads a balance again** ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
+  Since 2026-10-22 it failed on every account, because its token came from labs.google's session
+  URL, which now answers HTTP 410. `credits user`, `credits list` and the MCP tool
+  `gflow_get_credits` now open flow.google.com in the profile's browser and read the balance from
+  the app's own `nzlxg` reply. That is the number in Flow's account menu: it matched in 5/5 reads,
+  one of them after a 10-credit spend. It costs one browser launch per profile, nothing is
+  clicked or spent, and a profile in use by another gflow process reports `ProfileLockedError`.
+  The JSON keys are unchanged, but `sku`, `service_tier`, `user_paygate_tier` and
+  `subscription_credits` are now always `null`, because flow.google.com does not report them.
+  A sign-in landing is exit 3 (`--refresh` renews it). An app that never fetches the balance is
+  exit 31 (`FlowAppError`), never an auth error. Measured on two accounts, neither on a paid plan; a paid plan may shape
+  the reply differently.
+
 - **A video run into an existing `--project` no longer rewrites that project's title in
   the local catalog** ([#1022](https://github.com/ffroliva/gflow-cli/issues/1022)).
   `video t2v`/`i2v`/`r2v`/`extend` replaced the stored title with their `gflow-cli video`
@@ -36,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer kept as a real one. CLI and MCP share the fix. A title already overwritten is not
   recoverable locally: run `gflow project rename <id> <title>` to restore it. Reported, with
   the fix, by @error-Sench.
+- **2K image upscale on flow.google.com no longer fails when Chrome loses Flow's reply**
+  ([#1027](https://github.com/ffroliva/gflow-cli/issues/1027)). `gflow image upscale` and
+  the MCP upscale tool failed with `WireFormatError: Failed to parse SPrCad response ...
+  No data found for resource with given identifier` although Flow had upscaled the image.
+  Chrome dropped DevTools' copy of that reply on 6 of 12 measured upscales. The image is
+  now also taken from the file Flow's page builds for its own download, which held the same
+  bytes on 12 of 12. A refusal Flow does send still fails the run.
 
 ## [0.87.0] — 2026-10-22
 
@@ -6298,7 +6322,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...HEAD
+[0.87.1]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...v0.87.1
 [0.87.0]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0
 [0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0

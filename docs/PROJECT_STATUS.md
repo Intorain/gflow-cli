@@ -4,15 +4,35 @@
 
 ## Current release
 
-**v0.87.0 — alpha.** Sign-in works again after labs.google's session URL went away, and a
+**v0.87.1 — alpha.** `gflow credits` reads a balance again, and 2K image upscales stop
+failing when Chrome loses Flow's reply.
+
+**`gflow credits` works again, on flow.google.com (#795).** The labs.google session token it
+used is gone (#1023). It now reads the balance from the request Flow's own page makes on
+load, the number its account menu shows. Measured on two accounts, neither on a paid plan; tier fields (`sku` and
+the rest) are now always null.
+
+**2K image upscale no longer fails on a lost reply (#1027).** Chrome dropped Flow's reply on
+6 of 12 measured upscales; the image is now taken from the page's own download when that
+happens.
+
+**Also:** a video run into an existing `--project` keeps that project's title in the local
+catalog (#1022); `opentelemetry-api` locked at 1.45.1 (CVE-2026-114603). A login with
+`--browser internal` (#1026) is fixed on a branch but not yet released: it has not been run
+against a live sign-in.
+
+Full ledger: [LIVE_VERIFICATION_v0.87.1](LIVE_VERIFICATION_v0.87.1.md).
+
+<details><summary>v0.87.0 — sign-in after labs.google's session URL went away</summary>
+
+Sign-in works again after labs.google's session URL went away, and a
 failure after the submit click no longer bills twice.
 
 **`gflow auth login --browser chrome` and `auth status` work again (#1023).** Since
 2026-10-22 labs.google's session URL answers HTTP 410 to every account, and every session
 check failed. A 410 now hands the verdict to the server-attested flow.google.com check
-(#791). `gflow credits` still cannot read a balance on any account (#795). A login with
-`--browser internal` no longer waits for its timeout, but has not been run against a live
-sign-in since the 410 (#1026).
+(#791). A login with `--browser internal` cannot finish yet (#1026). (`gflow credits` was
+ported to flow.google.com after this release, #795.)
 
 **No second billed generation after the submit click (#1010).** A lost image submit reply
 used to make gflow submit the image again; a lost video reply, or any timeout after the
@@ -27,6 +47,8 @@ under `tmp/` without `--out-dir` and honour a cloud `GFLOW_CLI_STORAGE_URI` (#98
 dependency CVEs fixed.
 
 Full ledger: [LIVE_VERIFICATION_v0.87.0](LIVE_VERIFICATION_v0.87.0.md).
+
+</details>
 
 <details><summary>v0.86.0 — video extend and the agent-only composer on flow.google.com</summary>
 
@@ -539,6 +561,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `gflow credits` reads the balance from flow.google.com (#795); 2K image upscale survives a lost reply (#1027) | ✅ done (v0.87.1) |
 | Session checks survive labs.google's session URL answering 410 (#1023); no second billed generation after a lost submit reply (#1010) | ✅ done (v0.87.0) |
 | `video extend` driven through Flow's own UI on flow.google.com, single segment, with a route guard on the billed request (#991); t2i/t2v on the agent-only composer (#989); `auth renew` / `credits --refresh` (#982) | ✅ done (v0.86.0) |
 | `@Character` mentions on flow.google.com images attach the Flow character by exact picker title, verified as an entity chip, with an exact-set submit guard (#723, #979); multi-prompt `t2i --project-name` titles its project (#975) | ✅ done (v0.85.0) |

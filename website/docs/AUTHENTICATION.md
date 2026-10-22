@@ -281,7 +281,8 @@ session reports `ACCESS_TOKEN_REFRESH_NEEDED`, and the page renews it through Go
 prompt. This step mattered because `gflow credits` read its token from that labs session; since
 2026-10-22 labs' session URL answers HTTP 410 for every account
 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so the step finds nothing to
-renew and `gflow credits` cannot read a balance ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
+renew. `gflow credits` no longer needs it: it reads the balance from flow.google.com
+([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
 The browser saves whatever cookies were rotated, and the
 result is verified exactly like `gflow auth status`. It spends no credits.
 
