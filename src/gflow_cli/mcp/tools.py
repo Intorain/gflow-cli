@@ -1299,15 +1299,16 @@ async def gflow_list_tools() -> dict[str, Any]:
 @server.tool(
     name="gflow_get_credits",
     description=(
-        "Read the current Google Flow credit balance for one saved profile or all profiles. "
+        "Read the current Google Flow credit balance for one saved profile or all profiles "
+        "- the number Flow's account menu shows, read from flow.google.com in that "
+        "profile's browser (one browser launch per profile, sequential for all_profiles). "
         "Spends no credits. Set all_profiles=true when choosing an "
         "account for generation; partial profile failures remain visible in the result. "
-        "Set refresh=true to renew an expired session (rewrites that profile's saved "
-        "cookies) in a headless browser and ask again "
-        "(slower — one Chrome launch per expired profile; a revoked session still needs "
-        "`gflow auth login`). Since 2026-10-22 no balance can be read on any account: "
-        "labs.google's session URL, which issued the token, answers HTTP 410 (#1023, #795), "
-        "and refresh=true does not change that. Generation is unaffected."
+        "Set refresh=true to renew a signed-out session (rewrites that profile's saved "
+        "cookies) in a headless browser and read again "
+        "(slower - one more Chrome launch per signed-out profile; a revoked session still "
+        "needs `gflow auth login`). The tier fields (sku, service_tier, user_paygate_tier, "
+        "subscription_credits) are always null: flow.google.com does not report them."
     ),
 )
 @_guarded

@@ -10,8 +10,8 @@ failure after the submit click no longer bills twice.
 **`gflow auth login --browser chrome` and `auth status` work again (#1023).** Since
 2026-10-22 labs.google's session URL answers HTTP 410 to every account, and every session
 check failed. A 410 now hands the verdict to the server-attested flow.google.com check
-(#791). `gflow credits` still cannot read a balance on any account (#795), and a login with
-`--browser internal` cannot finish yet (#1026).
+(#791). A login with `--browser internal` cannot finish yet (#1026). (`gflow credits` was
+ported to flow.google.com after this release, #795.)
 
 **No second billed generation after the submit click (#1010).** A lost image submit reply
 used to make gflow submit the image again; a lost video reply, or any timeout after the

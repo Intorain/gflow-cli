@@ -142,13 +142,11 @@ def _route(url: str) -> str:
 
 
 async def _balance_via_http(profile_dir: Path) -> dict[str, Any]:
-    from gflow_cli.api.credits import fetch_credits_http
-
-    try:
-        info = await fetch_credits_http(profile_dir)
-        return {"ok": True, "info": repr(info)[:300]}
-    except Exception as exc:  # noqa: BLE001 - a spike records every outcome
-        return {"ok": False, "error_type": type(exc).__name__, "detail": str(exc)[:300]}
+    # `api/credits.py` (the labs-token HTTP read) was retired in #795: labs' session URL
+    # answers 410 to every account. The balance is now read from `nzlxg`
+    # (scripts/dev/spike_credits_balance_carrier.py).
+    del profile_dir
+    return {"ok": False, "error_type": "Retired", "detail": "api/credits.py removed in #795"}
 
 
 async def main() -> int:

@@ -45,7 +45,7 @@ from uuid import uuid4
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from gflow_cli.api.dto import GeneratedImage, ProjectInfo
+from gflow_cli.api.dto import CreditsInfo, GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import ImageRef
 from gflow_cli.api.image import Model as ImageModel
@@ -77,6 +77,7 @@ from gflow_cli.errors import (
     CONTENT_SAFETY_REASONS,
     ConfigurationError,
     ContentPolicyError,
+    FlowAppError,
     FlowHostMigratedError,
     GFlowError,
     InsufficientCreditsError,
@@ -3869,3 +3870,51 @@ async def rename_project(
             route=f"batchexecute:{RENAME_PROJECT_RPC}",
         )
     log.info("migrated.project_renamed", project_id=project_id)
+
+
+#: The app's own balance read: no arguments, fired on every load of the app (#795).
+#: `[]` -> `[balance, a, b, c, null, balance', [refresh_epoch_s, nanos]]`
+#: (docs/superpowers/spikes/2026-10-22-credits-balance-on-nzlxg.md).
+CREDITS_RPC = "nzlxg"
+
+
+async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
+    """Load flow.google.com and return the balance from the app's own ``nzlxg`` reply.
+
+    Read-only and free: nothing is clicked. The reply is read from the wire, not from the
+    account menu, so no translated text is involved.
+    """
+
+    async def load() -> None:
+        await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
+
+    try:
+        payload = await _rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
+    except TransportTimeoutError as e:
+        # Signed out, /about, no Flow access: each has its own typed error.
+        await raise_if_known_landing(page, requested=MIGRATED_ROOT_URL, at="migrated.credits")
+        raise FlowAppError(
+            detail=(
+                f"flow.google.com loaded ({safe_page_url(page.url)}) but the app did not "
+                f"fetch its credit balance ({CREDITS_RPC}) within {timeout_s:.0f}s."
+            ),
+            route=f"batchexecute:{CREDITS_RPC}",
+            remediation_hint=(
+                "Your session is not the problem: the app loaded. Retry once; if it "
+                "persists, open flow.google.com and check the balance in the account "
+                "menu, then report it on issue #795 — Flow may have moved the balance."
+            ),
+        ) from e
+    try:
+        info = CreditsInfo.from_nzlxg(payload)
+    except ValueError as e:
+        raise WireFormatError(
+            detail=str(e),
+            route=f"batchexecute:{CREDITS_RPC}",
+            remediation_hint=(
+                "Flow changed the shape of its balance reply. Report it on issue #795; "
+                "generation is unaffected."
+            ),
+        ) from e
+    log.info("migrated.credits_read")
+    return info

@@ -56,7 +56,7 @@ gflow auth login --browser chrome
 
 # Check the session (no browser, no credits)
 gflow auth status
-# `gflow credits user` cannot read a balance at the moment (#795)
+gflow credits user          # Veo credit balance (opens Flow in the browser; spends nothing)
 
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"

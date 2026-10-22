@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow credits` reads a balance again** ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
+  Since 2026-10-22 it failed on every account, because its token came from labs.google's session
+  URL, which now answers HTTP 410. `credits user`, `credits list` and the MCP tool
+  `gflow_get_credits` now open flow.google.com in the profile's browser and read the balance from
+  the app's own `nzlxg` reply. That is the number in Flow's account menu: it matched in 5/5 reads,
+  one of them after a 10-credit spend. It costs one browser launch per profile, nothing is
+  clicked or spent, and a profile in use by another gflow process reports `ProfileLockedError`.
+  The JSON keys are unchanged, but `sku`, `service_tier`, `user_paygate_tier` and
+  `subscription_credits` are now always `null`, because flow.google.com does not report them.
+  A sign-in landing is exit 3 (`--refresh` renews it). An app that never fetches the balance is
+  exit 31 (`FlowAppError`), never an auth error. Measured on one account; another plan may shape
+  the reply differently.
+
 - **A video run into an existing `--project` no longer rewrites that project's title in
   the local catalog** ([#1022](https://github.com/ffroliva/gflow-cli/issues/1022)).
   `video t2v`/`i2v`/`r2v`/`extend` replaced the stored title with their `gflow-cli video`
