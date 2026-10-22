@@ -58,8 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`gflow auth login` and `auth status` work again now that labs.google's session URL
-  answers HTTP 410 Gone** ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
+- **`gflow auth login --browser chrome` and `auth status` work again now that labs.google's
+  session URL answers HTTP 410 Gone** ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
   Since 2026-10-22 every session check reported "Could not verify the Flow session",
   and a first login rolled back its `chrome` marker. On a 410 gflow now verifies the
   session against Google's account page with the profile's own cookies, the check it

@@ -865,14 +865,15 @@ class TestMigratedHostStopSignal:
     """
 
     @staticmethod
-    def _page(url: str = "https://flow.google.com/project/abc123") -> MagicMock:
+    def _page(url: str = "https://flow.google.com/project/abc123", status: int = 200) -> MagicMock:
         page = MagicMock(name="page")
         page.url = url
         page.is_closed = MagicMock(return_value=False)
-        # `200 {}` with a Google session: the migrated account's forever-answer.
+        # `200 {}` with a Google session: the migrated account's forever-answer. Since
+        # 2026-10-22 labs answers `410 {"error"}` to everyone instead (#1023).
         resp = MagicMock(name="resp")
-        resp.status = 200
-        resp.text = AsyncMock(return_value="{}")
+        resp.status = status
+        resp.text = AsyncMock(return_value="{}" if status == 200 else '{"error":"gone"}')
         page.request.get = AsyncMock(return_value=resp)
         return page
 
@@ -883,11 +884,12 @@ class TestMigratedHostStopSignal:
     ]
 
     @pytest.mark.asyncio
-    async def test_stops_waiting_when_the_migrated_pair_is_present(self) -> None:
+    @pytest.mark.parametrize("status", [200, 410])
+    async def test_stops_waiting_when_the_migrated_pair_is_present(self, status: int) -> None:
         from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
         from gflow_cli.auth.verification import FlowSessionOutcome
 
-        page = self._page()
+        page = self._page(status=status)
         ctx = MagicMock(name="ctx")
         ctx.cookies = AsyncMock(return_value=self.MIGRATED_JAR)
 

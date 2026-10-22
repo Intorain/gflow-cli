@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from gflow_cli.auth.verification import LABS_GONE_STATUS
 from gflow_cli.errors import AisandboxAuthError, AuthExpiredError
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
@@ -56,16 +57,16 @@ async def test_auth_renew_verifies_a_live_profile_and_leaves_it_readable(
     from gflow_cli.services import credits
 
     profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
-    # "Never worse than it found it" needs a balance to compare against. An account whose
-    # labs session issues no token (#795) reads none before or after, and since labs
-    # answers 410 (#1023) no account gets one. Only the labs no-token case is excused: an
-    # expired token is exactly what renewal is for, so excusing any AuthExpiredError
-    # would hide the case this test exists to run. The renewal itself is asserted always.
+    # "Never worse than it found it" needs a balance to compare against. Since labs'
+    # session URL answers 410 (#1023) no account gets a token, so there is none. Only that
+    # 410 is excused: a labs 200 with no token, or an expired token, is exactly what
+    # renewal is for, and excusing it would hide the case this test exists to run. The
+    # renewal itself is asserted always.
     readable_before = True
     try:
         await credits.inspect_profile(profile)
     except AisandboxAuthError as exc:
-        if exc.route != "auth/session":
+        if exc.route != "auth/session" or exc.status != LABS_GONE_STATUS:
             raise
         readable_before = False
 
