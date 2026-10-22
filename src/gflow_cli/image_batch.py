@@ -41,6 +41,7 @@ from gflow_cli.errors import (
     DataStoreError,
     GFlowError,
     MediaAttributionError,
+    RpcResponseUnavailableError,
 )
 from gflow_cli.storage import cloud_info_from_path
 
@@ -736,6 +737,8 @@ async def run_image_batch(
     results: dict[int, BatchOutcome] = {}
     # One upload per distinct local file per run (one run, one project).
     uploads: dict[str, ImageRef] = {}
+    # Uploads whose outcome is unknown (#1009): they may have saved, so never re-upload.
+    lost_uploads: dict[str, RpcResponseUnavailableError] = {}
     project_created = project_id is None
 
     async def image_worker(
@@ -768,10 +771,15 @@ async def run_image_batch(
             cached = uploads.get(item.ref)
             if cached is None:
                 try:
+                    if item.ref in lost_uploads:
+                        raise lost_uploads[item.ref]
                     cached = await client.upload_reference(project_id, Path(item.ref))
                 except Exception as exc:  # noqa: BLE001 - one row's upload must not end the run
                     # Like a generation failure: the row fails with the reason and the run
-                    # goes on. Not cached, so a later row naming the file retries it.
+                    # goes on. Not cached, so a later row naming the file retries it --
+                    # unless the outcome is unknown: then a retry could duplicate the asset.
+                    if isinstance(exc, RpcResponseUnavailableError):
+                        lost_uploads[item.ref] = exc
                     logger.warning(
                         "batch.reference_upload_failed",
                         index=item.index,

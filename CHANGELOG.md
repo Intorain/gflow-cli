@@ -44,6 +44,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (2026-10-22: a fresh bundled-Chromium sign-in finished on its own and `auth status`
   reported the session verified). Not measured on macOS, where the saved-cookie read is
   expected to fail; the login then ends with "re-run with `--browser chrome`".
+- **flow.google.com: a write whose reply Chrome lost is read back, not called a failure**
+  ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009), PR
+  [#992](https://github.com/ffroliva/gflow-cli/pull/992) by @L1meSn0w). Chrome sometimes
+  cannot hand over a reply body (`Network.getResponseBody: No data found`, 2 of 45 real
+  uploads in our spike) although Flow saved the write. A local upload was reported as a
+  rejected file, and a project create or rename as a timeout. gflow now opens the project
+  in a second tab and checks it: the new project's id from the page it navigated to, the
+  saved title, or exactly one tile with the run's unique file name and a media id. Nothing
+  is submitted twice. If that check cannot prove the outcome, the command exits 7 with
+  `RpcResponseUnavailableError`, which is not retryable. Renaming a project to the title it
+  already has no longer waits for a reply Flow never sends.
+
+### Changed
+
+- **A lost upload reply now exits 7 (`RpcResponseUnavailableError`) instead of 27**
+  ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)). Exit 27 still means Flow
+  answered and refused the file. Exit 7 here means the outcome is unknown: the upload may
+  have saved, so check the project before re-running. Scripts that branch on 27 for a lost
+  upload should branch on 7.
 
 ## [0.87.1] — 2026-10-22
 
