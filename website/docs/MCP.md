@@ -383,6 +383,13 @@ unauthenticated, which is the local single-user default.
 > `gflow serve` — it currently runs the MCP/SSE server only. See the
 > [CHANGELOG](../CHANGELOG.md) for the roadmap.
 
+> **Settings reach the server through its environment, not your shell's `.env`.** An MCP
+> client starts `gflow mcp run` in a directory of its own choosing, so a `.env` beside your
+> shell is not read. Put settings such as
+> [`GFLOW_CLI_BROWSER_PROXY`](CONFIGURATION.md#gflow_cli_browser_proxy) in
+> `$GFLOW_CLI_HOME/.env` or in the client's `env` block, and restart the server after
+> changing them.
+
 > **However you register it, that server then gates your upgrades.** Every client
 > above starts a long-lived `gflow mcp run` — one per session — and on Windows it
 > holds the install open, so a package manager can abort part-way through

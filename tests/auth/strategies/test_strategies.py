@@ -17,6 +17,7 @@ from gflow_cli.errors import (
     AuthMissingError,
     SecurityError,
 )
+from tests.fixtures.settings_mock import NO_PROXY
 
 
 def _status(outcome: FlowSessionOutcome, email: str | None = None) -> FlowSessionStatus:
@@ -84,7 +85,7 @@ class TestRealChromeStrategy:
         verified = _status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch("gflow_cli.auth.real_chrome.find_chrome_executable", return_value=fake_chrome),
             patch("gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec", mock_create),
@@ -118,7 +119,7 @@ class TestRealChromeStrategy:
         verified = _status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
@@ -164,7 +165,7 @@ class TestRealChromeStrategy:
             return _status(FlowSessionOutcome.AUTHENTICATED, "test@example.com")
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
@@ -203,7 +204,7 @@ class TestRealChromeStrategy:
         mock_proc = _build_mock_proc()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
@@ -245,7 +246,7 @@ class TestRealChromeStrategy:
         mock_proc = _build_mock_proc()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
@@ -283,7 +284,7 @@ class TestRealChromeStrategy:
         gflow_home.mkdir()
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
@@ -320,7 +321,7 @@ class TestRealChromeStrategy:
         (profile_dir / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
@@ -351,7 +352,7 @@ class TestRealChromeStrategy:
         outside_dir = tmp_path / "system_chrome_profile"
         outside_dir.mkdir()
 
-        with patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings:
+        with patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings:
             mock_settings.return_value.home = gflow_home
             with pytest.raises(SecurityError) as excinfo:
                 await strategy.login(outside_dir, headless=False)
@@ -381,7 +382,7 @@ class TestRealChromeStrategy:
             raise TimeoutError
 
         with (
-            patch("gflow_cli.auth.real_chrome.get_settings") as mock_settings,
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
             _force_subprocess_path(),
             patch(
                 "gflow_cli.auth.real_chrome.find_chrome_executable",
@@ -448,7 +449,7 @@ class TestInternalChromiumStrategy:
         mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
 
         with (
-            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.internal_chromium.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch(
                 "gflow_cli.auth.internal_chromium.verify_flow_profile",
@@ -533,7 +534,7 @@ class TestInternalChromiumStrategy:
         mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
 
         with (
-            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.internal_chromium.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch(
                 "gflow_cli.auth.internal_chromium.verify_flow_profile",
@@ -588,7 +589,7 @@ class TestInternalChromiumStrategy:
         mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
 
         with (
-            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.internal_chromium.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -637,7 +638,7 @@ class TestInternalChromiumStrategy:
         mock_ap = MagicMock(name="async_playwright", return_value=mock_cm)
 
         with (
-            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.internal_chromium.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -696,7 +697,7 @@ class TestInternalChromiumLabsGone:
         mock_ap, _ = self._playwright()
         verify = AsyncMock(return_value=verdict)
         with (
-            patch("gflow_cli.auth.internal_chromium.get_settings") as mock_settings,
+            patch("gflow_cli.auth.internal_chromium.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("gflow_cli.auth.internal_chromium.verify_flow_profile", verify, create=True),
             patch("asyncio.sleep", AsyncMock()),

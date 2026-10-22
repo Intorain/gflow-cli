@@ -53,7 +53,9 @@ def _validate_profile_dir(profile_dir: Path, settings: Settings) -> None:
         ) from None
 
 
-def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> list[str]:
+def _build_chrome_args(
+    chrome_exe: str, profile_dir: Path, headless: bool, proxy: str | None = None
+) -> list[str]:
     """Build the Chrome command-line argument list for passive-capture login."""
     args = [
         chrome_exe,
@@ -64,6 +66,8 @@ def _build_chrome_args(chrome_exe: str, profile_dir: Path, headless: bool) -> li
         "--password-store=basic",
         # No --remote-debugging-port: zero automation surface.
     ]
+    if proxy:
+        args.append(f"--proxy-server={proxy}")
     if headless:
         args.append("--headless=new")
     # Open Flow directly (ONCE) so the user lands on the sign-in / app surface
@@ -310,7 +314,12 @@ class RealChromeStrategy(AuthStrategy):
         async with ProfileLease(profile_dir), async_playwright() as pw:
             try:
                 ctx = await pw.chromium.launch_persistent_context(
-                    **login_launch_kwargs(profile_dir, headless, channel="chrome"),
+                    **login_launch_kwargs(
+                        profile_dir,
+                        headless,
+                        channel="chrome",
+                        proxy=get_settings().browser_proxy,
+                    ),
                 )
             except Exception as exc:
                 logger.warning(
@@ -406,7 +415,9 @@ class RealChromeStrategy(AuthStrategy):
                 msg,
             )
 
-        chrome_args = _build_chrome_args(chrome_exe, profile_dir, headless)
+        chrome_args = _build_chrome_args(
+            chrome_exe, profile_dir, headless, get_settings().browser_proxy
+        )
 
         # Own the profile while passive-capture Chrome runs (D3). The lease
         # scope is ONLY the running browser: it is released before

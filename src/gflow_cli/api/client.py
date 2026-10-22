@@ -85,7 +85,11 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
-from gflow_cli.browser_manager import channel_for_profile, window_position_args
+from gflow_cli.browser_manager import (
+    browser_proxy_kwargs,
+    channel_for_profile,
+    window_position_args,
+)
 from gflow_cli.config import BrowserEngine, Settings
 from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_incidents_root
 from gflow_cli.errors import (
@@ -178,6 +182,13 @@ def _is_profile_access_denied(exc: BaseException) -> bool:
     """
     message = str(exc)
     return "ProcessSingleton" in message and ("(0x5)" in message or "Error code: 5" in message)
+
+
+#: Chromium's net errors for a proxy it cannot use (#1036) — dead port, refused tunnel.
+_PROXY_FAILURES = (
+    "net::ERR_PROXY_CONNECTION_FAILED",
+    "net::ERR_TUNNEL_CONNECTION_FAILED",
+)
 
 
 def _is_target_closed(exc: BaseException) -> bool:
@@ -535,6 +546,7 @@ class FlowApiClient:
                 "--disable-dev-shm-usage",
                 *window_position_args(self.settings.browser_window_position),
             ],
+            **browser_proxy_kwargs(self.settings.browser_proxy),
         }
         if self.settings.har_path is not None:
             self.settings.har_path.parent.mkdir(parents=True, exist_ok=True)
@@ -590,6 +602,7 @@ class FlowApiClient:
         except FileNotFoundError:
             pass
         launch_args: list[str] = kwargs.get("args") or []
+        proxy_spec: dict[str, str] = kwargs.get("proxy") or {}
         logger.info(
             "client.persistent_context_launch",
             channel=channel,
@@ -605,6 +618,8 @@ class FlowApiClient:
             launch_args=launch_args,
             ignore_default_args=kwargs.get("ignore_default_args"),
             password_store_basic="--password-store=basic" in launch_args,
+            # #1036: scheme://host:port (credentials are refused by Settings).
+            proxy=proxy_spec.get("server"),
         )
         if wants_chrome and channel is None:
             msg = (
@@ -943,11 +958,25 @@ class FlowApiClient:
         """
         assert self._page is not None
         cached = read_account_locale(self.profile_dir)
-        await self._page.goto(
-            routes.EDITOR_BOOTSTRAP_URL,
-            wait_until="domcontentloaded",
-            timeout=60_000,
-        )
+        try:
+            await self._page.goto(
+                routes.EDITOR_BOOTSTRAP_URL,
+                wait_until="domcontentloaded",
+                timeout=60_000,
+            )
+        except Exception as exc:
+            # #1036: the first navigation is where an unreachable proxy shows up.
+            code = next((c for c in _PROXY_FAILURES if c in str(exc)), None)
+            if code is not None:
+                raise ConfigurationError(
+                    f"the browser could not reach Flow through its proxy ({code})",
+                    remediation_hint=(
+                        "Check that the proxy in GFLOW_CLI_BROWSER_PROXY is running and "
+                        "reachable, or unset it (with it unset, the browser uses the "
+                        "system proxy)."
+                    ),
+                ) from exc
+            raise
         # #639: NOT_REDIRECTED means "there is no redirect to wait for". It must not
         # ALSO mean "do not read the locale" — which is what returning here made it
         # mean, and that made the state ABSORBING: `_resolve_account_locale` is the

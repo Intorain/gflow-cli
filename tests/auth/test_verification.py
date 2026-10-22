@@ -16,6 +16,7 @@ from gflow_cli.auth.verification import (
     verify_flow_session,
 )
 from gflow_cli.errors import SecurityError
+from tests.fixtures.settings_mock import NO_PROXY
 
 # Representative authenticated /api/auth/session body. Sanitised — no real
 # PII. Pins the endpoint contract: if Google changes the response shape, the
@@ -155,7 +156,7 @@ class TestVerifyFlowSession:
         profile.mkdir()
         mock_ap, mock_ctx = _build_verify_mock(response_body=AUTHENTICATED_BODY)
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home
@@ -195,7 +196,7 @@ class TestVerifyFlowSession:
         chromium.launch_persistent_context = _launch
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home
@@ -227,7 +228,7 @@ class TestVerifyFlowSession:
         fake_httpx.AsyncClient.return_value = fake_client
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
@@ -247,7 +248,7 @@ class TestVerifyFlowSession:
     async def test_profile_outside_home_raises_security_error_httpx(self, gflow_home: Path) -> None:
         outside = gflow_home.parent / "outside_profile"
         outside.mkdir()
-        with patch("gflow_cli.auth.verification.get_settings") as mock_settings:
+        with patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings:
             mock_settings.return_value.home = gflow_home
             with pytest.raises(SecurityError):
                 await verify_flow_profile(outside)
@@ -267,7 +268,7 @@ class TestVerifyFlowSession:
         fake_httpx.AsyncClient.return_value = fake_client
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.cookies.get_cookies_path",
                 side_effect=FileNotFoundError,
@@ -294,7 +295,7 @@ class TestVerifyFlowSession:
         fake_httpx = MagicMock()
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
@@ -322,7 +323,7 @@ class TestVerifyFlowSession:
         fake_async_playwright = MagicMock()
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
@@ -366,7 +367,7 @@ class TestVerifyFlowSession:
         fake_async_playwright = MagicMock(side_effect=RuntimeError("no browser here"))
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
@@ -424,7 +425,7 @@ class TestVerifyFlowSession:
         )
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
@@ -473,7 +474,7 @@ class TestVerifyFlowSession:
         fake_httpx.AsyncClient.return_value = fake_client
 
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch(
                 "gflow_cli.auth.cookies.get_cookies_path",
                 return_value=Path("/fake/Cookies"),
@@ -496,7 +497,7 @@ class TestVerifyFlowSession:
             cookies=[{"name": "SAPISID", "value": "x"}], response_body="{}"
         )
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home
@@ -509,7 +510,7 @@ class TestVerifyFlowSession:
         profile.mkdir()
         mock_ap, _ = _build_verify_mock(cookies=[], response_body="{}")
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home
@@ -525,7 +526,7 @@ class TestVerifyFlowSession:
             side_effect=RuntimeError("launch failed")
         )
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home
@@ -539,7 +540,7 @@ class TestVerifyFlowSession:
         # Every fetch attempt raises a network error -> retries exhausted.
         mock_ap, mock_ctx = _build_verify_mock(get_side_effect=[RuntimeError("net::ERR")] * 3)
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -555,7 +556,7 @@ class TestVerifyFlowSession:
         # HTTP 503 every time -> retried 3x, then evaluated as VERIFICATION_ERROR.
         mock_ap, mock_ctx = _build_verify_mock(response_status=503)
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -579,7 +580,7 @@ class TestVerifyFlowSession:
             get_side_effect=[RuntimeError("net::ERR"), resp_503, RuntimeError("net::ERR")]
         )
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -595,7 +596,7 @@ class TestVerifyFlowSession:
         # HTTP 401 -> not retried; one attempt, then VERIFICATION_ERROR.
         mock_ap, mock_ctx = _build_verify_mock(response_status=401)
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -610,7 +611,7 @@ class TestVerifyFlowSession:
         profile.mkdir()
         mock_ap, mock_ctx = _build_verify_mock(get_side_effect=[RuntimeError("net::ERR")] * 3)
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -622,7 +623,7 @@ class TestVerifyFlowSession:
     async def test_profile_outside_home_raises_security_error(self, gflow_home: Path) -> None:
         outside = gflow_home.parent / "outside_profile"
         outside.mkdir()
-        with patch("gflow_cli.auth.verification.get_settings") as mock_settings:
+        with patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings:
             mock_settings.return_value.home = gflow_home
             with pytest.raises(SecurityError):
                 await verify_flow_session(outside, source="chrome")
@@ -652,7 +653,7 @@ class TestVerifyFlowSessionEngineDowngrade:
 
         mock_ap, mock_ctx = _build_verify_mock()
         with (
-            patch("gflow_cli.auth.verification.get_settings") as mock_settings,
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
         ):
             mock_settings.return_value.home = gflow_home

@@ -61,6 +61,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -214,6 +215,15 @@ def window_position_args(position: str) -> list[str]:
     ``UiAutomationTransport``) so they cannot drift. Login launches stay visible.
     """
     return [f"--window-position={position}"] if position else []
+
+
+def browser_proxy_kwargs(proxy: str | None) -> dict[str, Any]:
+    """Playwright ``proxy`` launch kwarg for GFLOW_CLI_BROWSER_PROXY (#1036); {} when unset.
+
+    Always the kwarg, never ``--proxy-server`` in ``args``, so every launch site
+    carries it the same way. The value is already validated by ``Settings``.
+    """
+    return {"proxy": {"server": proxy}} if proxy else {}
 
 
 def channel_for_profile(profile_dir: Path) -> str | None:
