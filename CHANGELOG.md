@@ -16,10 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until its timeout. It now ends the wait once the flow.google.com session cookies appear,
   then verifies the saved profile with the same server-attested check `--browser chrome`
   and `auth status` use, so a sign-in that did not complete says why instead of timing
-  out. Generation still needs a `--browser chrome` profile. Not yet run against a live
-  sign-in: whether gflow can read a bundled-Chromium profile's saved cookies is measured on
-  Windows only, and on macOS that read is expected to fail, which now ends the login with
-  "re-run with `--browser chrome`".
+  out. Generation still needs a `--browser chrome` profile. Verified live on Windows
+  (2026-10-22: a fresh bundled-Chromium sign-in finished on its own and `auth status`
+  reported the session verified). Not measured on macOS, where the saved-cookie read is
+  expected to fail; the login then ends with "re-run with `--browser chrome`".
 
 ## [0.87.1] — 2026-10-22
 

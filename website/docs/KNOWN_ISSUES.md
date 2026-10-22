@@ -1521,7 +1521,7 @@ here, because the run gives up within 30 s (see [CONFIGURATION](CONFIGURATION.md
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
-- **Status:** Mitigated for real-Chrome profiles and for `gflow credits` (#795); `--browser internal` logins no longer time out but are not live-verified (#1026) · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+- **Status:** Mitigated for real-Chrome profiles and for `gflow credits` (#795); `--browser internal` logins fixed and live-verified on Windows (#1026) · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 `gflow auth login` verifies a real Flow sign-in by calling
 `https://labs.google/fx/api/auth/session` (see `src/gflow_cli/auth/verification.py`)
@@ -1544,9 +1544,9 @@ some access-token consumers that read the same URL are not ported. `gflow credit
 (#795: it reads flow.google.com's own balance reply). A login with `--browser internal` (bundled
 Chromium, also what `--browser auto` picks when Chrome is missing) runs the same on-disk
 check after the window closes ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026));
-before that fix it waited until its timeout. That check has not been run against a live
-bundled-Chromium sign-in, and on macOS its cookie read is expected to fail, so use
-`--browser chrome`.
+before that fix it waited until its timeout. A fresh bundled-Chromium sign-in passed that check
+on Windows (2026-10-22). On macOS the cookie read is expected to fail and is not measured, so
+use `--browser chrome` there.
 
 Since PR #168 the production entry point is `verify_flow_profile`, which reads
 the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`

@@ -150,9 +150,9 @@ gflow auth login --browser chrome  # force the chrome strategy (real Chrome + it
 > 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so every login is
 > verified against Google's account page with the profile's saved cookies. A
 > bundled-Chromium login (`--browser internal`, or `auto` on a machine without Chrome) runs
-> that check too ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)), but it has
-> not been run against a live sign-in, on macOS it is expected to fail, and generation
-> needs a chrome-strategy profile.
+> that check too ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)). It is verified
+> on Windows; on macOS it is expected to fail (not measured), and generation needs a
+> chrome-strategy profile.
 
 Re-running this command refreshes an expired session: it reuses the existing profile dir,
 so you typically just have to click "Continue as <you>" on the Google account chooser.
