@@ -111,7 +111,7 @@ def test_unported_image_forms_are_named_and_refused_pre_submit() -> None:
     assert _unported_image_form(_request()) is None
     assert _unported_image_form(_request(ref_paths=(local,))) is None
     assert _unported_image_form(_request(refs=(ImageRef(REFERENCE),))) == (
-        "a reference given by Flow media UUID"
+        "a Flow media UUID the catalog does not record in this --project"
     )
     # #723: characters attach through the `@` picker and are verified as entity chips.
     assert (
@@ -274,6 +274,32 @@ async def test_client_keeps_legacy_mint_for_other_image_transports(
     assert transport.request is not None
     assert transport.request.recaptcha_token == "minted"
     mint.assert_awaited_once_with("imageGeneration")
+
+
+async def test_client_never_resubmits_a_page_owned_image_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1010: for a page-owned transport the call IS the billed click, so a client retry
+    re-ran the whole submit. A lost reply body made one `--count 1` run leave two images
+    in the project and report one (spike 2026-10-21)."""
+    from playwright.async_api import Error as PlaywrightError
+
+    calls: list[int] = []
+
+    class _LostBody(_PageOwnedImageTransport):
+        async def generate_images(self, **kwargs: Any) -> list[GeneratedImage]:
+            calls.append(1)
+            raise PlaywrightError("No data found for resource with given identifier")
+
+    client = FlowApiClient.__new__(FlowApiClient)
+    client.transport = _LostBody()  # type: ignore[assignment]
+    monkeypatch.setattr(client, "_mint_recaptcha_token", AsyncMock())
+
+    with pytest.raises(PlaywrightError):
+        await client._drive_images_generation(  # noqa: SLF001
+            project_id=PROJECT, req=_request(), recaptcha_action="imageGeneration"
+        )
+    assert len(calls) == 1
 
 
 async def test_migrated_image_route_dispatches_before_the_labs_driver(

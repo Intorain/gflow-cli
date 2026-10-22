@@ -104,6 +104,16 @@ unchanged:** video characters are still refused there: `--reference-entity` exit
   carries media at one slot and characters at another. It must hold exactly the
   requested local references plus the committed character: one missing or one extra
   aborts the submit before Flow generates anything.
+- **An earlier image of the same project rides in place too ([#995](https://github.com/ffroliva/gflow-cli/issues/995)).**
+  `--ref <uuid>` (and an MCP image task's `refs`) is referenced through the same picker
+  path as `batch:N`, with no upload, when the local catalog records that image in the
+  `--project` being generated in and kept its Flow caption (the default
+  `GFLOW_CLI_HISTORY_PROMPTS=store`). The catalog only routes it: the tile must still be in
+  the page's project grid, so a stale row fails with exit 32 instead of attaching something
+  else. A UUID from another project, or one without a recorded caption, still exits 36.
+  Because nothing is uploaded, this path never meets Flow's one-time upload-terms dialog.
+  **Behaviour change:** a same-project image since deleted in Flow used to exit 36 at
+  once; it now spends up to ~90 s (`EXISTING_REF_WAIT_S`) reloading the grid, then exits 32.
 - **What to do on a refusal.**
   - **Exit 32:** no option, or several, carry the exact name. Rename the colliding asset in
     Flow, or give the character a unique one-word name.

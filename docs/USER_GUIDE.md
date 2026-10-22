@@ -426,6 +426,11 @@ Check the current Veo video-credit balance for the selected profile. The normal 
 HTTP and does not open a browser; a browser remains the fallback when saved-cookie decryption or
 the HTTP path fails:
 
+> **Since 2026-10-22 neither command can read a balance on any account**: the token came from
+> labs.google's session URL, which now answers HTTP 410 (#1023). Porting the read to
+> flow.google.com is [#795](https://github.com/ffroliva/gflow-cli/issues/795); generation is
+> unaffected.
+
 ```bash
 gflow credits user
 
@@ -949,7 +954,7 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-For MinIO, also set:
+For a self-hosted S3-compatible store (RustFS, MinIO, ...), also set:
 
 ```bash
 export AWS_ENDPOINT_URL=http://localhost:9000

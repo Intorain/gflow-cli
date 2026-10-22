@@ -4,7 +4,30 @@
 
 ## Current release
 
-**v0.86.0 — alpha.** Video extend and the agent-only composer on flow.google.com.
+**v0.87.0 — alpha.** Sign-in works again after labs.google's session URL went away, and a
+failure after the submit click no longer bills twice.
+
+**`gflow auth login --browser chrome` and `auth status` work again (#1023).** Since
+2026-10-22 labs.google's session URL answers HTTP 410 to every account, and every session
+check failed. A 410 now hands the verdict to the server-attested flow.google.com check
+(#791). `gflow credits` still cannot read a balance on any account (#795), and a login with
+`--browser internal` cannot finish yet (#1026).
+
+**No second billed generation after the submit click (#1010).** A lost image submit reply
+used to make gflow submit the image again; a lost video reply, or any timeout after the
+click, was reported as retryable. Both now report exit 9 with `retryable: false` and say to
+check the project before re-running.
+
+**Also:** `image i2i --ref <uuid>` references an earlier image in place (#995); MCP image
+results report the seed Flow used, and `gflow_generate_image` no longer takes `seed`
+(#1013, breaking for MCP callers); `video upscale` no longer reports a working export as
+failed (#1014); the 4th `@` reference keeps its order (#997); flow.google.com clips save
+under `tmp/` without `--out-dir` and honour a cloud `GFLOW_CLI_STORAGE_URI` (#986, #1003);
+dependency CVEs fixed.
+
+Full ledger: [LIVE_VERIFICATION_v0.87.0](LIVE_VERIFICATION_v0.87.0.md).
+
+<details><summary>v0.86.0 — video extend and the agent-only composer on flow.google.com</summary>
 
 **`gflow video extend` runs on flow.google.com, one segment at a time (#991, #639).**
 gflow drives Flow's own extend UI. The page mints its own reCAPTCHA token and builds
@@ -25,6 +48,8 @@ Reading the gate's clip count is #988. Contributed by @WAOmaster (#824).
 headlessly, without signing in again. Contributed by @ziyedbe.
 
 Full ledger: [LIVE_VERIFICATION_v0.86.0](LIVE_VERIFICATION_v0.86.0.md).
+
+</details>
 
 <details><summary>v0.85.0 — images on flow.google.com can tag a character</summary>
 
@@ -513,6 +538,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Session checks survive labs.google's session URL answering 410 (#1023); no second billed generation after a lost submit reply (#1010) | ✅ done (v0.87.0) |
 | `video extend` driven through Flow's own UI on flow.google.com, single segment, with a route guard on the billed request (#991); t2i/t2v on the agent-only composer (#989); `auth renew` / `credits --refresh` (#982) | ✅ done (v0.86.0) |
 | `@Character` mentions on flow.google.com images attach the Flow character by exact picker title, verified as an entity chip, with an exact-set submit guard (#723, #979); multi-prompt `t2i --project-name` titles its project (#975) | ✅ done (v0.85.0) |
 | `gflow run --project` (#970) and multi-prompt `gflow image t2i --project` (#971) generate into an existing Flow project and create none | ✅ done (v0.84.0) |

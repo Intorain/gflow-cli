@@ -138,6 +138,46 @@ class TestGenerateImageWired:
         assert result["params"]["prompt"] == "scenic mountain at sunset"
 
     @pytest.mark.asyncio
+    async def test_image_completed_reports_the_seed_flow_used(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """#1013: the result carries the catalogued seed Flow chose, never a requested one."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=_FakeFlowApiClient(),
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="scenic mountain at sunset")
+
+        assert result["status"] == "completed"
+        assert result["seed"] == 12345  # _FakeImage.seed, as persisted in the catalog
+        assert "seed" not in result["params"]
+
+    @pytest.mark.asyncio
     async def test_image_completed_task_has_params(
         self, temp_db: DataStore, tmp_path: Path
     ) -> None:

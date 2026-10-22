@@ -16,7 +16,8 @@ Retrying is wasted wall-clock there.
 **Mechanism, settled 2026-09-04 ($0, two spikes, both on `ffroliva`).** It is not
 DNS, not a server 302, not a missing session cookie, and it does not flap. `labs.google`
 returns a normal **200** to a **fully authenticated** session (`has_labs_next_auth=True`,
-`/fx/api/auth/session` → 200), and then the labs.google app itself runs
+`/fx/api/auth/session` → 200 then; since 2026-10-22 that URL answers 410 to every account,
+#1023, so it is no longer a liveness probe), and then the labs.google app itself runs
 `window.location.replace('https://flow.google.com' + path + search)` from a `useEffect`
 gated on **a server-assigned per-account boolean on the app's runtime config**. Measured
 5/5 on the bootstrap URL; the 2026-09-03 "7/7" was the same one-way state. The

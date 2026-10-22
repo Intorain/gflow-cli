@@ -7,6 +7,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.87.0] — 2026-10-22
+
+### Security
+
+- **Locked `aiohttp` 3.14.5 (CVE-2026-111063, CVE-2026-111064, GHSA-2g87-pp6c-29x5).**
+  Transitive only, via the `gcs` (`gcsfs`) and `s3` (`s3fs`/`aiobotocore`) extras; no gflow
+  code imports it. `yarl` moved to 1.25.1 with it. The advisories landed after the last
+  green CI and turned the `pip-audit` gate red on every open PR.
+- **Pillow 13.0.0 (eight CVEs, CVE-2026-112395 … CVE-2026-112899) and `certifi`
+  2026.10.19 (PYSEC-2026-4320).** Pillow is a direct dependency (it writes the seed frame of
+  `gflow video chain` and reads image dimensions); its floor is now `>=13.0.0`. `certifi` is
+  transitive. Both advisories landed on 2026-10-21 and turned `pip-audit` red on every open PR.
+
+### Added
+
+- **flow.google.com: `image i2i --ref <uuid>` references an earlier image of the same
+  project in place** ([#995](https://github.com/ffroliva/gflow-cli/issues/995)). When the
+  local catalog records the image in the `--project` being generated in (and kept its Flow
+  caption), the ref is marked `in_project` and goes through the existing #913 picker path:
+  no upload, so a t2i → review → i2i pipeline split across invocations no longer needs
+  Flow's upload-terms confirmation. MCP image tasks behave the same (`ref_meta` now carries
+  the catalog's `flow_project_id`). Refs from another project, or without a recorded
+  caption, still exit 36. Behaviour change: a same-project image deleted in Flow since it
+  was catalogued now costs up to ~90 s of grid reloads and exits 32, instead of exiting 36
+  at once.
+
+- `scripts/dev/cleanup.py` — sweeps what a release or takeover session leaves behind:
+  merged worktrees and branches, done `pr-<N>` fetch branches, merged same-repo origin
+  branches (`--remote`), stray `.env` copies, old `bt*` pytest basetemps, and dead agentctl
+  agents (reported only). Dry run unless `--apply`; never touches the main checkout, a dirty
+  worktree, an unmerged branch, `develop` or `main`. The release skill's final report runs it.
+
+- **MCP generation results report the catalogued seed** ([#1013](https://github.com/ffroliva/gflow-cli/issues/1013)).
+  A completed `gflow_generate_image` / `gflow_generate_video` result now carries `seed`:
+  the value catalogued for its `flow_media_id` (`null` when none was recorded) — the MCP
+  twin of `gflow image t2i --json`'s `images[].seed`. On the classic image paths that is
+  the seed Flow chose; the agentic and agent-only arms observe no seed and record `0`;
+  for video it is whatever the CLI recorded from `--seed` (the MCP video tool takes no
+  seed, so over MCP it is `null`), never one read back from Flow. Reported by
+  @Chapax.
+
+### Removed
+
+- **Breaking for MCP callers: `gflow_generate_image` no longer takes `seed`**
+  ([#1013](https://github.com/ffroliva/gflow-cli/issues/1013)). The image request never
+  carried it — Flow picks its own seed — yet the tool advertised it "for reproducibility"
+  and echoed it back in `params.seed`, so a caller could not tell it was dropped. The CLI's
+  `--seed` went from `image t2i` in v0.8.0 for the same reason. The parameter is gone from
+  the tool schema; a call that still passes `seed` is not rejected (the MCP server ignores
+  unknown arguments) and it is no longer echoed back — read the result's `seed` for the
+  value Flow chose (classic image paths). Reported by @Chapax.
+
+### Fixed
+
+- **`gflow auth login --browser chrome` and `auth status` work again now that labs.google's
+  session URL answers HTTP 410 Gone** ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
+  Since 2026-10-22 every session check reported "Could not verify the Flow session",
+  and a first login rolled back its `chrome` marker. On a 410 gflow now verifies the
+  session against Google's account page with the profile's own cookies, the check it
+  already used for accounts labs never signed in (#791), and a profile with no Google
+  sign-in is reported as signed out rather than as a network problem. `auth renew` and
+  MCP `gflow_auth_status` use the same check. `gflow credits` still cannot read a balance:
+  it needs the labs token that URL no longer issues (#795). A login with bundled Chromium
+  (`--browser internal`, or `--browser auto` on a machine without Chrome) still cannot
+  finish and waits until its timeout ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)):
+  use `--browser chrome`.
+- **flow.google.com: a run that fails after the submit click no longer invites a second
+  billed generation** ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)).
+  When Chrome lost the image submit reply's body, gflow silently submitted the image
+  again: one `--count 1` run left two images in the project and reported one. A lost
+  video submit reply, or any timeout after the click, was reported as a retryable exit 9
+  while Flow had already made and billed the clip. A failure after the click now makes no
+  second submit and reports exit 9 with `retryable: false`, a detail that names an
+  unreadable reply as unreadable, and a hint to check the project before re-running.
+  The image call now runs once on the labs.google composer too, since there gflow drives
+  the same browser page: a hiccup before the click is reported instead of retried.
+- On Flow's agent-only composer, an image result's `model_name_type` echoed the requested
+  `--model`, so a `--model nano-pro` run that Flow rendered with Nano Banana 2.1 still
+  reported `GEM_PIX_2`. Nothing on that composer observes which model rendered, so it is
+  now `null`, as on the classic flow.google.com arm since #789. This fixes the attribution
+  half of [#1012](https://github.com/ffroliva/gflow-cli/issues/1012) only: the agent can
+  still render a model other than the requested one; that is not proven fixed (no
+  agent-only profile to test on). Reported by
+  @dev1abz.
+
+- On flow.google.com, `gflow video upscale` (and its MCP twin) no longer reports a working
+  export as failed with `Failed to read a video export response: ... Network.getResponseBody
+  ... No data found`. The export watcher read every `batchexecute` reply during the export
+  and treated any body Chrome had already evicted, usually an unrelated `as29s` poll, as a
+  failed export, while the 1080p file was being delivered. An unreadable reply is now
+  skipped; a real refusal of the export RPC still fails fast, and an export that never
+  arrives still times out. Fixes [#1014](https://github.com/ffroliva/gflow-cli/issues/1014).
+  Diagnosed and measured by @buiminhhieu-svg. Live-verified on flow.google.com: 3 of 3
+  exports passed, against 2 of 2 failing on the previous `develop`.
+- On flow.google.com, a configured cloud `GFLOW_CLI_STORAGE_URI` (`s3://`, `gs://`) was
+  ignored for generated video: both composer arms wrote the clip to local disk while labs
+  uploaded it. Fixes [#1003](https://github.com/ffroliva/gflow-cli/issues/1003). Both hosts now
+  store a clip through the transport's one writer, so it lands at
+  `videos/<YYYY-MM-DD>/<media_id>.mp4` in the bucket on either host, and the result's
+  `local_path` is that cloud URI. The `gflow video` commands and MCP video tasks (through
+  the worker) share this transport path. Images, `video extend` and upscale already
+  honoured the setting on both hosts. A failed store (bad credentials, missing bucket)
+  now exits 6 with the media id and the free `gflow data download <media_id>` recovery,
+  and the catalog marks the billed clip generated, instead of surfacing a raw storage
+  exception. Proven offline and against a RustFS bucket. The paid live run has not been
+  done yet.
+
+- On flow.google.com, `gflow video t2v`/`i2v`/`r2v` without `--out-dir` saved the clip to
+  the root of the working directory instead of the documented `tmp/`, and `gflow video chain`
+  saved its links to the working directory instead of `--out-dir` (or the configured output
+  directory). Both hosts now share one rule — per-call directory, then the client's output
+  directory, then `tmp/` — and the classic and
+  agent-only composers no longer fall back to the working directory. Reported by @ziyedbe.
+  Fixes #986.
+- **On flow.google.com, the 4th `@` reference no longer lands between the 2nd and 3rd.**
+  Before each mention gflow clicked the centre of the prompt box; with three chips on the
+  line that centre is chip 2, so reference 4 was inserted behind it and the prompt read
+  1, 2, 4, 3 (measured 3/3 at 1280×720). gflow now moves the caret to the end of the prompt
+  before every `@` (image references in place, uploaded `--ref` files, and `@Character`
+  mentions alike), and a mention that does not land after the chips already there now
+  fails with exit 32 before anything is submitted, instead of passing silently. Thanks to
+  @Ltwoz for the diagnosis and the fix. Their other symptom — the 4th picker not opening at
+  all, on macOS — did not reproduce here and is not claimed fixed.
+  ([#997](https://github.com/ffroliva/gflow-cli/issues/997))
+- The S3 storage container tests and the `docker-compose.yml` local stack now run
+  **RustFS 1.0.3** (pinned by tag and digest) instead of MinIO. MinIO removed its community
+  images from Docker Hub in Sep 2026, so the old pin no longer pulled and the S3 tests could
+  not start. Nothing ran them, so nobody noticed. A new `Storage container tests` CI job runs
+  `pytest -m containers tests/integration/` (S3 via RustFS, GCS via fake-gcs-server) and
+  fails if fewer than all 12 storage tests execute. The local-stack credentials are now
+  `rustfsadmin`/`rustfsadmin`. Any S3-compatible store, MinIO included, still works as a
+  `GFLOW_CLI_STORAGE_URI` target. See
+  `docs/superpowers/spikes/2026-10-19-minio-replacement.md`.
+
 ## [0.86.0] — 2026-10-18
 
 ### Added
@@ -6134,7 +6268,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...HEAD
+[0.87.0]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/ffroliva/gflow-cli/compare/v0.85.0...v0.86.0
 [0.85.0]: https://github.com/ffroliva/gflow-cli/compare/v0.84.0...v0.85.0
 [0.84.0]: https://github.com/ffroliva/gflow-cli/compare/v0.83.2...v0.84.0

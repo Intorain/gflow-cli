@@ -680,6 +680,16 @@ class TestPlaywrightAutoClose:
                 return_value=True,
             ),
             patch("gflow_cli.auth.strategies.async_playwright", ap),
+            # The post-timeout verdict used to reach the real labs URL; since it answers
+            # 410 (#1023) that launches the migrated probe through this same fake.
+            patch(
+                "gflow_cli.auth.real_chrome.verify_flow_profile",
+                AsyncMock(
+                    return_value=FlowSessionStatus(
+                        outcome=FlowSessionOutcome.NO_SESSION, user_email=None, source="chrome"
+                    )
+                ),
+            ),
         ):
             mock_settings.return_value.home = gflow_home
             with pytest.raises(AuthLoginTimeoutError):

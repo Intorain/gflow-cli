@@ -42,6 +42,8 @@ logger = structlog.get_logger(__name__)
 # AUTHENTICATED_BODY fixture in tests/auth/test_verification.py — if Google
 # changes the shape, that test fails rather than the change going silent.
 SESSION_API_URL = "https://labs.google/fx/api/auth/session"
+#: HTTP 410 Gone: what that URL has answered since 2026-10-22, with or without cookies (#1023).
+LABS_GONE_STATUS = 410
 
 # Per-request timeout for the session probe (milliseconds).
 _REQUEST_TIMEOUT_MS = 15_000
@@ -136,6 +138,14 @@ def evaluate_session_response(
 
     def _result(outcome: FlowSessionOutcome, email: str | None = None) -> FlowSessionStatus:
         return FlowSessionStatus(outcome=outcome, user_email=email, source=source)
+
+    if status_code == LABS_GONE_STATUS:
+        # #1023: since 2026-10-22 labs answers 410 Gone for every account, signed in or
+        # not (spike 2026-10-22-labs-session-oracle-gone). No labs session exists any
+        # more, so this is labs' "no user": the Google-cookie split below still says
+        # NO_SESSION vs GOOGLE_SESSION_ONLY, and callers send the latter to the host that
+        # serves the app. A transient status (5xx, 429) stays VERIFICATION_ERROR.
+        status_code, body = 200, "{}"
 
     if status_code != 200:
         return _result(FlowSessionOutcome.VERIFICATION_ERROR)
@@ -554,6 +564,8 @@ async def verify_flow_profile(
             source=source,
         )
 
+    if status_code == LABS_GONE_STATUS:
+        logger.info("auth_labs_session_gone", source=source)
     result = evaluate_session_response(
         status_code,
         body,

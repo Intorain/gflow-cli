@@ -306,6 +306,40 @@ jobs:
         # routine test consolidation.
         run: uv run python scripts/ci/check_test_count.py pytest-lease.xml 10
 
+  # ── Storage container tests (S3 via RustFS, GCS via fake-gcs-server) ───────
+  # Nothing ran `-m containers` before this job, so the pinned MinIO image was
+  # deleted from Docker Hub and the S3 tests rotted unnoticed. A registry
+  # deletion or a broken backend now turns CI red. The count guard catches the
+  # other silent failure: every fixture `importorskip`s, so a missing dependency
+  # would skip all 12 tests and still exit 0.
+  storage-containers:
+    name: Storage container tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install deps
+        run: uv sync --frozen --group containers
+
+      - name: Container tests
+        run: uv run --no-sync python -m pytest -m containers tests/integration/ -q --junitxml=pytest-containers.xml
+
+      # 9 S3 (incl. the #1003 migrated-clip upload) + 4 GCS. The expander-gateway
+      # tests share the marker but skip without an LLM endpoint; skips do not count.
+      - name: Test-count guard (all storage tests executed, none skipped)
+        run: uv run --no-sync python scripts/ci/check_test_count.py pytest-containers.xml 13
+
   # ── SonarCloud analysis ───────────────────────────────────────────────────
   sonar:
     name: SonarCloud analysis

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -538,11 +539,23 @@ class FakeKeyboard:
             dom.prompt += text
 
 
+#: A scripted reply text that makes ``FakeResponse.text()`` fail the way Chrome does when
+#: it has dropped the body (#1009, #1010).
+LOST_BODY = "<lost body>"
+
+
 class FakeResponse:
     def __init__(self, url: str, text: str, status: int = 200) -> None:
         self.url, self._text, self.status = url, text, status
 
     async def text(self) -> str:
+        if self._text == LOST_BODY:
+            from playwright.async_api import Error as PlaywrightError
+
+            raise PlaywrightError(
+                "Response.text: Protocol error (Network.getResponseBody): "
+                "No data found for resource with given identifier"
+            )
         return self._text
 
 
@@ -1555,6 +1568,17 @@ async def test_status_three_without_url_stands_after_the_grace(
     assert rec.is_done and rec.video_url is None
 
 
+def _saver(out_dir: Path) -> Any:
+    """A local stand-in for the transport's `_save_clip` (#1003)."""
+
+    async def save(media_id: str, body: bytes) -> Path:
+        path = out_dir / f"{media_id}.mp4"
+        path.write_bytes(body)
+        return path
+
+    return save
+
+
 async def test_download_uses_the_signed_url_before_the_redirect_route(tmp_path: Any) -> None:
     from gflow_cli.api.transports.batchexecute import GenerationRecord
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
@@ -1584,7 +1608,7 @@ async def test_download_uses_the_signed_url_before_the_redirect_route(tmp_path: 
     rec = GenerationRecord(
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
-    path = await MigratedComposer().download(page, rec, tmp_path)
+    path = await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert page.request.urls == [VIDEO_URL]
 
@@ -1626,7 +1650,7 @@ async def test_download_falls_back_to_the_other_url_when_the_first_is_a_jpeg(
         video_url="https://flow-content.google/p/x.jpg?Signature=a",  # mislabelled on purpose
         poster_url="https://flow-content.google/v/x.mp4?Signature=b",
     )
-    path = await MigratedComposer().download(page, rec, tmp_path)
+    path = await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert path is not None and path.read_bytes()[4:8] == b"ftyp"
     assert len(page.request.urls) == 2
 
@@ -1652,7 +1676,7 @@ async def test_download_refuses_a_foreign_host_before_any_request(tmp_path: Any)
         video_url="https://evil.example/v.mp4?Signature=s",
     )
     with pytest.raises(WireFormatError, match="evil.example"):
-        await MigratedComposer().download(page, rec, tmp_path)
+        await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert calls == []
 
 
@@ -1678,7 +1702,7 @@ async def test_download_never_follows_redirects(tmp_path: Any) -> None:
     rec = GenerationRecord(
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
-    await MigratedComposer().download(page, rec, tmp_path)
+    await MigratedComposer().download(page, rec, _saver(tmp_path))
     assert seen.get("max_redirects") == 0
 
 
@@ -1702,7 +1726,7 @@ async def test_download_refuses_when_no_url_is_an_mp4(tmp_path: Any) -> None:
         workflow_id=WF, project_id=PROJ, media_id=MEDIA, status=3, video_url=VIDEO_URL
     )
     with pytest.raises(WireFormatError, match="ftyp"):
-        await MigratedComposer().download(page, rec, tmp_path)
+        await MigratedComposer().download(page, rec, _saver(tmp_path))
 
 
 def test_migrated_can_serve_decides_what_the_new_host_takes() -> None:
@@ -1757,6 +1781,61 @@ async def test_submit_timeout_names_the_rpcs_it_did_see() -> None:
             page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
         )
     assert "rpcs seen: none" not in str(ei.value)
+
+
+async def test_a_video_submit_timeout_after_the_click_is_not_retryable() -> None:
+    """#1010: the click is the billed act. A timeout after it does not mean nothing was
+    made (the spike found the clip finished in the project), so ``retryable: true``
+    invites a second billed clip."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.3, on_started=None, project_id=PROJ
+        )
+    assert not is_retryable(ei.value)
+    assert "30 s deadline" not in ei.value.remediation_hint
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_an_unreadable_video_submit_body_is_named_and_not_retryable() -> None:
+    """#1010: the reply arrived and Chrome lost its body. The detail used to say "no
+    YhhmEf reply" while listing YhhmEf under rpcs seen."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("YhhmEf"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=30.0, on_started=None, project_id=PROJ
+        )
+    assert "YhhmEf" in ei.value.detail and "unreadable" in ei.value.detail
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_a_generation_not_terminal_in_time_is_not_retryable() -> None:
+    """#1010: the poll ran out after the clip was submitted. That is where the spike
+    found the clip finished and billed, so a re-run must not be invited."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    loop = asyncio.get_running_loop()
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer._await_terminal(  # pyright: ignore[reportPrivateUsage]
+            loop.create_future(),
+            loop.create_future(),
+            deadline=time.monotonic(),
+            workflow_id="wf-1",
+        )
+    assert "not terminal" in ei.value.detail
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
 
 
 async def test_submit_frame_without_record_is_wire_format_error() -> None:
@@ -3132,6 +3211,42 @@ async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
         await MigratedComposer().submit_images_and_observe(
             page, GenerateImageRequest(prompt="a blue cup")
         )
+
+
+async def test_an_image_reply_timeout_after_the_click_is_not_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1010 count arm, run 3: no reply was read, yet the image was in the project."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    monkeypatch.setattr(migrated_composer, "IMAGE_REPLY_BUDGET_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error() -> None:
+    """#1010: the raw Playwright error reached the client's retry loop, which re-ran the
+    billed submit. It must arrive typed, named, and marked not retryable."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+    assert "ogiZ0b" in ei.value.detail and "unreadable" in ei.value.detail
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
 
 
 # ----------------------------------------------------------------------------------

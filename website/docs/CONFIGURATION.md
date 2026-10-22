@@ -103,14 +103,14 @@ Examples:
 # Choose one:
 export GFLOW_CLI_STORAGE_URI=gs://my-gcs-bucket/gflow/
 export GFLOW_CLI_STORAGE_URI=s3://my-s3-bucket/gflow/
-export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/   # MinIO local dev
+export GFLOW_CLI_STORAGE_URI=s3://gflow-test/dev/   # local docker-compose stack (RustFS)
 ```
 
-S3 and MinIO use the standard AWS SDK environment variables:
+S3 and S3-compatible stores use the standard AWS SDK environment variables:
 
 ```bash
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_ACCESS_KEY_ID=rustfsadmin
+export AWS_SECRET_ACCESS_KEY=rustfsadmin
 export AWS_ENDPOINT_URL=http://localhost:9000   # omit for real AWS
 export AWS_DEFAULT_REGION=us-east-1
 ```
@@ -431,7 +431,7 @@ Measurement script: `scripts/dev/spike_offscreen_window.py`.
 - `flow.google.com` — force the migrated composer for everything, including what it cannot serve yet (those requests then exit 36/11 instead of falling back).
 - `labs.google` — never use the migrated composer; where Flow serves `flow.google.com`, requests fail with exit 36 (kill switch).
 **Default:** `auto`
-**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Image prompts may tag a character with `@Name` (or `--reference-entity` paired with `--reference-entity-name`; an id alone exits 36), attached through the composer's `@` picker (#723). `video extend` is ported for a single segment from a clip (one PROMPT; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36, and `-o` saves the new extension clip only, #882). Frames given by UUID/`@Name`, media references by UUID/`@Name`, character entities on video, Agent instructions, Imagen 4, scenes, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call.
+**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Image prompts may tag a character with `@Name` (or `--reference-entity` paired with `--reference-entity-name`; an id alone exits 36), attached through the composer's `@` picker (#723). `video extend` is ported for a single segment from a clip (one PROMPT; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36, and `-o` saves the new extension clip only, #882). Frames given by UUID/`@Name`, media references by UUID/`@Name` (except an image `--ref <uuid>` the catalog records in the same `--project`, #995), character entities on video, Agent instructions, Imagen 4, scenes, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call.
 
 ### `GFLOW_CLI_AGENT_CONFIRM`
 

@@ -28,7 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from gflow_cli.api.image import AgentInstruction, GenerateImageRequest, ImageRef
+from gflow_cli.api.image import (
+    AgentInstruction,
+    GenerateImageRequest,
+    ImageRef,
+    recorded_in_project,
+)
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.video import Aspect as VideoAspect
@@ -187,13 +192,19 @@ def build_image_request(payload: dict[str, Any]) -> GenerateImageRequest:
     # display_name + on-disk local_path per media-id ref, so the transport
     # can select the EXISTING asset in the picker (preferred, no duplicate)
     # and fall back to uploading local_path only if it can't be located.
+    # Its flow_project_id marks a ref of this task's own project in_project (#995).
     ref_meta: dict[str, dict[str, str]] = payload.get("ref_meta", {})
+    project_id = payload.get("project_id")
     refs = tuple(
         ImageRef(
             r,
             display_name=ref_meta.get(r, {}).get("display_name", ""),
             local_path=ref_meta.get(r, {}).get("local_path", ""),
             local_sha256=ref_meta.get(r, {}).get("local_sha256", ""),
+            in_project=recorded_in_project(
+                ref_meta.get(r, {}).get("flow_project_id"),
+                project_id if isinstance(project_id, str) else None,
+            ),
         )
         for r in payload.get("refs", [])
     )

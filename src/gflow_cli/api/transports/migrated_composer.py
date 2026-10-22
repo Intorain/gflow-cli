@@ -97,6 +97,10 @@ if TYPE_CHECKING:
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
 
+    # Stores a finished clip's bytes under its media id and returns where they went —
+    # the transport's one writer for both hosts, so a cloud storage_uri holds here too (#1003).
+    ClipSaver = Callable[[str, bytes], Awaitable[Path]]
+
 log = structlog.get_logger(__name__)
 
 MIGRATED_PROJECT_URL = "https://flow.google.com/project/{project_id}"
@@ -253,6 +257,16 @@ _OPTION_TITLES_JS = (
     " const t = o.querySelector('.asset-title');"
     " return ((t && t.textContent) || '').trim(); })"
 )
+#: Collapse the selection to the END of the composer (#997). A click lands wherever the
+#: composer's centre is, which with three chips on the line is chip 2 (measured,
+#: docs/superpowers/spikes/2026-10-19-fourth-ref-caret.md). Not the End key: per the
+#: reporter it stops at the end of the visual line once the chips wrap.
+_CARET_TO_END_JS = (
+    "(sel) => { const ce = document.querySelector(sel); if (!ce) return;"
+    " ce.focus(); const r = document.createRange(); r.selectNodeContents(ce);"
+    " r.collapse(false); const s = window.getSelection();"
+    " s.removeAllRanges(); s.addRange(r); }"
+)
 #: Budget for a just-generated image to become mentionable, across editor reloads
 #: (#913). Checked after each attempt, so a row can overrun it by one attempt.
 EXISTING_REF_WAIT_S = 90.0
@@ -265,6 +279,29 @@ ARROW_SETTLE_MS = 3500
 ARROW_STEP_MS = 150
 #: Flow writes captions with its own model; they reach the composer by typing.
 _CAPTION_MAX = 120
+
+
+def _require_appended(before: list[dict[str, str]], chips: list[dict[str, str]]) -> None:
+    """Refuse a mention that did not land after every chip already in the prompt (#997).
+
+    A count cannot see a chip inserted mid-prompt; the earlier chips staying a prefix can.
+    shortcut: chips that read identically (same caption and kind) cannot be told apart.
+    Retryability is the class default, unmeasured for this condition (Bug Lane).
+    """
+    if chips[: len(before)] != before:
+        raise ReferenceNotFoundError(
+            detail=(
+                f"migrated host: a reference attached out of order — it did not land after "
+                f"the {len(before)} reference(s) already in the prompt, so the prompt is no "
+                "longer the one requested. Refusing to submit"
+            ),
+            # The chip WAS found, so the class default ("not in the picker") would mislead.
+            remediation_hint=(
+                "The reference was found but attached out of order, so nothing was "
+                "submitted. Re-run the command; if it repeats, report it with the "
+                "number of references and your window size."
+            ),
+        )
 
 
 def _picker_query(ref: ImageRef) -> str:
@@ -614,9 +651,9 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
     if request.refs and request.ref_paths:
         return "existing-image references mixed with local files"
     if any(not ref.in_project for ref in request.refs):
-        # Only an image this run generated in this project is referenced in place (#913);
-        # a UUID ref from the catalog or MCP is not ported here.
-        return "a reference given by Flow media UUID"
+        # Referenced in place only when this run generated it here (#913) or the
+        # catalog records it in this project (#995); any other UUID is not ported.
+        return "a Flow media UUID the catalog does not record in this --project"
     if any(not ref.display_name for ref in request.refs):
         # Found by its Flow caption, then matched by thumbnail; Flow returned none.
         return "a reference to an image Flow returned without a caption"
@@ -728,6 +765,22 @@ def _ligature(page: Any, name: str) -> Any:
 #: Google's ErrorInfo reason on a submit reCAPTCHA Enterprise scored as a bot. The labs
 #: REST path has always raised WafRejectionError for it (KNOWN_ISSUES, HTTP 403).
 UNUSUAL_ACTIVITY_REASON = "PUBLIC_ERROR_UNUSUAL_ACTIVITY"
+
+
+def _outcome_unknown(detail: str) -> TransportTimeoutError:
+    """A failure AFTER the submit click: Flow may have made and billed the generation.
+
+    #1010 found exactly that on every arm (a finished clip, an extra image), so the
+    error must not invite a retry, and the hint must not be the class's 30 s default."""
+    return TransportTimeoutError(
+        detail=detail,
+        retryable=False,
+        remediation_hint=(
+            "Submit was already clicked, so Flow may have made and billed this "
+            "generation. Open the project in Flow and check before re-running: "
+            "a re-run bills again."
+        ),
+    )
 
 
 def _submit_refusal(
@@ -2352,7 +2405,7 @@ class MigratedComposer:
         over 30 s), while a fresh editor load offers it at once. So retrying belongs to
         :meth:`reference_existing`, which reloads.
         """
-        await page.locator(COMPOSER).first.click(timeout=5000)
+        before = await self._caret_to_end(page)
         await page.keyboard.type("@", delay=120)
         await page.wait_for_timeout(2200)
         await page.keyboard.type(query, delay=100)
@@ -2369,6 +2422,7 @@ class MigratedComposer:
             chips = await self.read_chips(page)
             # A query can also match a character; only a media chip is this image.
             if len(chips) == expect_chips and chips[-1].get("reference_type") == "media":
+                _require_appended(before, chips)
                 await page.keyboard.type(" ", delay=80)
                 return
         else:
@@ -2512,8 +2566,9 @@ class MigratedComposer:
         too (the caller aborts the run before submit, so that chip never reaches Flow).
         """
         titles: list[str] = []
+        before: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            await page.locator(COMPOSER).first.click(timeout=5000)
+            before = await self._caret_to_end(page)
             # Real keystrokes: see `_mention_by_name`.
             await page.keyboard.type("@", delay=120)
             await page.wait_for_timeout(2200)
@@ -2569,8 +2624,18 @@ class MigratedComposer:
                     f"{offered}"
                 ),
             )
+        _require_appended(before, chips)
         # The kind check lives in `attach_character_entities`: a media chip here is
         # refused there, before any submit.
+
+    async def _caret_to_end(self, page: Page) -> list[dict[str, str]]:
+        """Focus the composer with the caret at its END; return the chips already there.
+
+        Every ``@`` mention starts here, so a new chip can only be appended (#997).
+        """
+        await page.locator(COMPOSER).first.click(timeout=5000)
+        await page.evaluate(_CARET_TO_END_JS, COMPOSER)
+        return await self.read_chips(page)
 
     async def clear_composer(self, page: Page) -> None:
         await page.locator(COMPOSER).first.click(timeout=5000)
@@ -2600,10 +2665,10 @@ class MigratedComposer:
         someone already attached.
         """
         offered: list[str] = []
-        chips = await self.read_chips(page)
+        chips: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            before = len(chips)
-            await page.locator(COMPOSER).first.click(timeout=5000)
+            prior = await self._caret_to_end(page)
+            before = len(prior)
             # `keyboard.type`, never `insert_text`: the latter dispatches input events with
             # no key events, so the mention plugin opens a picker with no query behind it
             # and every later gesture is a no-op. `send_prompt` keeps insert_text on
@@ -2618,6 +2683,7 @@ class MigratedComposer:
             await page.wait_for_timeout(2500)
             chips = await self.read_chips(page)
             if len(chips) == expect_chips:
+                _require_appended(prior, chips)
                 await page.keyboard.type(" ", delay=80)
                 return
             log.info(
@@ -2941,6 +3007,15 @@ class MigratedComposer:
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+                # #1009/#1010: Chrome can drop a reply body. On the submit reply that
+                # loses the workflow id, so no status reply can settle the run either.
+                if rpcid in submit_rpcs and not submitted.done():
+                    submitted.set_exception(
+                        _outcome_unknown(
+                            f"migrated host: the {rpcid} submit reply arrived but its "
+                            "body was unreadable"
+                        )
+                    )
                 return
             refusal = _submit_refusal(text, submit_rpcs)
             # An envelope arriving after an accepted submit is ignored: that run's outcome
@@ -3035,11 +3110,9 @@ class MigratedComposer:
                 raise route_error.result()
             if not submitted.done():
                 seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
-                raise TransportTimeoutError(
-                    detail=(
-                        f"migrated host: no {'/'.join(submit_rpcs)} reply within "
-                        f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
-                    ),
+                raise _outcome_unknown(
+                    f"migrated host: no {'/'.join(submit_rpcs)} reply within "
+                    f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                 )
             first = submitted.result()
             started = VideoStarted(
@@ -3230,6 +3303,15 @@ class MigratedComposer:
                 return
             try:
                 text = await response.text()
+            except Exception:  # noqa: BLE001 - a raw Playwright error here was retried (#1010)
+                result.set_exception(
+                    _outcome_unknown(
+                        f"migrated host: the {IMAGE_SUBMIT_RPC} submit reply arrived but "
+                        "its body was unreadable"
+                    )
+                )
+                return
+            try:
                 refusal = _submit_refusal(text, (IMAGE_SUBMIT_RPC,))
                 if refusal is not None:
                     raise refusal
@@ -3321,11 +3403,9 @@ class MigratedComposer:
             if route_error.done():
                 raise route_error.result()
             if result not in done:
-                raise TransportTimeoutError(
-                    detail=(
-                        f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
-                        f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"
-                    )
+                raise _outcome_unknown(
+                    f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
+                    f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"
                 )
             return result.result()
         finally:
@@ -3360,11 +3440,8 @@ class MigratedComposer:
         if terminal.done():
             return terminal.result()
         if not done:
-            raise TransportTimeoutError(
-                detail=(
-                    f"migrated host: generation {workflow_id} was not terminal within the "
-                    f"poll timeout"
-                ),
+            raise _outcome_unknown(
+                f"migrated host: generation {workflow_id} was not terminal within the poll timeout"
             )
         grace = min(RESULT_URL_GRACE_S, max(deadline - time.monotonic(), 0.01))
         try:
@@ -3437,11 +3514,12 @@ class MigratedComposer:
         self,
         page: Page,
         record: GenerationRecord,
-        out_dir: Path | None,
+        save: ClipSaver,
     ) -> Path | None:
-        """The clip from its signed CDN URL. The labs ``media.getMediaUrlRedirect``
-        route answers 404 for a migrated media id (measured 2026-09-05), so there is
-        no second source: a record with no URL is a wire-format failure."""
+        """The clip from its signed CDN URL, stored by ``save``. The labs
+        ``media.getMediaUrlRedirect`` route answers 404 for a migrated media id
+        (measured 2026-09-05), so there is no second source: a record with no URL is a
+        wire-format failure."""
         if not record.video_url and not record.poster_url:
             raise WireFormatError(
                 detail=(
@@ -3451,10 +3529,7 @@ class MigratedComposer:
                 route="batchexecute:as29s",
             )
         body = await self.fetch_mp4(page, record)
-        target_dir = out_dir or Path.cwd()
-        target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{record.media_id}.mp4"
-        path.write_bytes(body)
+        path = await save(record.media_id, body)
         log.info("migrated.download", path=str(path), bytes=len(body))
         return path
 
@@ -3464,7 +3539,7 @@ async def run_video(
     request: GenerateVideoRequest,
     *,
     project_id: str | None,
-    out_dir: Path | None,
+    save: ClipSaver,
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
@@ -3510,7 +3585,7 @@ async def run_video(
             page,
             request,
             project_id=pid,
-            out_dir=out_dir,
+            save=save,
             poll_timeout_s=poll_timeout_s,
             download=download,
             on_started=on_started,
@@ -3572,10 +3647,11 @@ async def run_video(
     )
     local_path: Path | None = None
     if download and record.is_done:
-        local_path = await composer.download(page, record, out_dir)
+        local_path = await composer.download(page, record, save)
     return VideoResult(
         status=status,
-        local_path=Path(local_path) if local_path is not None else None,
+        # Not re-wrapped in Path(): a cloud UPath must reach the caller intact (#1003).
+        local_path=local_path,
         project_id=pid,
         flow_operation_id=record.workflow_id,
         workflow_id=record.workflow_id,

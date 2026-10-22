@@ -146,6 +146,12 @@ gflow auth login --profile work    # named profile (creates if missing)
 gflow auth login --browser chrome  # force the chrome strategy (real Chrome + its profile marker)
 ```
 
+> **Use `--browser chrome` for now.** Since 2026-10-22 labs.google's session URL answers HTTP
+> 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)). A real-Chrome login is
+> verified against Google's account page instead; a bundled-Chromium login (`--browser
+> internal`, or `auto` on a machine without Chrome) has no such check yet, so it waits until
+> its timeout ([#1026](https://github.com/ffroliva/gflow-cli/issues/1026)).
+
 Re-running this command refreshes an expired session: it reuses the existing profile dir,
 so you typically just have to click "Continue as <you>" on the Google account chooser.
 
@@ -270,8 +276,11 @@ weeks therefore drifts towards an expired session even though nothing about the 
 `auth renew` opens the profile in a hidden browser and loads Flow. It then loads
 `labs.google/fx/` and waits up to 20 s for the labs app to sign in again on its own: a stale labs
 session reports `ACCESS_TOKEN_REFRESH_NEEDED`, and the page renews it through Google without a
-prompt. This step matters because `gflow credits` reads its token from that labs session, and the
-Flow visit alone never refreshes it. The browser saves whatever cookies were rotated, and the
+prompt. This step mattered because `gflow credits` read its token from that labs session; since
+2026-10-22 labs' session URL answers HTTP 410 for every account
+([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so the step finds nothing to
+renew and `gflow credits` cannot read a balance ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
+The browser saves whatever cookies were rotated, and the
 result is verified exactly like `gflow auth status`. It spends no credits.
 
 ```bash
@@ -449,16 +458,17 @@ Run: gflow auth login --profile default
 Two cases look the same at that point and are fixed differently:
 
 - **Stale, not revoked.** This is the common one: the profile has simply not been opened for a
-  while. Google's cookies are still good, but labs' NextAuth token has lapsed
-  (`ACCESS_TOKEN_REFRESH_NEEDED`), and labs only renews it when a browser visits. Run
-  [`gflow auth renew`](#gflow-auth-renew), or add `--refresh` to `gflow credits user|list`. It
-  renews the session headlessly with no sign-in.
+  while. Google's cookies are still good but have not been rotated, and only a browser visit
+  rotates them. Run [`gflow auth renew`](#gflow-auth-renew). It renews the session headlessly
+  with no sign-in. (Until 2026-10-22 this case was labs' lapsed NextAuth token, and
+  `gflow credits --refresh` renewed it; labs' session URL is gone now, see #1023.)
 - **Revoked.** A password change, a removed device, or Google asking to "Confirm it's you" cannot
   be renewed from cookies. `auth renew` reports "could not be renewed" (or names Flow's public
   `/about` page). Re-running `gflow auth login` refreshes the cookies in place, and no other state
   is lost.
 
-> **Renewal signs in headlessly.** The labs re-sign-in runs Google's OAuth hop in a headless
+> **Renewal signs in headlessly** (until 2026-10-22; labs' session URL now answers 410, so
+> this step finds nothing to renew). The labs re-sign-in runs Google's OAuth hop in a headless
 > browser, which identifies itself as `HeadlessChrome` (only `navigator.webdriver` is hidden).
 > Generation runs headed by default, so this is the one Google sign-in gflow does headless.
 > It worked on 7 of 7 recoverable profiles on 2026-10-14. If Google ever starts challenging it,

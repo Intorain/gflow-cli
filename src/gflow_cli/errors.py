@@ -367,9 +367,10 @@ class NetworkError(FlowApiError):
 class MediaDownloadError(NetworkError):
     """The signed-media GET failed AFTER Flow reported the generation done (#896).
 
-    Raised only by ``get_signed_media``, so catching it means the clip exists and was
-    billed — the recorder uses it to mark the asset generated instead of leaving it
-    ``pending`` forever. Exits 6 like its parent.
+    Raised by ``get_signed_media`` and by the clip writer when storing the bytes fails
+    (#1003), so catching it means the clip exists and was billed — the recorder uses it
+    to mark the asset generated instead of leaving it ``pending`` forever. Exits 6 like
+    its parent.
     """
 
     problem_type = "https://gflow-cli.dev/errors/media-download"
@@ -849,8 +850,9 @@ class FlowHostMigratedError(GFlowError):
         "Google has moved this account's Flow from labs.google to flow.google.com. "
         "gflow drives that frontend for text-to-video, image-to-video from local "
         "start (and end) frames, reference-to-video from local --ref files, "
-        "text-to-image, and image-to-image from local files (no UUID or @Name "
-        "frame; images take a character by name, video none; --project required) "
+        "text-to-image, and image-to-image from local files or an image the catalog "
+        "records in the same --project (no UUID or @Name video frame; images take "
+        "a character by name, video none; --project required) "
         "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
         "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
         "off, or because this request type is not ported to the migrated host yet. "

@@ -69,6 +69,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from playwright.async_api import Locator, Page
 
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import ClipSaver
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
 
 log = structlog.get_logger(__name__)
@@ -803,8 +804,8 @@ async def _restore_quietly(
         )
 
 
-async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) -> Path:
-    """Fetch a finished clip from its tile src and prove it is an MP4.
+async def download_video(page: Page, src: str, uuid: str, save: ClipSaver) -> Path:
+    """Fetch a finished clip from its tile src, prove it is an MP4, and store it by ``save``.
 
     The src is refused unless it is on an allowed Google host, and the response unless it
     ENDED on one: `/asb/` answers with a redirect to Google's video CDN, so redirects are
@@ -846,10 +847,7 @@ async def download_video(page: Page, src: str, uuid: str, out_dir: Path | None) 
             ),
             route=_VIDEO_ROUTE,
         )
-    target = out_dir or Path.cwd()
-    target.mkdir(parents=True, exist_ok=True)
-    path = target / f"{uuid}.mp4"
-    path.write_bytes(body)
+    path = await save(uuid, body)
     log.info("migrated.agent_only.video_downloaded", path=str(path), bytes=len(body))
     return path
 
@@ -897,7 +895,9 @@ async def run_agent_images(
                 workflow_id="",
                 seed=0,
                 prompt=request.prompt,
-                model_name_type=request.model.value,
+                # #789/#1012: nothing here observes which model rendered, and the agent can
+                # ignore the Agent-settings default, so echoing the request would be a guess.
+                model_name_type=None,
                 aspect_ratio=request.aspect.value,
                 fife_url=src,
                 dimensions=size,
@@ -946,7 +946,7 @@ async def run_agent_video(
     request: GenerateVideoRequest,
     *,
     project_id: str,
-    out_dir: Path | None,
+    save: ClipSaver,
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
@@ -983,7 +983,7 @@ async def run_agent_video(
         )
     finally:
         await _restore_quietly(composer, page, snapshot)
-    local_path = await download_video(page, media.src, media.uuid, out_dir) if download else None
+    local_path = await download_video(page, media.src, media.uuid, save) if download else None
     return VideoResult(
         status=VideoStatus(media_id=media.uuid, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
         local_path=local_path,

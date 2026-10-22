@@ -47,7 +47,7 @@ close Chrome yourself. On the measured account, `/about` was gone on the next ru
 
 ### Flow is migrating to `flow.google.com`; generation coverage is partial but includes images
 
-- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, local-file `gflow image i2i`, and a **single-segment** `gflow video extend` (#882: Flow's own Extend control, driven from the clip editor) now run on the migrated host. Image mode supports Nano Banana 2.1 (`nano2`, which replaced Nano Banana 2 there, #958) / 2 Lite / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image prompts can tag a **character** with `@Name` / `--reference-entity` + `--reference-entity-name` since #723 (attached through the composer's `@` picker; an id without a name exits 36; video is unchanged). That matrix is the **classic** migrated composer's. On an **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gflow drives `image t2i` (all five aspects; count 1–4) and `video t2v` (one 9:16 or 16:9 clip) only — i2i, i2v, r2v and character references are refused there before anything is clicked. Image refs by UUID, video `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, chained extend (`-n > 1`, `--scene`/`--resume-from`, `--seed`, an `--aspect` other than the source clip's), instructions and tools are not ported yet and fail before submit. **`character create` worked on the migrated host until its labs `createEntity` route was retired:** measured 2026-10-14 on a profile served flow.google.com, it exits 7 with "Flow RPCs have been deprecated" (404). `character list` does NOT: it reads the retired labs `projectInitialData` route and exits 7, measured 2026-09-20 both on `auto` and with `GFLOW_CLI_FLOW_HOST=flow.google.com` (#875). Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, multi-segment `extend` (`-n > 1`, `--scene`/`--resume-from`, `--seed`), `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
+- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, local-file `gflow image i2i`, and a **single-segment** `gflow video extend` (#882: Flow's own Extend control, driven from the clip editor) now run on the migrated host. Image mode supports Nano Banana 2.1 (`nano2`, which replaced Nano Banana 2 there, #958) / 2 Lite / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image prompts can tag a **character** with `@Name` / `--reference-entity` + `--reference-entity-name` since #723 (attached through the composer's `@` picker; an id without a name exits 36; video is unchanged). That matrix is the **classic** migrated composer's. On an **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gflow drives `image t2i` (all five aspects; count 1–4) and `video t2v` (one 9:16 or 16:9 clip) only — i2i, i2v, r2v and character references are refused there before anything is clicked. Image refs by UUID (except one the local catalog records in the same `--project`, referenced in place since #995), video `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, chained extend (`-n > 1`, `--scene`/`--resume-from`, `--seed`, an `--aspect` other than the source clip's), instructions and tools are not ported yet and fail before submit. **`character create` worked on the migrated host until its labs `createEntity` route was retired:** measured 2026-10-14 on a profile served flow.google.com, it exits 7 with "Flow RPCs have been deprecated" (404). `character list` does NOT: it reads the retired labs `projectInitialData` route and exits 7, measured 2026-09-20 both on `auto` and with `GFLOW_CLI_FLOW_HOST=flow.google.com` (#875). Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, multi-segment `extend` (`-n > 1`, `--scene`/`--resume-from`, `--seed`), `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](https://github.com/ffroliva/gflow-cli/blob/main/docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 - **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in v0.71.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
@@ -745,12 +745,14 @@ When this happens, the next API call returns 401/403 and `gflow-cli` raises `Aut
 **Workaround, stale session (the common case):**
 ```bash
 gflow auth renew --profile <name>        # or: gflow auth renew --all
-gflow credits list --refresh             # renews only the expired profiles, then reads them
 ```
 
-A profile that has just sat unused has a lapsed labs.google token, not a dead Google session.
-`auth renew` loads Flow and labs.google in a headless browser and waits for labs to sign in
-again on its own, with no prompt. Measured 2026-10-14: 7 of 10 stale profiles recovered.
+A profile that has just sat unused usually has rotated-out cookies, not a dead Google session.
+`auth renew` loads Flow in a headless browser, which rotates them with no prompt, then verifies
+the result like `auth status`. Its labs.google step (measured 2026-10-14: 7 of 10 stale profiles
+recovered a credits token) is a no-op since 2026-10-22, when labs' session URL started answering
+HTTP 410 ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so `credits --refresh`
+cannot bring a balance back either ([#795](https://github.com/ffroliva/gflow-cli/issues/795)).
 
 **Workaround, revoked session:**
 ```bash
@@ -869,9 +871,14 @@ A block that survives dismissal now aborts pre-submit with exit 23 (probe `overl
 
 ---
 
-### No in-CLI quota visibility — resolved on labs, still open on the migrated host
+### No in-CLI quota visibility — open on every account since 2026-10-22
 
-- **Status:** Resolved 2026-09-05 for `labs.google` accounts · **Open** on accounts Google has migrated to `flow.google.com` · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+- **Status:** **Open** on every account since 2026-10-22 (resolved 2026-09-05 for `labs.google` accounts, until labs' session URL went) · **Tracked:** [#795](https://github.com/ffroliva/gflow-cli/issues/795)
+
+**Since 2026-10-22 no account can read a balance.** labs.google's session URL, which minted
+the token below, answers HTTP 410 Gone for everyone
+([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so every account now fails the
+first way listed below. The rest of this section is the history of how it got there.
 
 Use `gflow credits user` for the selected profile or `gflow credits list` for all saved
 profiles. Both commands query Flow's current read-only credits endpoint with the saved browser
@@ -1505,7 +1512,7 @@ here, because the run gives up within 30 s (see [CONFIGURATION](CONFIGURATION.md
 
 ### Auth verification depends on Google's NextAuth session endpoint
 
-- **Status:** Mitigated · **Severity:** Low (degrades fail-closed) · **Affects:** issue #15 fix onward · **Tracked:** issue #15
+- **Status:** Mitigated for real-Chrome profiles; **open** for `gflow credits` and for logins with `--browser internal` · **Severity:** Medium since 2026-10-22 · **Affects:** issue #15 fix onward · **Tracked:** issue #15, [#1023](https://github.com/ffroliva/gflow-cli/issues/1023), [#795](https://github.com/ffroliva/gflow-cli/issues/795)
 
 `gflow auth login` verifies a real Flow sign-in by calling
 `https://labs.google/fx/api/auth/session` (see `src/gflow_cli/auth/verification.py`)
@@ -1517,6 +1524,17 @@ success. The expected authenticated response shape is pinned by the
 `AUTHENTICATED_BODY` fixture in `tests/auth/test_verification.py` — a Google
 change surfaces there as a failing test. Start any investigation of a sudden
 `gflow auth login` verification failure at that fixture and `verification.py`.
+
+**Since 2026-10-22 that endpoint answers HTTP 410 Gone** for every account, with or
+without cookies ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023),
+[spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-10-22-labs-session-oracle-gone.md)). A 410 is now
+read as "no labs session": a profile without Google cookies is `NO_SESSION`, and one with
+them is checked by the server-attested migrated-host probe (#791), which needs the Google
+SSO and flow.google.com session cookies, then reads `myaccount.google.com`. **Still open:**
+the access-token consumers that read the same URL are not ported, so `gflow credits`
+cannot read a balance on any account (#795). And a login with `--browser internal` (bundled
+Chromium, also what `--browser auto` picks when Chrome is missing) cannot finish: it has no
+on-disk check to hand the verdict to, so it waits until its timeout. Use `--browser chrome`.
 
 Since PR #168 the production entry point is `verify_flow_profile`, which reads
 the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`

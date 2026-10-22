@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode
@@ -116,10 +118,25 @@ def _no_duration(world: dict[str, Any]) -> None:
     world["hop"] = True
 
 
-def _run(world: dict[str, Any], request: GenerateVideoRequest) -> None:
+@given("no output directory was given")
+def _no_out_dir(world: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    world["cwd"] = tmp_path
+
+
+@given("the client was opened with an output directory")
+def _client_out_dir(world: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `video chain` passes no per-call out_dir: --out-dir reaches the transport only
+    # through the client's config, i.e. the transport's own `_out_dir`.
+    monkeypatch.chdir(tmp_path)
+    world["cwd"] = tmp_path
+    world["transport"]._out_dir = tmp_path / "chosen"  # noqa: SLF001
+
+
+def _run(world: dict[str, Any], request: GenerateVideoRequest, *, download: bool = False) -> None:
     async def go() -> Any:
         return await world["transport"].generate_video(
-            request=request, project_id="p1", download=False, poll_timeout_s=5.0
+            request=request, project_id="p1", download=download, poll_timeout_s=5.0
         )
 
     try:
@@ -134,6 +151,34 @@ def _t2v_8s(world: dict[str, Any]) -> None:
         world,
         GenerateVideoRequest(prompt="a crane", mode=Mode.T2V, aspect=Aspect.LANDSCAPE, duration=8),
     )
+
+
+@when("gflow video t2v runs with an 8 s request and downloads the clip")
+def _t2v_8s_download(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        MigratedComposer, "fetch_mp4", AsyncMock(return_value=b"\x00\x00\x00\x18ftypmp42")
+    )
+    _run(
+        world,
+        GenerateVideoRequest(prompt="a crane", mode=Mode.T2V, aspect=Aspect.LANDSCAPE, duration=8),
+        download=True,
+    )
+
+
+@then("the clip is saved under tmp/ in the working directory")
+def _saved_under_tmp(world: dict[str, Any]) -> None:
+    assert "error" not in world, world.get("error")
+    path = world["result"].local_path
+    assert path.resolve() == (world["cwd"] / "tmp" / f"{MEDIA}.mp4").resolve()
+    assert path.is_file()
+
+
+@then("the clip is saved in that output directory")
+def _saved_in_out_dir(world: dict[str, Any]) -> None:
+    assert "error" not in world, world.get("error")
+    path = world["result"].local_path
+    assert path.resolve() == (world["cwd"] / "chosen" / f"{MEDIA}.mp4").resolve()
+    assert path.is_file()
 
 
 @when(parsers.parse("a {seconds:d} s duration is requested"))

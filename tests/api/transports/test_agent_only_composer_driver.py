@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -350,6 +351,25 @@ async def test_an_opaque_asb_image_is_named_by_its_data_media_id_and_fetched_ful
 
 
 @pytest.mark.asyncio
+async def test_an_image_does_not_report_the_requested_model_as_the_rendered_one(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1012: asked for nano-pro, Flow rendered Nano Banana 2.1, gflow reported GEM_PIX_2.
+    Nothing on this composer observes the rendered model, so none is reported (as #789)."""
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_AGENT_CONFIRM", "account")
+    reset_settings()
+    await _load(page, kind="image", asbImages=True)
+    (image,) = await aoc.run_agent_images(
+        page,
+        image_api.GenerateImageRequest(prompt="x", model=image_api.Model.GEM_PIX_2),
+        project_id="p1",
+    )
+    assert image.model_name_type is None
+
+
+@pytest.mark.asyncio
 async def test_an_image_reports_the_size_of_the_file_it_downloads_not_of_the_grid_preview(
     page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -479,10 +499,23 @@ def _page_answering(resp: _Resp) -> Any:
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16
 
 
+def _saver(out_dir: Path) -> Any:
+    """A local stand-in for the transport's `_save_clip` (#1003)."""
+
+    async def save(media_id: str, body: bytes) -> Path:
+        path = out_dir / f"{media_id}.mp4"
+        path.write_bytes(body)
+        return path
+
+    return save
+
+
 @pytest.mark.asyncio
 async def test_an_asb_src_redirected_to_googlevideo_downloads(tmp_path: Any) -> None:
     page = _page_answering(_Resp("https://rr2---sn-x.googlevideo.com/videoplayback?x=1", 200, MP4))
-    path = await aoc.download_video(page, "https://flow.google.com/asb/opaque", "u-1", tmp_path)
+    path = await aoc.download_video(
+        page, "https://flow.google.com/asb/opaque", "u-1", _saver(tmp_path)
+    )
     assert path.name == "u-1.mp4" and path.read_bytes() == MP4
 
 
@@ -492,7 +525,9 @@ async def test_a_redirect_off_google_is_refused(tmp_path: Any) -> None:
 
     page = _page_answering(_Resp("https://evil.example/v.mp4", 200, MP4))
     with pytest.raises(WireFormatError, match="evil.example"):
-        await aoc.download_video(page, "https://flow.google.com/asb/opaque", "u-1", tmp_path)
+        await aoc.download_video(
+            page, "https://flow.google.com/asb/opaque", "u-1", _saver(tmp_path)
+        )
     assert not list(tmp_path.iterdir())
 
 
@@ -502,7 +537,9 @@ async def test_a_body_that_is_not_an_mp4_is_refused(tmp_path: Any) -> None:
 
     page = _page_answering(_Resp("https://rr2---sn-x.googlevideo.com/v", 200, b"<html>nope"))
     with pytest.raises(WireFormatError, match="MP4"):
-        await aoc.download_video(page, "https://flow.google.com/asb/opaque", "u-1", tmp_path)
+        await aoc.download_video(
+            page, "https://flow.google.com/asb/opaque", "u-1", _saver(tmp_path)
+        )
 
 
 @pytest.mark.asyncio
@@ -511,7 +548,7 @@ async def test_a_non_google_src_is_never_requested(tmp_path: Any) -> None:
 
     page = MagicMock()
     with pytest.raises(WireFormatError):
-        await aoc.download_video(page, "https://evil.example/asb/x", "u-1", tmp_path)
+        await aoc.download_video(page, "https://evil.example/asb/x", "u-1", _saver(tmp_path))
     page.request.get.assert_not_called()
 
 
@@ -692,7 +729,7 @@ async def test_run_agent_video_reports_the_clip_early_and_returns_it(
         page,
         video_api.GenerateVideoRequest(prompt="x"),
         project_id="p1",
-        out_dir=None,
+        save=AsyncMock(),
         poll_timeout_s=10,
         download=False,
         on_started=on_started,
@@ -756,7 +793,7 @@ async def test_run_images_and_run_video_route_the_agent_only_composer_here(
         page,
         video_api.GenerateVideoRequest(prompt="x"),
         project_id="p1",
-        out_dir=None,
+        save=AsyncMock(),
         poll_timeout_s=5,
         download=False,
         on_started=None,
@@ -845,7 +882,7 @@ async def test_unported_video_forms_are_refused(changes: dict[str, Any]) -> None
             page,
             request,
             project_id="p1",
-            out_dir=None,
+            save=AsyncMock(),
             poll_timeout_s=5,
             download=False,
             on_started=None,
@@ -877,7 +914,7 @@ async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
             page,
             video_api.GenerateVideoRequest(prompt="x", reference_entity_names=("Ada",)),
             project_id="p1",
-            out_dir=None,
+            save=AsyncMock(),
             poll_timeout_s=5,
             download=False,
             on_started=None,

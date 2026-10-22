@@ -42,7 +42,7 @@ from gflow_cli.api._engine import (
     resolve_async_playwright,
     run_teardown_step,
 )
-from gflow_cli.api._retry import parse_retry_after, post_with_retry
+from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import (
     AssetInfo,
@@ -1599,9 +1599,10 @@ class FlowApiClient:
                 instance=_make_instance(),
                 route="auth/session",
                 remediation_hint=(
-                    "Flow's labs.google session carries no API token for this account. "
-                    "On accounts Google serves from flow.google.com this is expected "
-                    "and re-authenticating will not help — it can also roll this "
+                    "Flow's labs.google session carries no API token. Since 2026-10-22 "
+                    "its session URL answers 410 for every account, including those Flow "
+                    "serves from flow.google.com (#1023), so this is expected and "
+                    "re-authenticating will not help — it can also roll this "
                     "profile's Chrome-strategy marker back and start the #791 "
                     "re-login loop. Generation still works; the routes that need this "
                     "token do not. See issue #803."
@@ -2920,8 +2921,9 @@ class FlowApiClient:
             raise RuntimeError(
                 msg,
             )
-        page_owned = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
-        if callable(page_owned) and page_owned():
+        page_owned_fn = getattr(self.transport, "uses_page_owned_image_recaptcha", None)
+        page_owned = callable(page_owned_fn) and bool(page_owned_fn())
+        if page_owned:
             # #891: a transport that drives Flow's own page never reads
             # `recaptcha_token` -- the page mints its own on click -- so a client
             # mint here is dead weight at best. At worst it runs on whatever page the
@@ -2940,7 +2942,9 @@ class FlowApiClient:
             {} if name_resolver is None else {"name_resolver": name_resolver}
         )
         images: list[GeneratedImage] = []
-        async for retrying in post_with_retry():
+        # #1010: a page-owned call IS the billed click, and an error after it does not
+        # mean nothing was made, so retrying it re-submits (one run left 2 images).
+        async for retrying in post_with_retry(max_attempts=1 if page_owned else MAX_ATTEMPTS):
             with retrying:
                 images = await self.transport.generate_images(
                     project_id=project_id,

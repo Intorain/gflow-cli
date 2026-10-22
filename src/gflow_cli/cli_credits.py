@@ -62,7 +62,8 @@ async def _show_all(as_json: bool, refresh: bool) -> None:
 
 _REFRESH_HELP = (
     "Renew an expired session in a headless browser, then ask again. "
-    "A revoked session still needs `gflow auth login`."
+    "A revoked session still needs `gflow auth login`. It cannot bring a balance back "
+    "while labs.google's session URL answers 410 (#795)."
 )
 
 
