@@ -127,12 +127,12 @@ Read the current Google Flow balance through an existing authenticated profile. 
 read-only request: it does not generate media or spend credits. The displayed balance funds Veo
 video generation; image generation uses separate per-model daily quotas.
 
-> **Unavailable on an account whose labs session issues no token.** The balance comes from a
-> `labs.google` endpoint. On some accounts the labs session answers `200` with no access token,
-> so the command fails with "the labs.google session returned no access token". The session is
-> fine, and re-authenticating will not help; generation still works. Which host Flow serves does
-> not predict this: on 2026-10-14, 7 of 10 profiles served `flow.google.com` read a balance after
-> `--refresh`. Open, tracked in [#795](https://github.com/ffroliva/gflow-cli/issues/795).
+> **Unavailable on every account since 2026-10-22.** The balance is read with a token that
+> labs.google's session URL used to issue. That URL now answers HTTP 410 Gone for everyone
+> ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)), so the command fails with "no
+> access token". The session is fine, re-authenticating and `--refresh` will not help, and
+> generation still works. Reading the balance from flow.google.com is not ported yet; tracked in
+> [#795](https://github.com/ffroliva/gflow-cli/issues/795).
 
 ```text
 gflow credits user [--profile NAME] [--refresh] [--json]

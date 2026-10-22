@@ -58,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow auth login --browser chrome` and `auth status` work again now that labs.google's
+  session URL answers HTTP 410 Gone** ([#1023](https://github.com/ffroliva/gflow-cli/issues/1023)).
+  Since 2026-10-22 every session check reported "Could not verify the Flow session",
+  and a first login rolled back its `chrome` marker. On a 410 gflow now verifies the
+  session against Google's account page with the profile's own cookies, the check it
+  already used for accounts labs never signed in (#791), and a profile with no Google
+  sign-in is reported as signed out rather than as a network problem. `auth renew` and
+  MCP `gflow_auth_status` use the same check. `gflow credits` still cannot read a balance:
+  it needs the labs token that URL no longer issues (#795).
 - **flow.google.com: a run that fails after the submit click no longer invites a second
   billed generation** ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)).
   When Chrome lost the image submit reply's body, gflow silently submitted the image

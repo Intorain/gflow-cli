@@ -65,6 +65,9 @@ _NO_PROFILE = {
     # #891: an anonymous headless Chromium on about:blank -- the question it answers
     # is identical for a logged-in profile, so it deliberately uses none.
     "spike_mint_on_about_blank.py",
+    # #1023: its direct launch is the anonymous control arm, a fresh context with no
+    # cookies; the profile arm runs through `FlowApiClient`, which takes the lease itself.
+    "spike_session_oracle.py",
 }
 
 
