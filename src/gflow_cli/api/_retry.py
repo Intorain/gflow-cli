@@ -8,11 +8,13 @@ Constants:
     RETRY_AFTER_CAP_SECONDS = 60.0
 
 Public API:
-    post_with_retry(retry_on_5xx: bool) -> AsyncIterator yielding AttemptManager
+    post_with_retry(*, _retry_on_5xx=True, max_attempts=MAX_ATTEMPTS) -> AsyncIterator
+        yielding AttemptManager
     parse_retry_after(response) -> float | None  (cap-applied)
 
 Internal API (test-only):
-    _make_retrying(*, wait_seconds=None) -> AsyncRetrying — allows tests to inject
+    _make_retrying(*, wait_seconds=None, max_attempts=MAX_ATTEMPTS) -> AsyncRetrying —
+        allows tests to inject
         a zero-wait function so the retry suite runs in <100ms instead of
         burning through 1+2+4=7s of real backoff per case.
 """

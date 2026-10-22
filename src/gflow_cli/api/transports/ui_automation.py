@@ -1502,9 +1502,9 @@ class UiAutomationTransport(VideoGenerationMixin):
 
         Draining it at the START of the next run -- before the route decision reads
         ``page.url`` -- is what makes deferring safe. Doing it at the client's
-        failure boundary was not enough: ``generate_images`` is retried inside
-        ``post_with_retry`` (``client.py``), so a retryable 5xx never reaches that
-        boundary and attempt 2 would re-enter a still-mounted composer. Draining
+        failure boundary was not enough: ``generate_images`` used to be retried inside
+        ``post_with_retry`` (``client.py``; once per call since #1010), so a failure
+        could skip that boundary and re-enter a still-mounted composer. Draining
         here holds the invariant at the only point that consumes it, and resets the
         latch on every path (success, retry, or a later unrelated run).
         """
@@ -3149,9 +3149,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # purpose, so the incident bundle is captured from a live page instead of
         # about:blank. Drain that deferred park HERE — before the route decision
         # reads page.url, and before anything re-enters a still-mounted composer.
-        # This is also the retry path: generate_images runs inside
-        # post_with_retry, so a retryable 5xx never reaches the client's failure
-        # boundary and attempt 2 would otherwise resume on a dirty composer.
+        # It also covers a client that still retries this call: since #1010 the
+        # page-owned image call runs once, but a caller re-entering after a failure
+        # must not resume on a dirty composer.
         await self.park_deferred_page()
         flow_host = get_settings().flow_host
         prefer = migrated_images_prefer(request, page_url=page.url, project_id=project_id)

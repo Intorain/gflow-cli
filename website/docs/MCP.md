@@ -142,7 +142,8 @@ MCP tool failures return a structured error object built from the same RFC 9457
 Problem Details as the CLI, plus a **`retryable`** boolean. `retryable: true`
 marks a transient failure a scheduler can re-run without operator intervention —
 WAF/reCAPTCHA bounce (`WafRejectionError`), rate-limit (`RateLimitError`),
-transport timeout (`TransportTimeoutError`), network blip (`NetworkError`), a
+transport timeout (`TransportTimeoutError` — but one raised after a submit click is
+`false`, see below), network blip (`NetworkError`), a
 dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
 (`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError` — but see the
 agent-only exception in § 6.1, which overrides it to `false`), an unreachable
@@ -159,13 +160,13 @@ which gflow drives through its chat agent: there `FlowAgentUiError` carries `ret
 because it means the agent did something other than what was asked — a second credit
 confirmation, more results than requested, or an image turn that made nothing (a video turn
 that makes nothing ends in `TransportTimeoutError`, also `retryable: false` there, since the
-request was already sent) — and a blind re-run repeats the ask. The same holds on the
-classic flow.google.com composer for any `TransportTimeoutError` raised **after the submit
-click** ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): an unreadable or
-missing submit reply, or a generation that is not terminal in time, is `retryable: false`,
-because Flow may already have made and billed it. Its `detail` may include the
+request was already sent) — and a blind re-run repeats the ask. Its `detail` may include the
 agent's last reply. The
-*cause*, and whether it ever clears, remain unmeasured. The override also runs the other
+*cause*, and whether it ever clears, remain unmeasured. The same holds on the classic
+flow.google.com composer for any `TransportTimeoutError` raised **after the submit click**
+([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): an unreadable or missing
+submit reply, or a generation that is not terminal in time, is `retryable: false`, because
+Flow may already have made and billed it. The override also runs the other
 way: a reCAPTCHA mint failure (`type` `…/errors/recaptcha-mint`, exit 1, no request sent,
 no credit spent) is `retryable: true` when a navigation raced the mint or the page was a
 Flow page whose script had not loaded yet, and `false` on a page that is not a web page —

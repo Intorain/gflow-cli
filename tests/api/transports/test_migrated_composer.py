@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1815,6 +1816,26 @@ async def test_an_unreadable_video_submit_body_is_named_and_not_retryable() -> N
         )
     assert "YhhmEf" in ei.value.detail and "unreadable" in ei.value.detail
     assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
+
+
+async def test_a_generation_not_terminal_in_time_is_not_retryable() -> None:
+    """#1010: the poll ran out after the clip was submitted. That is where the spike
+    found the clip finished and billed, so a re-run must not be invited."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    loop = asyncio.get_running_loop()
+    with pytest.raises(TransportTimeoutError) as ei:
+        await MigratedComposer._await_terminal(  # pyright: ignore[reportPrivateUsage]
+            loop.create_future(),
+            loop.create_future(),
+            deadline=time.monotonic(),
+            workflow_id="wf-1",
+        )
+    assert "not terminal" in ei.value.detail
+    assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
 
 
 async def test_submit_frame_without_record_is_wire_format_error() -> None:
@@ -3207,6 +3228,7 @@ async def test_an_image_reply_timeout_after_the_click_is_not_retryable(
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
 
 
 async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error() -> None:
@@ -3224,6 +3246,7 @@ async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error() 
         )
     assert "ogiZ0b" in ei.value.detail and "unreadable" in ei.value.detail
     assert not is_retryable(ei.value)
+    assert "project" in ei.value.remediation_hint
 
 
 # ----------------------------------------------------------------------------------

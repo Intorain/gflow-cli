@@ -4036,9 +4036,9 @@ class VideoGenerationMixin:
         # purpose, so the incident bundle is captured from a live page instead of
         # about:blank. Drain that deferred park HERE — before the route decision
         # reads page.url, and before anything re-enters a still-mounted composer.
-        # This is also the retry path: generate_images runs inside
-        # post_with_retry, so a retryable 5xx never reaches the client's failure
-        # boundary and attempt 2 would otherwise resume on a dirty composer.
+        # It also covers a client that still retries this call: since #1010 the
+        # page-owned image call runs once, but a caller re-entering after a failure
+        # must not resume on a dirty composer.
         await self.park_deferred_page()
         flow_host = get_settings().flow_host
         prefer = migrated_can_serve(request, project_id)

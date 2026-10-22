@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while Flow had already made and billed the clip. A failure after the click now makes no
   second submit and reports exit 9 with `retryable: false`, a detail that names an
   unreadable reply as unreadable, and a hint to check the project before re-running.
+  The image call now runs once on the labs.google composer too, since there gflow drives
+  the same browser page: a hiccup before the click is reported instead of retried.
 - On Flow's agent-only composer, an image result's `model_name_type` echoed the requested
   `--model`, so a `--model nano-pro` run that Flow rendered with Nano Banana 2.1 still
   reported `GEM_PIX_2`. Nothing on that composer observes which model rendered, so it is
