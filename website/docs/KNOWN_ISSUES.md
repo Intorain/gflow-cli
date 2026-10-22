@@ -849,6 +849,8 @@ The contrasting message, **`no upload request ever left the page`**, means somet
 
 Distinct from #719 above, where no reply arrives at all. Here the reply arrives, but Chrome cannot hand its body over: `Network.getResponseBody: No data found for resource with given identifier`. Our spike saw it on 2 of 45 real `maseQ` uploads, and a fresh reload found both uploads saved ([spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-10-20-migrated-upload-reply-body-eviction.md)). Before the fix, gflow reported the upload as a refused file (exit 27).
 
+A project create or rename whose reply is late, not lost, takes the same path: on a slow link a 40 s create used to end as a retryable exit 9 while Flow made the project, so a retry made a second one ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)). The reply wait is now 120 s, and past it gflow reads the new project's id from Flow's navigation to it.
+
 **Mitigation:** gflow now opens the project in a second tab and reads the outcome back: the new project's id, the saved title, or exactly one tile with the run's unique file name and a media id. Nothing is submitted twice. The readback can take up to about two minutes on a slow page.
 
 **If it cannot confirm the outcome**, the command exits **7** with `RpcResponseUnavailableError` (`retryable: false`). The write may have saved. Open the project on flow.google.com and look for the title or the file name in the error before you re-run, or you may get a duplicate project or upload. `gflow run` does not re-upload a reference file after this error in the same run.

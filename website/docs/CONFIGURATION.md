@@ -250,12 +250,6 @@ Both generate tools are gated, not just video: image generation is only *empiric
 GFLOW_CLI_AUTH_LOGIN_TIMEOUT=120 gflow auth login   # abort after 2 minutes
 ```
 
-### `GFLOW_CLI_TIMEOUT_SECONDS`
-
-**What:** Per-request HTTP timeout. Veo videos can take 60–180 s each.
-**Default:** `600`
-**Note:** This is a single-request ceiling; the *batch* timeout you experience is sum of all per-clip waits.
-
 ### `GFLOW_CLI_JITTER_RANGE`
 
 **What:** Anti-bot pause between prompt submissions in multi-prompt image runs (`gflow image batch`, `gflow image t2i --prompts-file` / `--stdin` / multiple positional prompts, and `gflow run` image batches). Spaces out the *submission clicks* only — generations still run in parallel inside Flow.
@@ -537,10 +531,9 @@ For images, `--out DIR` writes flat as `<DIR>/<media_name>_<n>.png` — file pat
 `gflow video chain` (last-frame I2V chaining — see
 [USAGE § gflow video chain](USAGE.md#gflow-video-chain)) is configured entirely
 by command-line flags; it adds **no new environment variables**. It reuses
-`GFLOW_CLI_OUTPUT_DIR` (default output root), `GFLOW_CLI_PROFILE`,
-`GFLOW_CLI_DB_PATH` (chain links are recorded for `--resume-from`), and
-`GFLOW_CLI_TIMEOUT_SECONDS` (per-link generation ceiling — the chain waits for
-each link in turn, so total wallclock is the sum of all link waits).
+`GFLOW_CLI_OUTPUT_DIR` (default output root), `GFLOW_CLI_PROFILE`
+and `GFLOW_CLI_DB_PATH` (chain links are recorded for `--resume-from`). The chain
+waits for each link in turn, so total wallclock is the sum of all link waits.
 
 | Flag | Default | Notes |
 |---|---|---|
@@ -604,12 +597,10 @@ gflow image t2i "product photo on a white sweep"
 
 See [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md) for MinIO and GCS examples.
 
-### "I'm running in CI — I want JSON logs and a strict timeout"
+### "I'm running in CI — I want JSON logs"
 
 ```bash
-GFLOW_CLI_LOG_FORMAT=json \
-GFLOW_CLI_TIMEOUT_SECONDS=300 \
-gflow image batch ./manifest.tsv
+GFLOW_CLI_LOG_FORMAT=json gflow image batch ./manifest.tsv
 ```
 
 ### "I want to test against the official Veo SDK"
@@ -634,7 +625,6 @@ gflow image t2i "test idea" --profile experiments
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ValidationError: GFLOW_CLI_TIMEOUT_SECONDS must be a positive integer` | Bad `.env` value | Set to a number ≥ 1 |
 | `FileNotFoundError: $GFLOW_CLI_HOME/profile_default not found` | First run, no auth yet | `gflow auth login` |
 | `AuthExpiredError` | Cookies expired or revoked | `gflow auth login --profile <name>` |
 | A run stops on an account chooser, consent or verification screen (`FlowAccountChooserError`, exit 38) | Google wants a person to answer that screen | `gflow auth login --profile <name>` and clear it there; the login window is always visible. Making the generation window visible does not help: the run gives up within 30 s. See [`GFLOW_CLI_BROWSER_WINDOW_POSITION`](#gflow_cli_browser_window_position) |

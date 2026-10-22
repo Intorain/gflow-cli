@@ -3832,6 +3832,26 @@ def _as_list_any(node: object) -> list[object]:
     return cast("list[object]", node) if isinstance(node, list) else []
 
 
+#: Ceiling for a project create/rename reply. A slow (proxied) link measured a 40 s
+#: create round trip (#1037); 30 s reported that as a failure while Flow made the project.
+PAGE_RPC_TIMEOUT_S = 120.0
+#: Selector waits stay short: under heavy throttling the anchors still rendered in < 5 s
+#: (#1037 spike), so a longer wait would only delay a genuine selector-drift report.
+ANCHOR_TIMEOUT_S = 30.0
+#: The least time given to Flow's navigation to a new project after its reply was lost.
+NAVIGATION_GRACE_S = 5.0
+
+
+def _write_outcome_unknown(
+    error: TransportTimeoutError | RpcResponseUnavailableError, rpcid: str, hint: str
+) -> RpcResponseUnavailableError:
+    """A write whose request was sent but whose result nobody saw: exit 7, never retried
+    (the class is outside ``RETRYABLE_ERRORS``)."""
+    return RpcResponseUnavailableError(
+        detail=error.detail, route=f"batchexecute:{rpcid}", remediation_hint=hint
+    )
+
+
 async def _wait_anchor(
     page: Page, selector: str, *, named: str, requested: str, at: str, timeout_s: float
 ) -> Any:
@@ -3938,9 +3958,14 @@ async def _rpc_reply(
         page.remove_listener("response", on_response)
 
 
-async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> ProjectInfo:
+async def create_project(
+    page: Page, title: str, *, timeout_s: float = PAGE_RPC_TIMEOUT_S
+) -> ProjectInfo:
     """Create a project through flow.google.com's projects page, titled ``title``.
 
+    ``timeout_s`` bounds the create reply; the selector wait stays at ``ANCHOR_TIMEOUT_S``.
+    Once Create is clicked, a failure never reads as retryable: a lost or late reply is
+    recovered from Flow's navigation to the new project, or is "outcome unknown" (#1037).
     Leaves ``page`` on the new project, which is where every caller goes next."""
     await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
     await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
@@ -3950,9 +3975,10 @@ async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> 
         named="new-project button",
         requested=MIGRATED_ROOT_URL,
         at="migrated.create_project",
-        timeout_s=timeout_s,
+        timeout_s=min(timeout_s, ANCHOR_TIMEOUT_S),
     )
     before = str(page.url)
+    deadline = time.monotonic() + timeout_s
     try:
         payload = await _rpc_reply(
             page,
@@ -3961,25 +3987,38 @@ async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> 
             timeout_s=timeout_s,
             write=True,
         )
-    except RpcResponseUnavailableError as original_error:
-        # The response event precedes Angular's navigation on a successful create.
-        # Observe that navigation; never click Create a second time.
+    except (RpcResponseUnavailableError, TransportTimeoutError) as original_error:
+        # Create was clicked, so Flow may have made the project. The response event
+        # precedes Angular's navigation on a successful create: observe that navigation,
+        # never click Create a second time.
+        unknown = _write_outcome_unknown(
+            original_error,
+            CREATE_PROJECT_RPC,
+            "Create was already clicked, so Flow may have made this project. Open "
+            "https://flow.google.com/ and look for the newest project (it may still carry "
+            "Flow's default name) before re-running: a re-run makes a second project. "
+            "If it is there, pass its id with --project <id>.",
+        )
         try:
             await page.wait_for_url(
                 lambda url: _navigated_project_id(str(url), before) is not None,
-                timeout=int(min(timeout_s, 5.0) * 1000),
+                timeout=int(max(deadline - time.monotonic(), NAVIGATION_GRACE_S) * 1000),
             )
         except Exception:  # noqa: BLE001 - no verified project means uncertain outcome
-            raise original_error from None
+            raise unknown from original_error
         created_id = _navigated_project_id(str(page.url), before)
         if created_id is None:
-            raise
+            raise unknown from original_error
         try:
             persisted_title, _ = await _project_snapshot(page, created_id)
         except Exception:  # noqa: BLE001 - no verified project means no recovery
-            raise original_error from None
+            raise unknown from original_error
         payload = [created_id, [persisted_title]]
-        log.info("migrated.project_create_recovered", project_id=created_id)
+        log.info(
+            "migrated.project_create_recovered",
+            project_id=created_id,
+            after=type(original_error).__name__,
+        )
     reply = _as_list_any(payload)
     project_id: object = reply[0] if reply else None
     if not isinstance(project_id, str) or not UUID_RE.fullmatch(project_id):
@@ -3997,9 +4036,12 @@ async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> 
 
 
 async def rename_project(
-    page: Page, project_id: str, title: str, *, timeout_s: float = 30.0
+    page: Page, project_id: str, title: str, *, timeout_s: float = PAGE_RPC_TIMEOUT_S
 ) -> None:
-    """Rename a project through its header title on flow.google.com."""
+    """Rename a project through its header title on flow.google.com.
+
+    ``timeout_s`` bounds the rename reply; the selector wait stays at ``ANCHOR_TIMEOUT_S``.
+    A lost or late reply is settled by reading the saved title back (#992, #1037)."""
     target = MIGRATED_PROJECT_URL.format(project_id=project_id)
     if not str(getattr(page, "url", "") or "").startswith(target):
         await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
@@ -4010,7 +4052,7 @@ async def rename_project(
         named="project title input",
         requested=target,
         at="migrated.rename_project",
-        timeout_s=timeout_s,
+        timeout_s=min(timeout_s, ANCHOR_TIMEOUT_S),
     )
 
     if await field.input_value() == title:
@@ -4020,22 +4062,42 @@ async def rename_project(
             return
 
     async def submit() -> None:
-        await field.fill(title)
-        await field.press("Enter")
+        try:
+            await field.fill(title, timeout=15_000)
+            await field.press("Enter", timeout=15_000)
+        except PlaywrightTimeoutError as e:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the project title input ({PROJECT_TITLE_INPUT}) was "
+                    f"visible but did not accept the new title on {safe_page_url(page.url)} "
+                    "(host=migrated)"
+                ),
+            ) from e
 
     try:
         payload = await _rpc_reply(
             page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True
         )
-    except RpcResponseUnavailableError as original_error:
+    except (RpcResponseUnavailableError, TransportTimeoutError) as original_error:
+        unknown = _write_outcome_unknown(
+            original_error,
+            RENAME_PROJECT_RPC,
+            f"The rename was sent but not confirmed. Project {project_id} exists; open it "
+            "on https://flow.google.com/ to check its title, and reuse it with "
+            f"--project {project_id} rather than creating another.",
+        )
         try:
             persisted_title, _ = await _project_snapshot(page, project_id)
-        except Exception:  # noqa: BLE001 - retain the original uncertain reply
-            raise original_error from None
+        except Exception:  # noqa: BLE001 - no readback means the outcome stays unknown
+            raise unknown from original_error
         if persisted_title != title:
-            raise
+            raise unknown from original_error
         payload = [persisted_title]
-        log.info("migrated.project_rename_recovered", project_id=project_id)
+        log.info(
+            "migrated.project_rename_recovered",
+            project_id=project_id,
+            after=type(original_error).__name__,
+        )
     echo = _as_list_any(payload)
     echoed: object = echo[0] if echo else None
     if echoed != title:

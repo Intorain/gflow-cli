@@ -396,7 +396,7 @@ Each profile is a fully-independent Playwright persistent context with its own c
 ```
 
 All other vars follow the same `FLOW_CLI_` → `GFLOW_CLI_` rename. The full set:
-`HOME`, `OUTPUT_DIR`, `PROFILE`, `HEADLESS`, `LOG_LEVEL`, `LOG_FORMAT`, `PROVIDER`, `TIMEOUT_SECONDS`, `CONCURRENCY`.
+`HOME`, `OUTPUT_DIR`, `PROFILE`, `HEADLESS`, `LOG_LEVEL`, `LOG_FORMAT`, `PROVIDER`, `CONCURRENCY`.
 
 ### 9.2 What to change in scripts
 

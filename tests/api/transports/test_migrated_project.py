@@ -57,10 +57,14 @@ class _Loc:
     async def input_value(self) -> str:
         return self.page.current_title
 
-    async def fill(self, value: str, **_: Any) -> None:
+    async def fill(self, value: str, **kw: Any) -> None:
+        self.page.action_timeouts.append(kw.get("timeout"))
+        if self.page.fill_times_out:
+            raise mc.PlaywrightTimeoutError("Locator.fill: Timeout 30000ms exceeded")
         self.page.filled = value
 
-    async def press(self, key: str, **_: Any) -> None:
+    async def press(self, key: str, **kw: Any) -> None:
+        self.page.action_timeouts.append(kw.get("timeout"))
         if key == "Enter":
             await self.page.fire(self.page.on_enter)
 
@@ -82,10 +86,14 @@ class FakePage:
         self.on_click: dict[str, tuple[str, str] | None] = {}
         self.on_enter: tuple[str, str] | None = None
         self.navigate_on_create: str | None = None
+        self.fill_times_out = False
+        self.action_timeouts: list[Any] = []
+        self.url_waits: list[Any] = []
         self._handlers: list[Any] = []
         self.keyboard = self
 
-    async def wait_for_url(self, predicate: Any, **_: Any) -> None:
+    async def wait_for_url(self, predicate: Any, **kw: Any) -> None:
+        self.url_waits.append(kw.get("timeout"))
         if not predicate(self.url):
             raise mc.PlaywrightTimeoutError("waiting for navigation")
 
@@ -156,12 +164,21 @@ async def test_create_without_the_fab_is_drift_naming_the_anchor() -> None:
         await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
 
 
-async def test_create_with_no_reply_times_out() -> None:
-    page = _page_creating()
+async def test_create_with_no_reply_and_no_navigation_is_outcome_unknown() -> None:
+    # #1037: the click was sent, so "no reply" is not "not created" -- never retryable.
+    from gflow_cli.errors import RpcResponseUnavailableError, is_retryable
+    from gflow_cli.json_output import exit_code_for
+
+    page = FakePage()
     page.on_click[mc.NEW_PROJECT_BUTTON] = None
 
-    with pytest.raises(TransportTimeoutError, match=mc.CREATE_PROJECT_RPC):
+    with pytest.raises(RpcResponseUnavailableError, match=mc.CREATE_PROJECT_RPC) as exc:
         await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
+    assert not isinstance(exc.value, TransportTimeoutError)
+    assert not is_retryable(exc.value)
+    assert exit_code_for(exc.value) == 7
+    assert "--project" in exc.value.remediation_hint
+    assert page.clicks == [mc.NEW_PROJECT_BUTTON]  # never clicked twice
 
 
 async def test_create_reply_without_a_project_id_is_a_wire_format_error() -> None:
@@ -175,7 +192,7 @@ async def test_create_ignores_other_rpcs_while_waiting() -> None:
     page = FakePage()
     page.on_click[mc.NEW_PROJECT_BUTTON] = (_batch("UpteDb"), _frame("UpteDb", [[[PID, ["old"]]]]))
 
-    with pytest.raises(TransportTimeoutError):
+    with pytest.raises(WireFormatError, match=mc.CREATE_PROJECT_RPC):
         await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
 
 
@@ -499,3 +516,129 @@ async def test_snapshot_closes_the_probe_when_reading_fails() -> None:
     with pytest.raises(RuntimeError):
         await mc._project_snapshot(owner, PID, upload_name="u.png")  # type: ignore[arg-type]
     assert probe.closed and owner.fronted
+
+
+# --- #1037: a create/rename reply that times out after the click ------------------------
+
+
+def _unrelated_reply() -> tuple[str, str]:
+    # Some other rpc answers; ours never does. The fake navigates after any reply.
+    return (_batch("UpteDb"), _frame("UpteDb", []))
+
+
+async def test_create_timeout_then_navigation_recovers_the_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    page = _page_creating()
+    page.on_click[mc.NEW_PROJECT_BUTTON] = _unrelated_reply()
+    readback = AsyncMock(return_value=("wanted", []))
+    monkeypatch.setattr(mc, "_project_snapshot", readback)
+
+    got = await mc.create_project(page, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+
+    assert got.project_id == PID and got.title == "wanted"
+    assert page.clicks == [mc.NEW_PROJECT_BUTTON]
+    readback.assert_awaited_once_with(page, PID)
+    # The navigation may land after the reply ceiling: the look is never a 0 s glance.
+    assert page.url_waits and page.url_waits[0] >= 5_000
+
+
+async def test_create_timeout_ignores_a_project_url_carried_in_the_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.errors import RpcResponseUnavailableError
+
+    page = FakePage()
+    page.on_click[mc.NEW_PROJECT_BUTTON] = _unrelated_reply()
+    page.navigate_on_create = (
+        f"https://accounts.google.com/x?continue=https://flow.google.com/project/{PID}"
+    )
+    monkeypatch.setattr(mc, "_project_snapshot", AsyncMock())
+    with pytest.raises(RpcResponseUnavailableError):
+        await mc.create_project(page, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+
+
+async def test_create_lost_body_remediation_names_the_project_flag() -> None:
+    page = FakePage()
+    page.on_click[mc.NEW_PROJECT_BUTTON] = (_batch(mc.CREATE_PROJECT_RPC), None)
+    with pytest.raises(WireFormatError, match="body was unavailable") as exc:
+        await mc.create_project(page, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+    assert "--project" in exc.value.remediation_hint
+
+
+async def test_rename_timeout_recovers_by_readback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.on_enter = None
+    readback = AsyncMock(return_value=("wanted", []))
+    monkeypatch.setattr(mc, "_project_snapshot", readback)
+
+    await mc.rename_project(page, PID, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+
+    readback.assert_awaited_once_with(page, PID)
+
+
+@pytest.mark.parametrize("readback_says", ["old", RuntimeError("tab died")])
+async def test_rename_timeout_without_proof_is_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch, readback_says: Any
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.errors import RpcResponseUnavailableError, is_retryable
+
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.on_enter = None
+    side: dict[str, Any] = (
+        {"side_effect": readback_says}
+        if isinstance(readback_says, Exception)
+        else {"return_value": (readback_says, [])}
+    )
+    monkeypatch.setattr(mc, "_project_snapshot", AsyncMock(**side))
+    with pytest.raises(RpcResponseUnavailableError, match=mc.RENAME_PROJECT_RPC) as exc:
+        await mc.rename_project(page, PID, "wanted", timeout_s=0.02)  # type: ignore[arg-type]
+    assert not is_retryable(exc.value)
+    assert PID in exc.value.remediation_hint
+
+
+async def test_rename_fill_and_press_carry_explicit_timeouts() -> None:
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.on_enter = (_batch(mc.RENAME_PROJECT_RPC), _frame("o8DA4", ["t"]))
+    await mc.rename_project(page, PID, "t")  # type: ignore[arg-type]
+    assert len(page.action_timeouts) == 2 and all(page.action_timeouts)
+
+
+async def test_rename_fill_timeout_is_typed_drift_not_a_raw_playwright_error() -> None:
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    page.fill_times_out = True
+    with pytest.raises(UiSelectorDriftError, match="title"):
+        await mc.rename_project(page, PID, "t", timeout_s=0.02)  # type: ignore[arg-type]
+
+
+def test_page_rpc_ceiling_is_one_constant_and_selector_waits_stay_short() -> None:
+    import inspect
+
+    assert mc.PAGE_RPC_TIMEOUT_S >= 120
+    for fn in (mc.create_project, mc.rename_project):
+        assert inspect.signature(fn).parameters["timeout_s"].default == mc.PAGE_RPC_TIMEOUT_S
+    # read_credits keeps its quick /about diagnosis.
+    assert inspect.signature(mc.read_credits).parameters["timeout_s"].default == 30.0
+
+
+async def test_create_anchor_wait_stays_at_the_selector_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[float] = []
+    real = mc._wait_anchor
+
+    async def spy(*a: Any, timeout_s: float, **kw: Any) -> Any:
+        seen.append(timeout_s)
+        return await real(*a, timeout_s=timeout_s, **kw)
+
+    monkeypatch.setattr(mc, "_wait_anchor", spy)
+    await mc.create_project(_page_creating(title="t"), "t")  # type: ignore[arg-type]
+    assert seen == [mc.ANCHOR_TIMEOUT_S] and mc.ANCHOR_TIMEOUT_S == 30.0

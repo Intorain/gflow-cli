@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A project create on a slow link no longer fails while Flow makes the project, and
+  never invites the retry that duplicates it**
+  ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)). On flow.google.com a create
+  whose reply took over 30 s (measured: 40 s through a slow proxy) ended as exit 9
+  `TransportTimeoutError`, flagged retryable, while Flow went on to create the project, so
+  a retry made a second one. The create and rename replies now wait up to 120 s. Selector
+  waits stay at 30 s, so a moved frontend still fails fast. If the reply is still late or
+  lost, gflow takes the id from Flow's navigation to the new project and checks it. If it
+  cannot prove the outcome, it now ends with exit 7 (`RpcResponseUnavailableError`,
+  `retryable: false` in `--json` and on the MCP queue) and tells you to look for the
+  project and pass `--project <id>`, instead of a retryable timeout. A rename whose reply
+  is lost is settled by reading the saved title back. Builds on #992's lost-body recovery.
+
 - **Commands no longer print about ten info log lines before their result, and
   `GFLOW_CLI_LOG_LEVEL` works** ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
   Every command logged at `INFO` to stderr regardless of `GFLOW_CLI_LOG_LEVEL`, which was
@@ -63,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answered and refused the file. Exit 7 here means the outcome is unknown: the upload may
   have saved, so check the project before re-running. Scripts that branch on 27 for a lost
   upload should branch on 7.
+
+### Removed
+
+- **`GFLOW_CLI_TIMEOUT_SECONDS`** ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)).
+  It was documented as a per-request HTTP timeout and elsewhere as a chain link ceiling, but
+  nothing read it. An `.env` file or environment that still sets it keeps loading; the
+  value is ignored, as it always was.
 
 ## [0.87.1] — 2026-10-22
 
