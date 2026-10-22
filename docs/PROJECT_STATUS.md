@@ -18,8 +18,7 @@ happens.
 
 **Also:** a video run into an existing `--project` keeps that project's title in the local
 catalog (#1022); `opentelemetry-api` locked at 1.45.1 (CVE-2026-114603). A login with
-`--browser internal` (#1026) is fixed on a branch but not yet released: it has not been run
-against a live sign-in.
+`--browser internal` (#1026) is fixed for the next release, verified live on Windows.
 
 Full ledger: [LIVE_VERIFICATION_v0.87.1](LIVE_VERIFICATION_v0.87.1.md).
 

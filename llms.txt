@@ -6,7 +6,8 @@ Credit inspection is exposed through `gflow credits user|list` and the `gflow_ge
 tool. It opens flow.google.com in the profile's browser and reads the balance the app itself
 loads (the number in Flow's account menu, #795); the tier fields are always null there. The balance funds Veo video generation; image generation uses
 separate per-model daily quotas. Log in with `gflow auth login --browser chrome`: a bundled-
-Chromium login (`--browser internal`, or `auto` without Chrome) cannot finish yet (#1026).
+Chromium login (`--browser internal`, or `auto` without Chrome) works again (verified
+on Windows; macOS not measured), but generation still needs a chrome profile (#1026).
 
 This file is forward-staged for a future docs site at https://ffroliva.github.io/gflow-cli/llms.txt and is also usable today by LLM agents that read the repo directly.
 
