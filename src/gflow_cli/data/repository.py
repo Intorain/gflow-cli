@@ -127,8 +127,8 @@ class DataRepository:
                     ON CONFLICT(profile_name, flow_project_id) DO UPDATE SET
                         title = CASE
                             WHEN excluded.source = 'gflow-cli'
-                                THEN COALESCE(excluded.title, projects.title)
-                            ELSE COALESCE(projects.title, excluded.title)
+                                THEN COALESCE(NULLIF(excluded.title, ''), projects.title)
+                            ELSE COALESCE(NULLIF(projects.title, ''), excluded.title)
                         END,
                         source = CASE
                             WHEN projects.source = 'gflow-cli' THEN projects.source

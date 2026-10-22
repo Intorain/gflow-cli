@@ -853,3 +853,23 @@ def test_an_explicit_create_replaces_a_placeholder_title(tmp_path: Path) -> None
             )
 
         assert _project_row(store) == ("my-project", "gflow-cli")
+
+
+def test_an_empty_stored_title_is_filled_by_a_later_run(tmp_path: Path) -> None:
+    """#1022 review: a first write of ``""`` (a create reply with no title) is not a real
+    title, so a later run may fill it instead of it sticking forever."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("default", Path("C:/profiles/default"))
+        for title in ("", "gflow-cli image batch"):
+            repo.upsert_project(
+                ProjectRecord(
+                    id=f"project-{title or 'empty'}",
+                    profile_name="default",
+                    flow_project_id="flow-project-1",
+                    title=title,
+                    source="generated",
+                )
+            )
+
+        assert _project_row(store) == ("gflow-cli image batch", "generated")
