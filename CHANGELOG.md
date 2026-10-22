@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Commands no longer print about ten info log lines before their result, and
+  `GFLOW_CLI_LOG_LEVEL` works** ([#1041](https://github.com/ffroliva/gflow-cli/issues/1041)).
+  Every command logged at `INFO` to stderr regardless of `GFLOW_CLI_LOG_LEVEL`, which was
+  documented but read by nothing. The default is now `WARNING`, so a command prints its
+  result plus warnings and errors. `GFLOW_CLI_LOG_LEVEL=INFO` restores the old output, and
+  `-v` still shows everything. A long-running `gflow mcp run` / `gflow serve` now also logs
+  only warnings by default; set `INFO` there to keep progress events. `--json` stdout is
+  unchanged (it was already only the result).
+
 ## [0.87.1] — 2026-10-22
 
 ### Security

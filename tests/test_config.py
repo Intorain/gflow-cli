@@ -72,8 +72,8 @@ class TestDefaults:
         s = Settings()
         assert s.provider == Provider.FLOW
 
-    def test_log_level_defaults_to_info(self, clean_env: None) -> None:
-        assert Settings().log_level == LogLevel.INFO
+    def test_log_level_defaults_to_warning(self, clean_env: None) -> None:
+        assert Settings().log_level == LogLevel.WARNING  # #1041
 
     def test_log_format_defaults_to_auto(self, clean_env: None) -> None:
         assert Settings().log_format == LogFormat.AUTO
