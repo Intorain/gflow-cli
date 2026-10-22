@@ -1,7 +1,7 @@
 # Credits on flow.google.com: the balance is in the `nzlxg` reply on page load
 
 **Date:** 2026-10-22 · **Cost:** $0 (two navigations, opening and closing the account menu;
-nothing typed, selected, submitted, created or deleted) · **Issue:** #795
+nothing typed, selected, submitted, created or deleted); one veo-lite generation (10 credits) for the follow-up · **Issue:** #795
 **Script:** [`scripts/dev/spike_credits_balance_carrier.py`](../../../scripts/dev/spike_credits_balance_carrier.py)
 **Run:** `python scripts/dev/spike_credits_balance_carrier.py --profile denon82 --runs 2`
 **Evidence:** `scripts/dev/_spike_out/spike_credits_balance_carrier_<UTC timestamp>.json` +
@@ -63,6 +63,25 @@ has no replacement token on this host. The balance lives on the host's own `batc
 picked by element and class, never by text. The wire value needs no click and is the better
 source.
 
+## Follow-up: one paid generation (same day, owner-granted spend)
+
+To separate `[0]` from `[5]`, `nzlxg` was read, then **one** `gflow video t2v --model veo-lite`
+(Flow's default length, a fresh project titled `spike-795-credits`) ran and succeeded, and
+`nzlxg` was read again. A first attempt with `--duration 4` was refused before submit (exit 11,
+no duration control on this account for that model) and spent nothing.
+
+| Reading | `[0]` vs the menu | `[0] - [5]` | `[0]` change since the first read |
+|---|---|---|---|
+| 17:01 run 1 + run 2 (above) | equal, equal | 0, 0 | baseline, 0 |
+| 17:13, before the generation | equal | 0 | 0 |
+| 17:14, after the refused `--duration 4` attempt | equal | 0 | 0 (the refusal spent nothing, as it claims) |
+| 17:15, after the veo-lite generation | equal | 0 | **-10** |
+
+**Both `[0]` and `[5]` dropped by 10**, which is veo-lite's price, and the menu dropped with them.
+They still could not be told apart: they moved together and stayed equal. `[0]` matched the menu
+in **5/5** reads, so it is the index to read. What `[5]` means when it differs from `[0]` is still
+unmeasured (it may be a different credit bucket on a paid plan). `[1..3]` and `[6]` did not change.
+
 ## Readings against the pre-registered table
 
 - "avatar menu shows an integer AND the same integer sits at one rpcid + path in N/N runs"
@@ -82,10 +101,9 @@ a non-zero Veo balance) is needed before the parser can be called general.
 
 ## Not measured
 
-- **`[0]` vs `[5]`.** They were equal in both runs, so this spike cannot tell which is the
-  remaining balance and which is a daily allowance. Settling it needs a reading after the
-  balance drops below the allowance (one paid generation, which this spike was forbidden to
-  make), or a second account whose balance differs from its allowance.
+- **What `[5]` means when it differs from `[0]`.** A spend moved both by the same amount (see
+  the follow-up), so on this account they cannot be told apart. A second account, ideally on a
+  paid plan, is the next place to look.
 - `[1]..[3]` (perhaps a tier or plan code). Not interpreted.
 - A second profile. `ffroliva` was in use by another agent and was not opened.
 - Whether a direct HTTP replay of `nzlxg` (cookies + `at` token, no browser) is accepted. Only
