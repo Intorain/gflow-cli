@@ -307,3 +307,16 @@ class TestRecoverClip:
         await _recover(page, tmp_path)
 
         assert page._handlers == []  # noqa: SLF001 - asserting cleanup
+
+
+@pytest.mark.asyncio
+async def test_recover_clip_refuses_an_unsafe_media_id_before_any_page_work(
+    tmp_path: Path,
+) -> None:
+    """#1004: the id is the output filename; refuse a path in it before touching Flow."""
+    from unittest.mock import MagicMock
+
+    page = MagicMock(side_effect=AssertionError("no page work for an unsafe id"))
+    with pytest.raises(ValueError, match="Unsafe"):
+        await recover_clip(page, project_id="p", media_id="../escape", out_dir=tmp_path)
+    assert list(tmp_path.iterdir()) == []
