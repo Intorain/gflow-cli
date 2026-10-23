@@ -42,8 +42,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import click
-from click.core import ParameterSource
 import structlog
+from click.core import ParameterSource
 from rich.console import Console
 from rich.markup import escape
 
