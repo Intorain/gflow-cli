@@ -291,11 +291,11 @@ async def _generate_and_report(
     """
     from gflow_cli.api.video import VideoStarted
 
-    if not as_json:
-        console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     settings = get_settings()
     if output_file is not None:
         refuse_cloud_storage_for_local_file(settings.storage_uri, "-o/--output")
+    if not as_json:
+        console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     recorder = OperationRecorder.open(settings)
     started_media_ids: list[str] = []
     try:

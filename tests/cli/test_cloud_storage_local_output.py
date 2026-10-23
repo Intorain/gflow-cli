@@ -100,3 +100,28 @@ async def test_mcp_video_output_with_cloud_storage_is_refused_before_queueing() 
     assert result["status"] == "error"
     assert "GFLOW_CLI_STORAGE_URI" in result["error"]["detail"], result
     assert result["error"]["type"].endswith("/configuration"), result
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("bucket")
+async def test_movie_stitch_with_cloud_storage_is_refused_before_the_browser(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import MagicMock
+
+    from gflow_cli.cli_movie import _run_movie
+
+    with (
+        patch("gflow_cli.cli_movie.FlowApiClient", _no_client),
+        pytest.raises(ConfigurationError, match="movie run --stitch"),
+    ):
+        await _run_movie(
+            manifest=MagicMock(),
+            state=MagicMock(),
+            state_path=tmp_path / "s.json",
+            profile_name="default",
+            profile_dir=tmp_path,
+            out_dir=tmp_path,
+            continue_on_error=False,
+            stitch=True,
+        )

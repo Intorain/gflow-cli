@@ -33,11 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A cloud storage URI with `video -o`, `video chain` or MCP `output` is refused before
-  billing** ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). With
+- **A cloud storage URI with `video -o`, `video chain`, `movie run --stitch` or MCP
+  `output` is refused before billing** ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). With
   `GFLOW_CLI_STORAGE_URI` set to `s3://` or `gs://`, the clip comes back as a bucket
   object, which `-o/--output` and the MCP video `output` could not move to a local path
-  and `video chain` could not hand to ffmpeg. Each failed with a raw exception after
+  and `video chain` and `movie run --stitch` could not hand to ffmpeg. Each failed with a raw exception after
   Flow had billed the clip. gflow now stops before submitting, with exit 11 (an MCP
   configuration error) naming the setting.
 
