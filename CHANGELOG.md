@@ -45,8 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typo the wrong cause. It now recognises that page by its URL and stops with a
   configuration error naming the id as not found or not accessible to the account, not
   retryable, on the CLI and over MCP (`image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`,
-  `gflow run`). `upscale` and `video extend` still take their own path to a missing
-  project and are tracked separately.
+  `gflow run`). `image upscale`, `video upscale` and `video extend` into such a project
+  now end with the same exit 11 instead of exit 23 or a transport timeout (exit 9)
+  ([#1053](https://github.com/ffroliva/gflow-cli/issues/1053)). They still wait out
+  their own page budget (about 30 s) first.
 
 - **A cloud storage URI with `video -o`, `video chain`, `movie run --stitch` or MCP
   `output` is refused before billing** ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). With

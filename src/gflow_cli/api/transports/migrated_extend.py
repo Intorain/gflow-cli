@@ -30,6 +30,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from gflow_cli.api.transports._common import raise_if_known_landing
 from gflow_cli.api.transports.batchexecute import find_record, parse_frames
 from gflow_cli.api.transports.migrated_composer import (
+    MIGRATED_PROJECT_URL,
     MODEL_KEY,
     MigratedComposer,
     request_body,
@@ -365,6 +366,7 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
     except TimeoutError as exc:
         if seen:
             return None
+        await _raise_if_project_missing(page, project_id)
         raise TransportTimeoutError(
             detail=(
                 f"migrated host: the clip editor's project read ({LISTING_RPC}) did not "
@@ -375,6 +377,26 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
         page.remove_listener("response", on_response)
         if not found.done():
             found.cancel()
+
+
+async def _raise_if_project_missing(page: Page, project_id: str) -> None:
+    """After the listing timed out: is the project one Flow will not open (#1053)?
+
+    The clip-editor URL never redirects for such a project (it sat unchanged for 30 s,
+    2026-10-23, ffroliva), but the project page goes to ``/404?reason=project``. So
+    this one navigation runs only in the failure branch, and any probe error leaves
+    the caller's timeout standing.
+    """
+    try:
+        await page.goto(
+            MIGRATED_PROJECT_URL.format(project_id=project_id), wait_until="domcontentloaded"
+        )
+        await page.wait_for_url(
+            lambda url: urlsplit(url).path.rstrip("/") == "/404", timeout=10_000
+        )
+    except Exception:  # noqa: BLE001 - a probe; the caller's own error stands
+        return
+    await raise_if_known_landing(page, requested=f"project {project_id}", at="migrated_extend")
 
 
 def _confirm_editor(page: Page, *, project_id: str, media_id: str) -> None:
