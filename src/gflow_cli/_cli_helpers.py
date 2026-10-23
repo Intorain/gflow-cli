@@ -119,7 +119,7 @@ def default_project(project_id: str | None, project_name: str | None, profile: s
     """
     settings = get_settings()
     ctx = click.get_current_context(silent=True)
-    if ctx is not None and ctx.get_parameter_source("project_name") is ParameterSource.ENVIRONMENT:
+    if ctx is not None and ctx.get_parameter_source("project_name") == ParameterSource.ENVIRONMENT:
         project_name = None
     pinned = settings.project
     if project_id is not None or project_name is not None or pinned is None:
