@@ -4,6 +4,28 @@
 
 ## Current release
 
+**v0.89.0 — alpha.** Clearer answers when something is wrong, a default project, and
+fewer ways to pay twice.
+
+**`GFLOW_CLI_PROJECT` sets a default project (#1039).** Runs without `--project` use it
+instead of creating a project each time. `gflow models` shows the names Flow's own menu uses
+and accepts `nano2.1` (#1038), and MCP clients can read the same catalog through
+`gflow_list_models` (#883).
+
+**Errors name the real cause.** A `--project` Flow will not open now gives exit 11 instead
+of "Flow's UI changed" (#974, #1053). A profile open in your own Chrome window gives exit 11
+with "close that window" for credits, generation and `auth login` (#984, #1059). `image
+batch` manifest errors exit 11 like `gflow run` (#935).
+
+**Safer with money and privacy.** Cloud storage with `-o`, chain or `--stitch` is refused
+before anything is billed (#1008), and a failed download of something already billed is no
+longer marked retryable (#941, part 1). Failure diagnostics no longer carry account
+identifiers, and `GFLOW_CLI_INCIDENT_CAPTURE=false` stops every page capture (#890, #1062).
+
+Full ledger: [LIVE_VERIFICATION_v0.89.0](LIVE_VERIFICATION_v0.89.0.md).
+
+<details><summary>v0.88.0 — browser proxy; writes Flow saved are no longer reported as failures</summary>
+
 **v0.88.0 — alpha.** gflow works behind a proxy, and a slow or interrupted write no longer
 reports a failure for something Flow saved.
 
@@ -23,6 +45,8 @@ makes a second project (#1037). A write whose reply Chrome lost is read back (#9
 verified on Windows, macOS not measured (#1026); `GFLOW_CLI_TIMEOUT_SECONDS`, which nothing read, is removed.
 
 Full ledger: [LIVE_VERIFICATION_v0.88.0](LIVE_VERIFICATION_v0.88.0.md).
+
+</details>
 
 <details><summary>v0.87.1 — credits read from flow.google.com; upscale survives a lost reply</summary>
 
@@ -584,6 +608,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Default project, Flow model names, clearer exit-11 causes, refuse-before-billing and diagnostics privacy (#1039, #1038, #883, #974, #984, #1008, #890) | ✅ done (v0.89.0) |
 | Browser proxy setting (#1036); slow-link create and lost-reply writes no longer report false failures (#1037, #992, #1035) | ✅ done (v0.88.0) |
 | `gflow credits` reads the balance from flow.google.com (#795); 2K image upscale survives a lost reply (#1027) | ✅ done (v0.87.1) |
 | Session checks survive labs.google's session URL answering 410 (#1023); no second billed generation after a lost submit reply (#1010) | ✅ done (v0.87.0) |

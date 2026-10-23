@@ -259,6 +259,13 @@ login paths use it, including the Passive Capture fallback (as Chrome's
 outside `GFLOW_CLI_HOME`. This protects your primary system Chrome profile from
 accidental interference or data corruption.
 
+
+**Profile open in another Chrome window.** If a Chrome window you opened yourself has this
+profile's directory open, Chrome refuses gflow's launch. `gflow auth login`, credits and
+generation then stop with exit 11 (`ProfileLockedError`) and say to close that window or
+use another `--profile` ([#984](https://github.com/ffroliva/gflow-cli/issues/984),
+[#1059](https://github.com/ffroliva/gflow-cli/issues/1059)).
+
 ### `gflow auth status`
 
 Reports where the profile lives, then **proves the session**: it probes the Flow session endpoint with the profile's cookies (no browser, no credits) and exits `0` only when the session is verified — `1` otherwise. Handy for scripts: `gflow auth status && gflow run ...`.
