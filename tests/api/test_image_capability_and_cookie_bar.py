@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -95,37 +94,6 @@ async def test_cookie_reject_button_dismisses_the_bar(wip_src):
             assert await page.locator(COOKIE_BAR).count() == 0
         finally:
             await browser.close()
-
-
-@pytest.mark.asyncio()
-async def test_ui_failure_artifacts_redact_query_and_preserve_structural_state(
-    wip_src, tmp_path: Path
-):
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
-
-    page = MagicMock()
-    page.url = "https://flow.google.com/project/p-1?auth=secret"
-    page.evaluate = AsyncMock(return_value={"overlays": [], "radiogroups": []})
-
-    async def write_screenshot(path: str, *, full_page: bool) -> None:
-        assert full_page is False
-        Path(path).write_bytes(b"PNG")
-
-    page.screenshot = AsyncMock(side_effect=write_screenshot)
-    paths = await MigratedComposer(out_dir=tmp_path)._capture_ui_failure(  # noqa: SLF001
-        page,
-        phase="pre_submit_overlay_gate",
-        selector=".cdk-overlay-pane:visible",
-        error="overlay blocked",
-    )
-
-    assert len(paths) == 2
-    assert paths[0].suffix == ".png" and paths[0].read_bytes() == b"PNG"
-    payload = json.loads(paths[1].read_text(encoding="utf-8"))
-    assert payload["url"] == "https://flow.google.com/project/p-1"
-    assert "auth=secret" not in paths[1].read_text(encoding="utf-8")
-    assert payload["contract"] == "migrated-angular-settings-v1"
-    assert payload["snapshot"] == {"overlays": [], "radiogroups": []}
 
 
 class _SelectorDriftImageTransport:

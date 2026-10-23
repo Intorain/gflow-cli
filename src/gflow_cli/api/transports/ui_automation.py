@@ -3109,7 +3109,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                 return None
             if route == "blocked":
                 raise_if_migrated(page, at="reference_upload_kill_switch")
-            composer = MigratedComposer(out_dir=self._out_dir)
+            composer = MigratedComposer()
             try:
                 if await composer.ensure_editor(page, project_id) == "agent_only":
                     from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415

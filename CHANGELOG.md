@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **flow.google.com failure diagnostics no longer leak account identifiers**
+  ([#890](https://github.com/ffroliva/gflow-cli/issues/890)). When the image submit
+  button was covered, the drift error named the covering element with its raw `id` and
+  class list, which on a signed-in page can hold the account email. It now names only
+  the tag and framework class tokens (`div.glue-cookie-notification-bar`), as the click
+  post-mortem already did. The composer also stopped writing its own screenshot and
+  DOM snapshot into `<out>/ui-failures/`. Those files sat outside the incident bundle's
+  review boundary and retention, and the snapshot carried the page title. The incident
+  bundle still captures both.
+
 - **A profile open in your own Chrome window is now exit 11 with a clear message, not
   an unexpected error** ([#984](https://github.com/ffroliva/gflow-cli/issues/984)). When
   a Chrome you opened yourself holds the profile, Chrome refuses gflow's launch with
