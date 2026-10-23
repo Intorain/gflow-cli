@@ -777,9 +777,10 @@ def _build_video_media_inputs(
 @server.tool(
     name="gflow_generate_image",
     description=(
-        "Generate an image using Google Flow's Imagen model. "
+        "Generate an image using Google Flow's image models. "
         "Produces 1-4 images from a text prompt. "
-        "Models: nano2 (Nano Banana 2.1, fast), nano2-lite (Nano Banana 2 Lite), "
+        "Models: nano2 (Nano Banana 2.1, fast; 'nano2.1' also accepted), "
+        "nano2-lite (Nano Banana 2 Lite), "
         "nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in Flow's menu). "
         "Aspects: 1:1, 9:16, 16:9, 4:3, 3:4. "
         "The prompt supports @AssetName mentions to tag saved project characters/assets by name "

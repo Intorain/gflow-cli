@@ -75,8 +75,10 @@ You have access to the following tools for generating media via Google Flow:
 ## Available Tools
 
 ### gflow_generate_image
-Generate images using Google's Imagen model.
-- **Models:** nano2 (fastest), nano-pro (balanced), image4 (highest quality)
+Generate images using Google Flow's image models.
+- **Models:** nano2 (Nano Banana 2.1, fastest; `nano2.1` also accepted), nano2-lite
+  (Nano Banana 2 Lite), nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in
+  Flow's menu)
 - **Aspects:** 1:1, 9:16, 16:9, 4:3, 3:4
 - **Count:** 1-4 images per call
 

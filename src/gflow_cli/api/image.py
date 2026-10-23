@@ -135,7 +135,8 @@ _ASPECT_FROM_CLI: Mapping[str, Aspect] = MappingProxyType(
 
 _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
     {
-        # NARWHAL — Nano Banana 2.1 on flow.google.com (wire BELUGA), 2 on labs
+        # NARWHAL — Nano Banana 2.1 on flow.google.com (wire BELUGA); a labs request
+        # carries NARWHAL (last seen there as Nano Banana 2)
         "narwhal": Model.NARWHAL,
         "nano2": Model.NARWHAL,
         "nano2.1": Model.NARWHAL,
@@ -171,7 +172,7 @@ _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
 # display only: never match the menu with it (locale-invariance rule).
 MODEL_LABELS: Mapping[Model, str] = MappingProxyType(
     {
-        Model.NARWHAL: "Nano Banana 2.1 (labs: Nano Banana 2)",
+        Model.NARWHAL: "Nano Banana 2.1 (labs last showed Nano Banana 2)",
         Model.GEM_PIX_2: "Nano Banana Pro",
         Model.HARBOR_SEAL: "Nano Banana 2 Lite",
         Model.IMAGEN_3_5: "Imagen 4 (not in Flow's menu)",

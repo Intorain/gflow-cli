@@ -97,7 +97,7 @@ def test_image_models_carry_flow_product_label() -> None:
     """#1038: the catalog names each image model the way Flow's menu does."""
     by_img = {m["name"]: m for m in build_catalog()["image"]["models"]}
 
-    assert by_img["NARWHAL"]["label"] == "Nano Banana 2.1 (labs: Nano Banana 2)"
+    assert by_img["NARWHAL"]["label"] == "Nano Banana 2.1 (labs last showed Nano Banana 2)"
     assert by_img["GEM_PIX_2"]["label"] == "Nano Banana Pro"
     assert by_img["HARBOR_SEAL"]["label"] == "Nano Banana 2 Lite"
     # Imagen 4 left Flow's menu (2026-08-26); never present it as a live name.
