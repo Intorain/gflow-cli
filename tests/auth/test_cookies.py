@@ -159,3 +159,29 @@ async def test_playwright_cookie_read_wraps_launch_in_profile_lease(
 
     await _get_chrome_cookies_playwright(profile)
     assert events == ["acquire", "launch", "release"]
+
+
+@pytest.mark.asyncio
+async def test_playwright_read_on_a_profile_held_by_chrome_is_a_profile_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1059: Chrome's 'already in use' refusal is ProfileLockedError, not a raw error."""
+    from gflow_cli.errors import ProfileLockedError
+
+    mock_pw = MagicMock()
+    mock_pw.chromium.launch_persistent_context = AsyncMock(
+        side_effect=RuntimeError(
+            "Opening in existing browser session. This usually means that the profile "
+            "is already in use by another instance of Chromium."
+        )
+    )
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        "gflow_cli.auth.strategies.async_playwright", MagicMock(return_value=mock_cm)
+    )
+    monkeypatch.setattr(cookies_mod, "channel_for_profile", lambda _pd: "chrome")
+
+    with pytest.raises(ProfileLockedError):
+        await _get_chrome_cookies_playwright(_make_profile_with_cookies(tmp_path))

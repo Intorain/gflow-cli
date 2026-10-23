@@ -7,7 +7,7 @@ import structlog
 from playwright.async_api import Error as PlaywrightError
 from rich.console import Console
 
-from gflow_cli.browser_manager import browser_proxy_kwargs
+from gflow_cli.browser_manager import browser_proxy_kwargs, profile_in_use_error
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     AuthBrowserRejectedError,
@@ -433,9 +433,14 @@ class InternalChromiumStrategy(AuthStrategy):
             # We use launch_persistent_context to ensure cookies are saved to profile_dir
             # Bundled Chromium: no channel. Everything else — the stealth set,
             # the real-window geometry — is the shared, measured configuration.
-            ctx = await pw.chromium.launch_persistent_context(
-                **login_launch_kwargs(profile_dir, headless, proxy=settings.browser_proxy),
-            )
+            try:
+                ctx = await pw.chromium.launch_persistent_context(
+                    **login_launch_kwargs(profile_dir, headless, proxy=settings.browser_proxy),
+                )
+            except Exception as exc:
+                if (in_use := profile_in_use_error(exc, profile_dir)) is not None:
+                    raise in_use from exc  # the user's own Chrome holds it (#1059)
+                raise
             try:
                 page = ctx.pages[0] if ctx.pages else await ctx.new_page()
                 await page.goto(GEMINI_URL, wait_until="domcontentloaded", timeout=60_000)

@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checks for a stale gflow browser, so `credits user` (and any generation command)
   ended in `UnexpectedError`, exit 1. It is now `ProfileLockedError` (exit 11, MCP
   `profile-locked`), telling you to close that window or use another `--profile`.
+  `auth login` (both `--browser internal`, which exited 1, and `--browser chrome`,
+  which fell back to a second launch and exited 8) and the Playwright cookie read do
+  the same ([#1059](https://github.com/ffroliva/gflow-cli/issues/1059)).
 
 - **`gflow image batch` reports manifest errors as exit 11, like `gflow run`**
   ([#935](https://github.com/ffroliva/gflow-cli/issues/935)). The same malformed row

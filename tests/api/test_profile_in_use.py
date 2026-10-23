@@ -100,3 +100,9 @@ async def test_a_target_closed_launch_keeps_the_293_hint(tmp_path: Path) -> None
     with pytest.raises(ProfileLockedError) as info:
         await client._launch_persistent_context({})  # noqa: SLF001
     assert "crashed at startup for another reason" in info.value.remediation_hint
+
+
+def test_a_read_only_lock_line_is_not_a_profile_in_use(tmp_path: Path) -> None:
+    """The helper excludes it itself, for call sites without an access check (#1059)."""
+    denied = _IN_USE + "\nLock file can not be created: Access is denied. (0x5)"
+    assert profile_in_use_error(Error(denied), tmp_path) is None

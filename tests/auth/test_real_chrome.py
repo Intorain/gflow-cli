@@ -522,6 +522,37 @@ class TestPlaywrightAutoClose:
         assert [e["reason"] for e in fallbacks] == ["launch_failed"]
 
     @pytest.mark.asyncio
+    async def test_launch_on_a_profile_held_by_chrome_raises_instead_of_falling_back(
+        self, tmp_path: Path
+    ) -> None:
+        """#1059: the subprocess fallback would hit the same held profile, so the
+        'already in use' refusal is raised as ProfileLockedError."""
+        from gflow_cli.errors import ProfileLockedError
+
+        gflow_home, profile_dir = self._home(tmp_path)
+        ap, _pw, _ctx = _build_fake_playwright(
+            launch_error=PlaywrightError(
+                "Opening in existing browser session. This usually means that the "
+                "profile is already in use by another instance of Chromium."
+            )
+        )
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
+            patch(
+                "gflow_cli.auth.real_chrome.is_playwright_chrome_channel_available",
+                return_value=True,
+            ),
+            patch("gflow_cli.auth.strategies.async_playwright", ap),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec", AsyncMock()
+            ) as subprocess_exec,
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(ProfileLockedError):
+                await RealChromeStrategy().login(profile_dir, headless=False)
+        subprocess_exec.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_manual_close_is_not_an_error(self, tmp_path: Path) -> None:
         """Three releases told users to close the window themselves. Doing so on a
         login that actually succeeded must NOT produce a red error — it falls
