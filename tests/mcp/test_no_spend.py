@@ -57,6 +57,7 @@ def test_no_spend_removes_both_generate_tools(
     # Read-only surfaces stay available.
     assert "gflow_list_projects" in names
     assert "gflow_list_tools" in names
+    assert "gflow_list_models" in names
 
 
 @pytest.mark.parametrize("value", ["0", "false", ""])
@@ -82,3 +83,12 @@ async def test_guide_matches_no_spend_registry(
     assert "### gflow_generate_image" not in guide
     assert "### gflow_generate_video" not in guide
     assert "gflow_auth_status" in guide
+
+
+@pytest.mark.asyncio
+async def test_list_models_returns_the_cli_catalog() -> None:
+    """#883, in process: the live-serve smoke covers the wire, this covers the body."""
+    from gflow_cli.cli_models import build_catalog
+    from gflow_cli.mcp.tools import gflow_list_models
+
+    assert await gflow_list_models() == build_catalog()

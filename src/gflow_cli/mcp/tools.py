@@ -1325,6 +1325,25 @@ async def gflow_list_tools() -> dict[str, Any]:
 
 
 @server.tool(
+    name="gflow_list_models",
+    description=(
+        "List the image and video models the generate tools accept: name, Flow's menu "
+        "label (image), accepted aliases, reference cap, max duration (video), aspects "
+        "and tiers. Static catalog, the same as `gflow models --json`; no browser, no spend."
+    ),
+)
+@_guarded
+async def gflow_list_models() -> dict[str, Any]:
+    """Return the model catalog (``cli_models.build_catalog``), the MCP twin of
+    ``gflow models --json`` (#883). Built from the enums the generate tools use, so
+    every alias it lists is accepted back as ``model``.
+    """
+    from gflow_cli.cli_models import build_catalog
+
+    return build_catalog()
+
+
+@server.tool(
     name="gflow_get_credits",
     description=(
         "Read the current Google Flow credit balance for one saved profile or all profiles "
@@ -2304,6 +2323,7 @@ __all__ = [
     "gflow_generate_image",
     "gflow_generate_video",
     "gflow_list_tools",
+    "gflow_list_models",
     "gflow_list_projects",
     "gflow_download_media",
     "gflow_upscale_image",

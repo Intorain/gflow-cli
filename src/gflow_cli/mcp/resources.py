@@ -63,6 +63,9 @@ Browse the local project catalog.
 ### gflow_list_tools
 List available gflow prompt tools (name, title, description, category).
 
+### gflow_list_models
+List the models `model` accepts, with aliases, reference caps and durations.
+
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow ...` via the terminal.
 2. **Generation is disabled here by operator choice.** Do not work around it.
@@ -97,6 +100,9 @@ Browse the local project catalog.
 
 ### gflow_list_tools
 List available gflow prompt tools (name, title, description, category).
+
+### gflow_list_models
+List the models `model` accepts, with aliases, reference caps and durations.
 
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow image t2i ...` via the terminal.

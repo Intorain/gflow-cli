@@ -1831,7 +1831,8 @@ plus `default` (image models) and `max_duration` (video models). Because it is
 built from the same `Model` / `VideoModel` enums + alias maps the generation
 commands use, any alias it prints is guaranteed to be accepted back by
 `--model` — a UI populating its model picker from `gflow models --json` can
-round-trip every value.
+round-trip every value. MCP clients read the same object from
+`gflow_list_models` ([#883](https://github.com/ffroliva/gflow-cli/issues/883)).
 
 ```bash
 # Human-readable table

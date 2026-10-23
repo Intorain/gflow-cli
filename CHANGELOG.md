@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MCP `gflow_list_models`** ([#883](https://github.com/ffroliva/gflow-cli/issues/883)).
+  MCP clients can now read the model catalog that `gflow models --json` prints (names,
+  Flow menu labels, accepted aliases, reference caps, durations, aspects, tiers) instead
+  of hard-coding one. It needs no profile or browser and spends nothing.
+
 - **`GFLOW_CLI_PROJECT` sets a default project**
   ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039), reported by @error-Sench).
   Every generation run without `--project` used to create a new Flow project, so a loop
