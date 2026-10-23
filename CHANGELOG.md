@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow image batch` reports manifest errors as exit 11, like `gflow run`**
+  ([#935](https://github.com/ffroliva/gflow-cli/issues/935)). The same malformed row
+  exited 11 under `gflow run --config` and 2 under `gflow image batch`. A manifest's
+  contents are configuration, so both now exit 11 with a `Manifest error:` line. That
+  includes a row `ref`, which `image batch` does not support. Scripts that branched on
+  exit 2 for a bad `image batch` manifest need to check 11.
+
 - **Image and video generation into a `--project` id Flow will not open now fails in
   seconds with exit 11, not as selector drift** ([#974](https://github.com/ffroliva/gflow-cli/issues/974)). Flow
   answers such an id with its `flow.google.com/404?reason=project` page; gflow waited

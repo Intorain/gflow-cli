@@ -96,9 +96,8 @@ def test_image_batch_refuses_every_reference_before_any_browser(
     manifest.write_text(json.dumps(_rows(field, value)), encoding="utf-8")
     with patch("gflow_cli.cli_image.FlowApiClient") as client:
         result = CliRunner().invoke(cli_main, ["image", "batch", str(manifest)])
-    # `image batch` reports manifest problems as a usage error (exit 2), as it does for
-    # every other malformed manifest field (`_as_usage_error`, cli_image.py).
-    assert result.exit_code == 2, result.output
+    # A manifest's contents are configuration: exit 11, as `gflow run` reports them (#935).
+    assert result.exit_code == 11, result.output
     assert f"prompts[1].{field}" in result.output
     if field == "ref" and value.startswith("batch:"):
         assert "gflow run --config" in result.output
@@ -151,5 +150,19 @@ def test_image_batch_still_refuses_a_file_ref(tmp_path: Path) -> None:
     manifest = tmp_path / "m.json"
     manifest.write_text(json.dumps(_rows("ref", "photo.png")), encoding="utf-8")
     result = CliRunner().invoke(cli_main, ["image", "batch", str(manifest)])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 11, result.output
     assert "gflow run --config" in result.output
+
+
+def test_a_malformed_row_exits_11_under_both_batch_commands(tmp_path: Path) -> None:
+    """#935: the same bad row exited 11 under `gflow run` and 2 under `image batch`."""
+    row = {"text": "a", "model": "nope"}
+    manifest, config = tmp_path / "m.json", tmp_path / "c.json"
+    manifest.write_text(json.dumps([row]), encoding="utf-8")  # image batch: an array
+    config.write_text(json.dumps({"prompts": [row]}), encoding="utf-8")  # run: an object
+    with patch("gflow_cli.cli_image.FlowApiClient") as client:
+        batch = CliRunner().invoke(cli_main, ["image", "batch", str(manifest)])
+        run = CliRunner().invoke(cli_main, ["run", "--config", str(config)])
+    assert (batch.exit_code, run.exit_code) == (11, 11), (batch.output, run.output)
+    assert "prompts[0].model" in batch.output
+    client.assert_not_called()
