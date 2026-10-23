@@ -88,6 +88,15 @@ async def test_serve_speaks_streamable_http(tmp_path) -> None:
                 tool_names = {t.name for t in tools.tools}
                 assert "gflow_list_projects" in tool_names, tool_names
                 assert "gflow_generate_image" in tool_names, tool_names
+
+                # #883: the models catalog over the live wire is the CLI's, verbatim.
+                from gflow_cli.cli_models import build_catalog
+
+                called = await asyncio.wait_for(
+                    session.call_tool("gflow_list_models", {}), timeout=30
+                )
+                assert not called.is_error, called
+                assert called.structured_content == build_catalog()
     finally:
         proc.terminate()
         try:

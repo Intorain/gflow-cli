@@ -52,6 +52,7 @@ CLI_TO_MCP: dict[str, str] = {
     "video t2v": "gflow_generate_video",  # mode="t2v"
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
+    "models": "gflow_list_models",
     "tools list": "gflow_list_tools",
     "tools show": "gflow_list_tools",  # list output carries the show detail
     "auth status": "gflow_auth_status",
@@ -111,7 +112,6 @@ _MCP_EXEMPT: dict[str, str] = {
         "channel; the operator runs `gflow update`. A read-only twin of `--check` "
         "would be harmless and is the upgrade path if agents ever need it"
     ),
-    "models": "informational; models are enumerated in the generate tools' descriptions",
     "run": "image-batch config runner (rows, batch:N and local-file refs) — not yet ported",
     "character create": (
         "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
