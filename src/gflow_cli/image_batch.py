@@ -76,7 +76,15 @@ def _prompt_hash(text: str) -> str:
 
 
 ALLOWED_ASPECT_RATIOS: tuple[str, ...] = ("9:16", "16:9", "1:1", "4:3", "3:4")
-ALLOWED_MODELS: tuple[str, ...] = ("nano2", "nano-pro", "nano2-lite", "image4", "imagen4")
+ALLOWED_MODELS: tuple[str, ...] = (
+    "nano2",
+    "nano2.1",
+    "nano-2.1",
+    "nano-pro",
+    "nano2-lite",
+    "image4",
+    "imagen4",
+)
 MIN_PROMPTS = 1
 MAX_PROMPTS = 50
 # Maximum prompts allowed in a manifest batch. Intentionally small to keep
