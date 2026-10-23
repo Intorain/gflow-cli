@@ -214,7 +214,11 @@ async def _capture_debug_screenshot(
     Failures during screenshot capture are swallowed — debugging aids
     must not become a second source of exceptions during a real failure.
     """
-    if out_dir is None:
+    from gflow_cli.config import get_settings  # noqa: PLC0415 - import cycle
+
+    # A page capture outside the incident bundle: opting out of incident capture
+    # opts out of this too (#1062).
+    if out_dir is None or not get_settings().incident_capture:
         return None
     out_dir.mkdir(parents=True, exist_ok=True)
     shot_path = out_dir / filename
@@ -2484,101 +2488,6 @@ class UiAutomationTransport(VideoGenerationMixin):
             )
 
     @staticmethod
-    async def _dump_count_panel_dom(
-        page: Page,
-        out_dir: Path | None,
-        prompt_idx: int | None,
-    ) -> None:
-        """Diagnostic dump of the count-tab area of the editor to out_dir.
-
-        Writes a JSON file enumerating candidate structural patterns so we can
-        derive locale-invariant selectors from real DOM evidence (per issue #24).
-
-        Captures:
-          - All elements with role="tab", role="tablist", role="radiogroup",
-            role="radio" — count, aria-label, aria-selected, text content.
-          - All buttons inside any visible Material panel — text, aria-label,
-            leading digit if any, google-symbols icon ligature children.
-          - Document title + page URL for context.
-
-        Safe-by-default: no-op if out_dir is None or prompt_idx is None.
-        Failures swallowed (this is diagnostic).
-        """
-        if out_dir is None or prompt_idx is None:
-            return
-        try:
-            snapshot = await page.evaluate("""() => {
-                const result = {
-                    url: location.href,
-                    title: document.title,
-                    roles: {},
-                    buttons_with_digits: [],
-                    google_symbols_ligatures: [],
-                };
-                for (const role of ['tab', 'tablist', 'radiogroup', 'radio']) {
-                    const els = Array.from(document.querySelectorAll('[role="' + role + '"]'));
-                    result.roles[role] = els.map(el => ({
-                        text: (el.innerText || '').slice(0, 120),
-                        aria_label: el.getAttribute('aria-label'),
-                        aria_selected: el.getAttribute('aria-selected'),
-                        aria_controls: el.getAttribute('aria-controls'),
-                        id: el.id || null,
-                        classes: el.className.toString().slice(0, 200),
-                    }));
-                }
-                // Buttons whose visible text starts with a digit (count-tab candidates).
-                for (const btn of document.querySelectorAll('button')) {
-                    const text = (btn.innerText || '').trim();
-                    if (/^\\d/.test(text)) {
-                        result.buttons_with_digits.push({
-                            text: text.slice(0, 120),
-                            aria_label: btn.getAttribute('aria-label'),
-                            aria_selected: btn.getAttribute('aria-selected'),
-                            role: btn.getAttribute('role'),
-                            parent_role: btn.parentElement?.getAttribute('role') || null,
-                            parent_class: (btn.parentElement?.className
-                                ?.toString().slice(0, 200)) || null,
-                        });
-                    }
-                }
-                // Google Symbols icons present anywhere — gives us the ligature names Flow uses.
-                // Class-only, NOT tag-qualified. This query used to read
-                // 'i.google-symbols, span.google-symbols' and therefore returned ZERO on the
-                // migrated host, where every ligature rides a <mat-icon>. The instrument we
-                // reach for to diagnose selector drift was blind to the host the drift lives
-                // on — which is why #727 and #731 stayed invisible, and why an incident
-                // bundle from a migrated user reported no ligatures at all (#730).
-                const _gsQuery = '.google-symbols';
-                for (const el of document.querySelectorAll(_gsQuery)) {
-                    const lig = (el.innerText || '').trim();
-                    if (lig) result.google_symbols_ligatures.push({
-                        ligature: lig,
-                        parent_text: (el.parentElement?.innerText || '').trim().slice(0, 80),
-                        parent_role: el.parentElement?.getAttribute('role'),
-                        parent_aria_label: el.parentElement?.getAttribute('aria-label'),
-                    });
-                }
-                return result;
-            }""")
-            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
-            diag_dir.mkdir(parents=True, exist_ok=True)
-            target = diag_dir / f"count_panel_dom_prompt_{prompt_idx}.json"
-            target.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
-            log.info(
-                "ui_automation.count_panel_dom_dumped",
-                target=str(target),
-                tabs_count=len(snapshot.get("roles", {}).get("tab", [])),
-                digit_buttons_count=len(snapshot.get("buttons_with_digits", [])),
-                ligatures_count=len(snapshot.get("google_symbols_ligatures", [])),
-            )
-        except Exception as exc:
-            log.warning(
-                "ui_automation.count_panel_dom_dump_failed",
-                error=str(exc),
-                prompt_idx=prompt_idx,
-            )
-
-    @staticmethod
     async def _set_count(
         page: Page,
         count: int,
@@ -2640,11 +2549,6 @@ class UiAutomationTransport(VideoGenerationMixin):
                     attempts=0,
                 )
                 return
-
-        # Diagnostic DOM dump — captured after panel is confirmed open, before any
-        # tab click attempt. Produces count_panel_dom_prompt_{idx}.json in out_dir
-        # so the real DOM structure is visible for selector research (issue #24).
-        await UiAutomationTransport._dump_count_panel_dom(page, out_dir, prompt_idx)
 
         _max_attempts = 3
         # Reuse the initial read — avoids a redundant DOM round-trip.

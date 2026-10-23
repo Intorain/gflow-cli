@@ -1190,14 +1190,14 @@ def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
         return (
             f"migrated host: the account was in Flow's agent mode, the chip was "
             f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
-            f"{page.url} (host=migrated) — the mode is pinned on this account; "
+            f"{safe_page_url(page.url)} (host=migrated) — the mode is pinned on this account; "
             f"turn the Agent chip off in a browser and re-run: {error}"
         )
     if pressed is None:
         return (
             f"migrated host: the account was in Flow's agent mode, the chip was "
             f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
-            f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
+            f"back within {AGENT_RECOVERY_S:.0f}s on {safe_page_url(page.url)} (host=migrated) "
             f"— the chip could not be read back, so whether the mode is still "
             f"on is unknown; check the Agent chip in a browser before filing "
             f"this as drift: {error}"
@@ -1205,7 +1205,7 @@ def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
     return (
         f"migrated host: Flow's agent mode was left, but the settings "
         f"trigger ({READY_ANCHOR}) still did not become visible within "
-        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
+        f"{AGENT_RECOVERY_S:.0f}s on {safe_page_url(page.url)} (host=migrated) — the mode "
         f"is off, so this is ordinary selector drift: {error}"
     )
 
@@ -1286,7 +1286,8 @@ class MigratedComposer:
                     detail=(
                         f"migrated host: the account is in Flow's agent mode, which hides "
                         f"the settings trigger, and the chip ({AGENT_MODE_CHIP}) could not "
-                        f"be clicked on {page.url} after {timeout_s:.0f}s (host=migrated) — "
+                        f"be clicked on {safe_page_url(page.url)} after {timeout_s:.0f}s "
+                        f"(host=migrated) — "
                         f"something is covering it; turn the Agent chip off in a browser and "
                         f"re-run. Readiness gate: {e}. Chip click: {click_error}"
                     ),
@@ -1346,7 +1347,7 @@ class MigratedComposer:
         raise UiSelectorDriftError(
             detail=(
                 f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
-                f"become visible within {timeout_s:.0f}s on {page.url} "
+                f"become visible within {timeout_s:.0f}s on {safe_page_url(page.url)} "
                 f"(host=migrated): {error}"
             ),
         ) from error
