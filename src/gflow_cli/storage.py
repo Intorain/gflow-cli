@@ -131,6 +131,27 @@ def storage_path(storage_uri: str | None, output_dir: Path, key: str) -> AnyPath
     return _make_upath(storage_uri) / safe_key
 
 
+def refuse_cloud_storage_for_local_file(storage_uri: str | None, what: str) -> None:
+    """Refuse *what* (an option that needs the clip as a local file) under cloud storage.
+
+    #1008: the clip comes back as a bucket object, which cannot be moved to a local
+    path or read by ffmpeg, and that used to fail only after Flow had billed it.
+    """
+    if storage_uri:
+        from gflow_cli.errors import ConfigurationError
+
+        raise ConfigurationError(
+            detail=(
+                f"{what} needs the clip as a local file, but GFLOW_CLI_STORAGE_URI "
+                f"stores it in {storage_uri}. Nothing was submitted."
+            ),
+            remediation_hint=(
+                f"Unset GFLOW_CLI_STORAGE_URI for this run, or drop {what} and fetch "
+                "the clip from the bucket."
+            ),
+        )
+
+
 async def write_asset_async(target: AnyPath, data: bytes) -> None:
     """Write *data* to *target* without blocking the asyncio event loop.
 
