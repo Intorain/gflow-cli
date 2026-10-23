@@ -64,7 +64,7 @@ def test_catalog_aliases_are_all_gen_command_accepted() -> None:
 
     # The previously-broken defaults now resolve to accepted aliases.
     by_img = {m["name"]: m for m in catalog["image"]["models"]}
-    assert by_img["NARWHAL"]["aliases"] == ["nano2"]
+    assert by_img["NARWHAL"]["aliases"] == ["nano2", "nano2.1", "nano-2.1"]
     by_vid = {m["name"]: m for m in catalog["video"]["models"]}
     assert by_vid["omni_flash"]["aliases"] == ["omni-flash"]
 
@@ -91,3 +91,32 @@ def test_catalog_video_aspects_are_all_gen_command_accepted() -> None:
         "video catalog must NOT advertise 1:1 — `gflow video t2v --aspect 1:1` "
         "exits with Click invalid-choice (only 9:16 / 16:9 are accepted)."
     )
+
+
+def test_image_models_carry_flow_product_label() -> None:
+    """#1038: the catalog names each image model the way Flow's menu does."""
+    by_img = {m["name"]: m for m in build_catalog()["image"]["models"]}
+
+    assert by_img["NARWHAL"]["label"] == "Nano Banana 2.1 (labs last showed Nano Banana 2)"
+    assert by_img["GEM_PIX_2"]["label"] == "Nano Banana Pro"
+    assert by_img["HARBOR_SEAL"]["label"] == "Nano Banana 2 Lite"
+    # Imagen 4 left Flow's menu (2026-08-26); never present it as a live name.
+    assert by_img["IMAGEN_3_5"]["label"] == "Imagen 4 (not in Flow's menu)"
+
+
+def test_models_table_shows_label() -> None:
+    from gflow_cli.cli import main
+
+    result = CliRunner().invoke(main, ["models"], catch_exceptions=False)
+
+    assert "Nano Banana Pro" in result.output
+
+
+def test_nano_2_1_spellings_select_the_nano2_tier() -> None:
+    """#1038: Flow's menu says 2.1, so `--model nano2.1` and manifests must accept it."""
+    from gflow_cli.api.image import Model
+    from gflow_cli.image_batch import ALLOWED_MODELS
+
+    for alias in ("nano2.1", "nano-2.1"):
+        assert alias in ALLOWED_MODELS
+        assert Model.from_cli(alias) is Model.NARWHAL

@@ -50,6 +50,7 @@ def build_catalog() -> dict[str, Any]:
     image_models = [
         {
             "name": m.value,
+            "label": image_api.MODEL_LABELS[m],
             # Only aliases the `--model` Choice accepts, mapped back to this model.
             "aliases": [a for a in _IMAGE_CLI_MODELS if image_api.Model.from_cli(a) is m],
             "ref_cap": image_api.reference_cap_for(m),
@@ -107,12 +108,16 @@ def _render_catalog(catalog: dict[str, Any]) -> None:
         section = catalog[kind]
         table = Table(title=f"{kind} models")
         table.add_column("model", style="bold")
+        if kind == "image":
+            table.add_column("Flow name")
         table.add_column("aliases", overflow="fold")
         table.add_column("ref cap", justify="right")
         if kind == "video":
             table.add_column("max dur (s)", justify="right")
         for m in section["models"]:
             row = [m["name"], ", ".join(m["aliases"]), str(m["ref_cap"])]
+            if kind == "image":
+                row.insert(1, m["label"])
             if kind == "video":
                 row.append(str(m["max_duration"]))
             table.add_row(*row)
