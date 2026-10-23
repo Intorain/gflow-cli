@@ -240,3 +240,19 @@ def test_the_existing_landing_kinds_keep_their_codes(other: str) -> None:
         "chooser": "https://accounts.google.com/v3/signin/accountchooser?continue=x",
     }
     assert flow_landing_kind(urls[other]) == other
+
+
+@pytest.mark.asyncio
+async def test_project_not_found_landing_is_exit_11_and_not_retryable() -> None:
+    """#974: /404?reason=project was reported as selector drift (exit 23) after 30 s."""
+    from gflow_cli._cli_helpers import _exit_code_for
+    from gflow_cli.errors import ConfigurationError, is_retryable
+
+    exc = await _raise_on(_Page("https://flow.google.com/404?reason=project"))
+
+    assert isinstance(exc, ConfigurationError), exc
+    assert _exit_code_for(exc) == 11
+    assert not is_retryable(exc)
+    assert "reason=project" in exc.detail and "selector drift" in exc.detail
+    assert "--project" in exc.remediation_hint
+    assert "transport" not in exc.remediation_hint.lower()  # not the class default
