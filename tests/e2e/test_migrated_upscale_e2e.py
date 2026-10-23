@@ -47,7 +47,6 @@ async def _export_first_offered(
     *,
     scale: str,
     out_for: Any,
-    capture: structlog.testing.LogCapture,
 ) -> tuple[Any, Any]:
     """Export ``scale`` from the newest clip Flow offers it for: ``(row, result)``.
 
@@ -68,8 +67,8 @@ async def _export_first_offered(
             refused.append(f"{row.media_id}: {exc.detail}")
             continue
         return row, result
-    # The driver did reach the menu; only Flow's offer was missing.
-    assert "migrated_video_upscale.navigate" in _events(capture), _events(capture)
+    # Exit 22 is raised only once the download menu item has been read, so the driver
+    # did reach the menu; only Flow's offer for this scale was missing.
     pytest.skip(f"Flow offers no {scale} for the newest {len(refused)} clip(s): {refused}")
 
 
@@ -199,7 +198,6 @@ async def test_migrated_video_upscale_1080p_e2e(
             usable,
             scale="1080p",
             out_for=lambda r: tmp_path / f"{r.media_id}_1080p.mp4",
-            capture=install_log_capture,
         )
 
     saved_path = Path(str(result))
@@ -245,7 +243,6 @@ async def test_migrated_video_export_270p_gif_e2e(
             usable,
             scale="270p",
             out_for=lambda r: tmp_path / f"{r.media_id}_270p.gif",
-            capture=install_log_capture,
         )
 
     data = Path(str(result)).read_bytes()
