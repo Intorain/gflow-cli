@@ -778,10 +778,11 @@ def _build_video_media_inputs(
 @server.tool(
     name="gflow_generate_image",
     description=(
-        "Generate an image using Google Flow's Imagen model. "
+        "Generate an image using Google Flow's image models. "
         "Produces 1-4 images from a text prompt. "
-        "Models: nano2 (fast), nano2-lite (lightweight), nano-pro (balanced), "
-        "image4 (highest quality). "
+        "Models: nano2 (Nano Banana 2.1, fast; 'nano2.1' also accepted), "
+        "nano2-lite (Nano Banana 2 Lite), "
+        "nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in Flow's menu). "
         "Aspects: 1:1, 9:16, 16:9, 4:3, 3:4. "
         "The prompt supports @AssetName mentions to tag saved project characters/assets by name "
         "(resolves to referenceEntities/referenceImages). Reference a SAVED named asset via "
@@ -825,7 +826,8 @@ async def gflow_generate_image(
             referenceEntities / referenceImages, deduped against reference_images). Use
             ``@Name`` for a saved named asset; use ``reference_images`` for an arbitrary
             one-off image. See ``docs/REFERENCE_STRATEGIES.md``.
-        model: Model to use — 'nano2', 'nano2-lite', 'nano-pro', or 'image4'.
+        model: Model to use — 'nano2' (Nano Banana 2.1; 'nano2.1' also accepted), 'nano2-lite',
+            'nano-pro', or 'image4'.
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
         reference_images: Optional list of reference images for image-to-image generation.

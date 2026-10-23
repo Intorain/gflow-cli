@@ -135,13 +135,16 @@ _ASPECT_FROM_CLI: Mapping[str, Aspect] = MappingProxyType(
 
 _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
     {
-        # NARWHAL — Nano Banana 2
+        # NARWHAL — Nano Banana 2.1 on flow.google.com (wire BELUGA); a labs request
+        # carries NARWHAL (last seen there as Nano Banana 2)
         "narwhal": Model.NARWHAL,
         "nano2": Model.NARWHAL,
+        "nano2.1": Model.NARWHAL,
+        "nano-2.1": Model.NARWHAL,
         "nano-banana-2": Model.NARWHAL,
         "nano_banana_2": Model.NARWHAL,
         "nanobanana2": Model.NARWHAL,
-        # GEM_PIX_2 — Nano Pro
+        # GEM_PIX_2 — Nano Banana Pro
         "gem_pix_2": Model.GEM_PIX_2,
         "gem-pix-2": Model.GEM_PIX_2,
         "nano-pro": Model.GEM_PIX_2,
@@ -157,11 +160,22 @@ _MODEL_FROM_CLI: Mapping[str, Model] = MappingProxyType(
         "nanobanana2lite": Model.HARBOR_SEAL,
         "nano-lite": Model.HARBOR_SEAL,
         "nano_lite": Model.HARBOR_SEAL,
-        # IMAGEN_3_5 — Imagen 4 family alias
+        # IMAGEN_3_5 — Imagen 4 (no longer in Flow's menu since 2026-08-26)
         "imagen_3_5": Model.IMAGEN_3_5,
         "imagen-3-5": Model.IMAGEN_3_5,
         "image4": Model.IMAGEN_3_5,
         "imagen4": Model.IMAGEN_3_5,
+    },
+)
+
+# The name Flow's model menu shows for each tier (en, read 2026-10-08), for
+# display only: never match the menu with it (locale-invariance rule).
+MODEL_LABELS: Mapping[Model, str] = MappingProxyType(
+    {
+        Model.NARWHAL: "Nano Banana 2.1 (labs last showed Nano Banana 2)",
+        Model.GEM_PIX_2: "Nano Banana Pro",
+        Model.HARBOR_SEAL: "Nano Banana 2 Lite",
+        Model.IMAGEN_3_5: "Imagen 4 (not in Flow's menu)",
     },
 )
 

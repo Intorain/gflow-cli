@@ -2109,7 +2109,7 @@ class MigratedComposer:
                     f"'{model.value}' — a gap in gflow's table, not a reading of Flow's menu"
                 ),
                 remediation_hint=(
-                    "Use nano-banana-2 or nano-pro. GFLOW_CLI_FLOW_HOST=labs.google only "
+                    "Use nano2 or nano-pro. GFLOW_CLI_FLOW_HOST=labs.google only "
                     "helps if Flow still serves you labs."
                 ),
             )

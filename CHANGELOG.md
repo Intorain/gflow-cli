@@ -15,10 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `image t2i` calls left one project per call. Set `GFLOW_CLI_PROJECT=<id>` (in the
   environment or `.env`) and `image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`, `gflow run`
   and the MCP generate tools use that project instead, printing a line on stderr that
-  says so. `--project` and `--project-name` still win. It is never used by `extend`,
-  `upscale`, `scene`, `character` or `instructions`, where `--project` means a specific
-  existing project. A pin the local catalog records only under another profile is
+  says so. `--project` and a typed `--project-name` still win (`GFLOW_CLI_PROJECT_NAME`
+  names the pinned project instead). It is never used by `extend`, `upscale`, `scene`,
+  `character` or `instructions`, where `--project` means a specific existing project;
+  `image batch` and `image upload` have no `--project` and are unchanged. A pin the local catalog records only under another profile is
   refused before a browser starts (exit 2), because a project belongs to one account.
+
+- **`gflow models` shows the name Flow's menu uses**
+  ([#1038](https://github.com/ffroliva/gflow-cli/issues/1038), reported by @error-Sench).
+  Each image model now has a `label` in the table and in `--json`: Nano Banana 2.1,
+  Nano Banana Pro, Nano Banana 2 Lite. `NARWHAL`'s label also names labs' Nano Banana 2,
+  and Imagen 4 is marked as no longer in Flow's menu. `--model nano2.1` and `nano-2.1`
+  (and the same values in a batch file, a `gflow run` config and over MCP) now select
+  the `nano2` tier, the one Flow calls 2.1. `character create --model` keeps its own two
+  choices. A model-selector hint on flow.google.com named `nano-banana-2`, which `--model`
+  rejects; it now says `nano2`.
 
 ## [0.88.0] — 2026-10-22
 

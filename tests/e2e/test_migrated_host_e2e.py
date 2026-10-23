@@ -662,6 +662,35 @@ async def test_e2e_mcp_t2i_accepts_the_nano2_lite_alias(
 
 
 @pytest.mark.asyncio
+@pytest.mark.e2e_image
+async def test_e2e_mcp_t2i_accepts_the_nano2_1_alias(
+    e2e_profile_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """#1038: `nano2.1`, the name Flow's menu shows, picks the same tier as `nano2`."""
+    del e2e_profile_dir
+    project = _project_id()
+    _set_flow_host(monkeypatch, None)
+    result = await mcp_tools.gflow_generate_image(
+        prompt="a teal origami crane on a wooden table",
+        model="nano2.1",
+        aspect="16:9",
+        profile=os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
+        project=project,
+        wait=True,
+    )
+    assert result["status"] == "completed", result
+    picks = _selected(
+        install_log_capture,
+        "migrated.image_model_selected",
+        "migrated.image_model_already_selected",
+    )
+    assert picks and picks[-1]["requested"] == "NARWHAL", picks
+    assert "2.1" in str(picks[-1]["model"]), picks
+
+
+@pytest.mark.asyncio
 @pytest.mark.e2e_video
 async def test_e2e_t2v_selects_a_resolution_on_omni_flash(
     e2e_profile_dir: Path,
