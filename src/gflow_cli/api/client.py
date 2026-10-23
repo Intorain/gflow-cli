@@ -88,6 +88,7 @@ from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
 from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
+    profile_in_use_error,
     window_position_args,
 )
 from gflow_cli.config import BrowserEngine, Settings
@@ -1185,6 +1186,11 @@ class FlowApiClient:
                     if ref is not None and locked.incident_ref is None:
                         locked.incident_ref = ref
                 raise locked from exc
+            # Last: a generic Error that names the profile as in use (#984, the user's
+            # own Chrome). A read-only profile and #293's TargetClosedError share the
+            # header and are handled above, with their own hints and incident.
+            if (in_use := profile_in_use_error(exc, self.profile_dir)) is not None:
+                raise in_use from exc
             raise
 
     async def _open_page_pool(self, n: int) -> list[Page]:

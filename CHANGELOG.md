@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A profile open in your own Chrome window is now exit 11 with a clear message, not
+  an unexpected error** ([#984](https://github.com/ffroliva/gflow-cli/issues/984)). When
+  a Chrome you opened yourself holds the profile, Chrome refuses gflow's launch with
+  "the profile is already in use by another instance". That text matched none of the
+  checks for a stale gflow browser, so `credits user` (and any generation command)
+  ended in `UnexpectedError`, exit 1. It is now `ProfileLockedError` (exit 11, MCP
+  `profile-locked`), telling you to close that window or use another `--profile`.
+
 - **`gflow image batch` reports manifest errors as exit 11, like `gflow run`**
   ([#935](https://github.com/ffroliva/gflow-cli/issues/935)). The same malformed row
   exited 11 under `gflow run --config` and 2 under `gflow image batch`. A manifest's
