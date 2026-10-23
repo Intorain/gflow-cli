@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Protocol, TypeVar
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from gflow_cli import json_output
@@ -99,6 +100,7 @@ from gflow_cli.image_batch import (
     prompt_items_from_texts,
     read_prompt_file,
     render_image_batch_summary,
+    resolve_exit_code,
     resolve_jitter_range,
     run_image_batch,
     run_manifest_image_batch,
@@ -1624,16 +1626,18 @@ def batch(
             default_aspect_ratio=aspect,
             default_model=model,
         )
+        for row in prompts:
+            if row.ref is not None:
+                # The stay-mounted batch path cannot reference an earlier row (#913).
+                msg = (
+                    f"prompts[{row.index}].ref: manifest references (an earlier row or a "
+                    "local file) work with `gflow run --config`, not `gflow image batch`."
+                )
+                raise ConfigurationError(msg)
     except ConfigurationError as exc:
-        raise _as_usage_error(exc) from exc
-    for row in prompts:
-        if row.ref is not None:
-            # The stay-mounted batch path cannot reference an earlier row (#913).
-            msg = (
-                f"prompts[{row.index}].ref: manifest references (an earlier row or a "
-                "local file) work with `gflow run --config`, not `gflow image batch`."
-            )
-            raise click.UsageError(msg)
+        # A manifest's contents are configuration, so exit 11 as `gflow run` (#935).
+        console.print(f"[red]Manifest error:[/red] {escape(str(exc))}")
+        sys.exit(resolve_exit_code(exc))
 
     # Apply --tool to each manifest row before submission (≤5 prompts, sequential,
     # never-fatal per row; unknown tool/style fails fast pre-network).
