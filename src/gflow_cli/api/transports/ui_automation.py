@@ -2431,11 +2431,10 @@ class UiAutomationTransport(VideoGenerationMixin):
         suffix: str,
     ) -> None:
         if out_dir is not None and prompt_idx is not None:
-            diag_dir = out_dir / _DIAGNOSTICS_SUBDIR
-            diag_dir.mkdir(parents=True, exist_ok=True)
+            # The helper creates the directory only when it captures (#1062).
             await _capture_debug_screenshot(
                 page,
-                diag_dir,
+                out_dir / _DIAGNOSTICS_SUBDIR,
                 f"count_{suffix}_prompt_{prompt_idx}.png",
             )
 
