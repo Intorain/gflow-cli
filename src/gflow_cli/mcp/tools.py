@@ -29,10 +29,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
+import click
 import structlog
 
 from gflow_cli import auth as auth_mod
-from gflow_cli._cli_helpers import _FLOW_ID_RE
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -848,7 +849,8 @@ async def gflow_generate_image(
             ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
-            CLI ``--project`` flag). When omitted, a fresh project is created —
+            CLI ``--project`` flag). When omitted, ``GFLOW_CLI_PROJECT`` is used if set
+            and ``project_name`` is not; otherwise a fresh project is created —
             on labs.google or flow.google.com, whichever serves the account.
         project_name: Optional human-readable project title to use when creating a
             fresh Flow project.
@@ -894,6 +896,10 @@ async def gflow_generate_image(
     if isinstance(resolved, dict):
         return resolved  # profile error — bail out early
     resolved_profile = resolved
+    try:
+        project = default_project(project, project_name, resolved_profile)
+    except click.UsageError as exc:
+        return _bad_param("Default Project Belongs To Another Profile", exc.message)
 
     log.info(
         "mcp.tool.generate_image",
@@ -1116,7 +1122,8 @@ async def gflow_generate_video(  # NOSONAR
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
-            omitted, a fresh project is created (titled ``project_name`` when
+            omitted, ``GFLOW_CLI_PROJECT`` is used if set and ``project_name`` is
+            not; otherwise a fresh project is created (titled ``project_name`` when
             given) on labs.google or flow.google.com, whichever serves the
             account. On an account served flow.google.com (``GFLOW_CLI_FLOW_HOST``,
             read from the server/daemon environment, not per call) the ported
@@ -1214,6 +1221,10 @@ async def gflow_generate_video(  # NOSONAR
     resolved_profile = _resolve_and_validate_profile(profile)
     if isinstance(resolved_profile, dict):
         return resolved_profile  # profile error — bail out early
+    try:
+        project = default_project(project, project_name, resolved_profile)
+    except click.UsageError as exc:
+        return _bad_param("Default Project Belongs To Another Profile", exc.message)
 
     log.info(
         "mcp.tool.generate_video",

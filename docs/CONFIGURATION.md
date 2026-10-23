@@ -396,6 +396,24 @@ Measurement script: `scripts/dev/spike_offscreen_window.py`.
 
 **Malformed values** (`100`, `1,2,3`, `a,b`) fail at startup with a validation error.
 
+### `GFLOW_CLI_PROJECT`
+
+Default Flow project id ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039)).
+Unset (the default), every generation run without `--project` creates a new project.
+Set, `image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`, `gflow run` and the MCP
+`gflow_generate_image`/`gflow_generate_video` tools generate into it instead, and say so
+on stderr.
+
+- `--project` (or a `gflow run` config's `"project"`) wins, and so does `--project-name`
+  (MCP `project_name`), which asks for a new named project.
+- It is ignored where `--project` names the project that owns existing media
+  (`video extend`, `upscale`) or is required (`scene`, `character`, `instructions`).
+- A project belongs to one Google account. When the local catalog records the id only
+  under other profiles, the run is refused before a browser starts (exit 2; MCP: a 400
+  envelope). An id the catalog has never seen is used as given.
+- The value must be a Flow project id (1-128 letters, digits or hyphens); anything else
+  fails at startup.
+
 ### `GFLOW_CLI_BROWSER_PROXY`
 
 **What:** A proxy for every browser gflow launches: generation (CLI and MCP),

@@ -33,6 +33,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    default_project,
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
@@ -1002,6 +1003,7 @@ def t2i(  # NOSONAR
             )
         prompt = prompts[0]
         profile_name = _resolve_profile(profile)
+        project_id = default_project(project_id, project_name, profile_name)
         provider_dir = _make_provider_dir(profile_name)
         settings = get_settings()
         run_with_handlers(
@@ -1146,6 +1148,7 @@ def _execute_t2i_batch(
     """
     jitter_range = resolve_jitter_range(jitter_spec)
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     output_dir = resolve_batch_output_dir(
@@ -1845,6 +1848,7 @@ def i2i(  # NOSONAR
         raise click.UsageError(msg)
 
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
     i2i_params = _I2IParams(

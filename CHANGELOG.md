@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`GFLOW_CLI_PROJECT` sets a default project**
+  ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039), reported by @error-Sench).
+  Every generation run without `--project` used to create a new Flow project, so a loop
+  of `image t2i` calls left one project per call. Set `GFLOW_CLI_PROJECT=<id>` (in the
+  environment or `.env`) and `image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`, `gflow run`
+  and the MCP generate tools use that project instead, printing a line on stderr that
+  says so. `--project` and `--project-name` still win. It is never used by `extend`,
+  `upscale`, `scene`, `character` or `instructions`, where `--project` means a specific
+  existing project. A pin the local catalog records only under another profile is
+  refused before a browser starts (exit 2), because a project belongs to one account.
+
 ## [0.88.0] — 2026-10-22
 
 ### Added

@@ -28,6 +28,7 @@ from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
+    default_project,
 )
 from gflow_cli.api.client import FlowApiClient, validate_image_file
 from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
@@ -331,7 +332,7 @@ def run(
         f"· {len(cfg.prompts)} prompt(s)",
     )
     console.print(f"  output_dir: [dim]{output_dir}[/dim]")
-    project_id = project_id or cfg.project
+    project_id = default_project(project_id or cfg.project, None, profile_name)
     if project_id:
         console.print(f"  project: [dim]{project_id}[/dim] [dim](existing)[/dim]")
     if not continue_on_error:
