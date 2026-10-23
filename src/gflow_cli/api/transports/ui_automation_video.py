@@ -723,7 +723,11 @@ _EDITOR_READY_ANCHOR = "div[role='textbox'][data-slate-editor='true'], div[conte
 async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: str) -> Path | None:
     """Best-effort viewport screenshot for debugging. Duplicated from
     `ui_automation.py` to keep this module free of a circular import."""
-    if out_dir is None:
+    from gflow_cli.config import get_settings  # noqa: PLC0415 - import cycle
+
+    # A page capture outside the incident bundle: opting out of incident capture
+    # opts out of this too (#1062).
+    if out_dir is None or not get_settings().incident_capture:
         return None
     out_dir.mkdir(parents=True, exist_ok=True)
     shot_path = out_dir / filename

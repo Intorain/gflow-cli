@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DOM snapshot into `<out>/ui-failures/`. Those files sat outside the incident bundle's
   review boundary and retention, and the snapshot carried the page title. The incident
   bundle still captures both.
+  The same holds on the remaining paths
+  ([#1062](https://github.com/ffroliva/gflow-cli/issues/1062)): the labs count-panel DOM
+  dump (page title, element ids, class lists, labels and text) is removed, the debug
+  screenshots written next to your output now follow `GFLOW_CLI_INCIDENT_CAPTURE`, and
+  agent-mode recovery errors show the page URL without its query.
 
 - **A profile open in your own Chrome window is now exit 11 with a clear message, not
   an unexpected error** ([#984](https://github.com/ffroliva/gflow-cli/issues/984)). When
