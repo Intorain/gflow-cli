@@ -32,7 +32,7 @@ from gflow_cli.api.transports.migrated_composer import MigratedComposer  # noqa:
 from _spike_common import build_client, default_out_path, resolve_profile_dir  # noqa: E402, isort: skip
 
 # A generation row carries: mediaId, projectId, workflowId, a "CAE"-ish enum, then a
-# timestamp pair and the prompt. Status lives in the enum and in a trailing int.
+# timestamp pair and the prompt. (Where the status lives was NOT settled here; see #743.)
 ROW = re.compile(r'\\"([0-9a-f-]{36})\\",\\"([0-9a-f-]{36})\\",\\"([0-9a-f-]{36})\\",\\"(\w+)\\"')
 
 
