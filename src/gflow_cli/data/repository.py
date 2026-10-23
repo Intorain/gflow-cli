@@ -636,6 +636,13 @@ class DataRepository:
                 (json.dumps(metadata_json, sort_keys=True), operation_id),
             )
 
+    def get_operation_metadata(self, operation_id: str) -> dict[str, Any]:
+        """The decoded ``metadata_json`` of one operation; ``{}`` when absent."""
+        row = self._store.conn.execute(
+            "SELECT metadata_json FROM operations WHERE id = ?", (operation_id,)
+        ).fetchone()
+        return _decode_metadata_json(row["metadata_json"] if row else None)
+
     def update_operation_metadata(
         self,
         operation_id: str,

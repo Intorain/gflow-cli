@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A successful `character create` keeps the character's id and name in the local
+  catalog** ([#737](https://github.com/ffroliva/gflow-cli/issues/737)). The completion
+  record replaced the whole metadata column, so succeeded rows kept the voice and media
+  ids but lost which character they belonged to (0 of 104 rows on one machine). The
+  `entity_id` and `name` written when the create started are now carried over.
+
 ## [0.89.0] — 2026-10-23
 
 ### Added

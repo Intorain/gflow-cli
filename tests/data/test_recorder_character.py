@@ -133,6 +133,9 @@ def test_record_character_completed_flips_to_succeeded(tmp_path: Path) -> None:
         meta = json.loads(row["metadata_json"])
         assert meta["workflow_ids"] == ["wf-1", "wf-2"]
         assert meta["primary_media_ids"] == ["media-1"]
+        # #737: the completion payload replaced the column and lost the identity.
+        assert meta["entity_id"] == "entity-abc-123"
+        assert meta["name"] == "My Character"
 
 
 # ---------------------------------------------------------------------------
