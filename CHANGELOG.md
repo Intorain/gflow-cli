@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An upscale or extend on the same client after a flow.google.com run no
+  longer fails with a reCAPTCHA error** ([#914](https://github.com/ffroliva/gflow-cli/issues/914)).
+  After an image, video or upload run gflow parks its page on `about:blank`, and the
+  next call read that page as the labs host and tried to mint reCAPTCHA there. The
+  route now remembers that the page was parked from flow.google.com. This was reachable when one
+  `FlowApiClient` was reused in a script; a single CLI run or MCP task was not affected.
+
 - **A failed download of a finished, billed clip is no longer marked `retryable`**
   ([#941](https://github.com/ffroliva/gflow-cli/issues/941), part 1). `MediaDownloadError`
   inherited `retryable: true` from `NetworkError`. A scheduler that re-runs anything

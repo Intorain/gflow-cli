@@ -2563,11 +2563,13 @@ class FlowApiClient:
 
     def served_route(self, *, prefer_migrated: bool) -> str:
         """``migrated_route`` for the host this client's page was actually served."""
-        return migrated_route(
-            getattr(self._page, "url", None),
-            self.settings.flow_host,
-            prefer_migrated=prefer_migrated,
-        )
+        url = getattr(self._page, "url", None)
+        if flow_host_kind(url) is None and getattr(self.transport, "parked_after_migrated", False):
+            # Parked on about:blank after a migrated run (image, video or upload): the
+            # URL no longer names the host, and reading it as labs mints reCAPTCHA on
+            # about:blank (#914).
+            url = "https://flow.google.com/"
+        return migrated_route(url, self.settings.flow_host, prefer_migrated=prefer_migrated)
 
     def _write_target(self, out_path: Path) -> AnyPath:
         """``out_path``, or its key under the configured cloud ``storage_uri``."""
