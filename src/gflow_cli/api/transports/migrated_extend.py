@@ -389,7 +389,9 @@ async def _raise_if_project_missing(page: Page, project_id: str) -> None:
     """
     try:
         await page.goto(
-            MIGRATED_PROJECT_URL.format(project_id=project_id), wait_until="domcontentloaded"
+            MIGRATED_PROJECT_URL.format(project_id=project_id),
+            wait_until="domcontentloaded",
+            timeout=10_000,  # a probe: bounded, not Playwright's 30 s default
         )
         await page.wait_for_url(
             lambda url: urlsplit(url).path.rstrip("/") == "/404", timeout=10_000
