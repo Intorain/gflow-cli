@@ -45,7 +45,7 @@ from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import ConfigurationError, DataStoreError, FlowApiError, GFlowError
 from gflow_cli.image_batch import resolve_jitter_range
-from gflow_cli.storage import cloud_info_from_path
+from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -294,6 +294,8 @@ async def _generate_and_report(
     if not as_json:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     settings = get_settings()
+    if output_file is not None:
+        refuse_cloud_storage_for_local_file(settings.storage_uri, "-o/--output")
     recorder = OperationRecorder.open(settings)
     started_media_ids: list[str] = []
     try:
@@ -1004,6 +1006,8 @@ async def _run_chain(
         raise ChainManifestError(msg)
 
     settings = get_settings()
+    # ffmpeg reads each link's clip from disk to seed the next one (#1008).
+    refuse_cloud_storage_for_local_file(settings.storage_uri, "video chain")
 
     # Resume: bind the prior chain_id and skip completed links so they are not
     # regenerated. A fresh run mints a new id.

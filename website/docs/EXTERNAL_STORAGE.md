@@ -46,9 +46,11 @@ local layout:
 The layout is the same whichever host Flow serves (labs.google or flow.google.com).
 Before #1003, a flow.google.com video ignored the storage URI and was written locally.
 With a cloud storage URI, `gflow video -o/--output`, `gflow video chain` and an MCP
-`output_file` do not work yet on either host: each needs the clip as a local file
+`output` cannot work on either host: each needs the clip as a local file, and the
+clip is a bucket object. gflow refuses that combination before submitting, with exit 11
+(an MCP configuration error), so nothing is billed
 ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). Leave the storage URI unset
-for those runs.
+for those runs, or drop the option and fetch the clip from the bucket.
 
 `<ext>` is corrected from the actual bytes before upload. For example, if Flow
 returns JPEG bytes for an image request originally planned as `.png`, the object

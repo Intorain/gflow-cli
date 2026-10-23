@@ -58,6 +58,7 @@ from gflow_cli.profile_store import (
 from gflow_cli.services.credits import inspect_all_profiles as inspect_all_credit_profiles
 from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
 from gflow_cli.services.media_recovery import download_media
+from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
@@ -1156,6 +1157,8 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+    if output is not None:
+        refuse_cloud_storage_for_local_file(get_settings().storage_uri, "output")
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False);
