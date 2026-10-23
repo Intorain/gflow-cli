@@ -31,7 +31,7 @@ def test_e2e_cli_t2i_into_a_missing_project_exits_11_fast(e2e_env: dict[str, str
     assert proc.returncode == 11, proc.stderr[-800:]
     assert "reason=project" in proc.stdout + proc.stderr
     # Measured before the fix: exit 23 after ~40 s (the 30 s drift wait plus startup).
-    assert elapsed < 35, elapsed
+    assert elapsed < 20, elapsed  # a fall-back to the 30 s wait would exceed this
 
 
 @pytest.mark.e2e_auth
@@ -56,3 +56,4 @@ def test_e2e_mcp_image_into_a_missing_project_is_a_configuration_error(
     error = result["error"]
     assert error["type"].endswith("/configuration"), error
     assert error["retryable"] is False, error
+    assert "reason=project" in error["detail"] and _NO_SUCH_PROJECT in error["detail"], error
