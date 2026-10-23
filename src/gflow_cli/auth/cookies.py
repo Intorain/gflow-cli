@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from gflow_cli.browser_manager import browser_proxy_kwargs, channel_for_profile
+from gflow_cli.browser_manager import (
+    browser_proxy_kwargs,
+    channel_for_profile,
+    profile_in_use_error,
+)
 from gflow_cli.config import get_settings
 from gflow_cli.errors import SecurityError
 from gflow_cli.paths import get_cookies_path
@@ -155,13 +159,18 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
     # async_playwright exits first). Contention -> ProfileLockedError before the
     # headless Chrome launches.
     async with ProfileLease(profile_dir), async_playwright() as pw:
-        ctx = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            channel=channel,
-            headless=True,
-            args=["--password-store=basic"],
-            **browser_proxy_kwargs(get_settings().browser_proxy),
-        )
+        try:
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel=channel,
+                headless=True,
+                args=["--password-store=basic"],
+                **browser_proxy_kwargs(get_settings().browser_proxy),
+            )
+        except Exception as exc:
+            if (in_use := profile_in_use_error(exc, profile_dir)) is not None:
+                raise in_use from exc  # the user's own Chrome holds it (#1059)
+            raise
         try:
             all_cookies = await ctx.cookies()
             flow_cookies = await ctx.cookies([_FLOW_COOKIE_URL])

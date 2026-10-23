@@ -232,7 +232,9 @@ def profile_in_use_error(exc: BaseException, profile_dir: Path) -> ProfileLocked
     ``None`` for any other launch failure. ``ProfileLease`` cannot see a Chrome gflow did
     not start, so this message is the only signal; it states the cause outright.
     """
-    if _PROFILE_IN_USE_MARKER not in str(exc):
+    msg = str(exc)
+    # A read-only profile shares the header; its lock-file line marks it (#1059).
+    if _PROFILE_IN_USE_MARKER not in msg or "Lock file can not be created" in msg:
         return None
     return ProfileLockedError(
         detail=(

@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 import structlog
 from rich.console import Console
 
-from gflow_cli.browser_manager import is_playwright_chrome_channel_available
+from gflow_cli.browser_manager import (
+    is_playwright_chrome_channel_available,
+    profile_in_use_error,
+)
 from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import (
     AuthBrowserRejectedError,
@@ -322,6 +325,9 @@ class RealChromeStrategy(AuthStrategy):
                     ),
                 )
             except Exception as exc:
+                # The bundled-Chromium fallback would hit the same held profile (#1059).
+                if (in_use := profile_in_use_error(exc, profile_dir)) is not None:
+                    raise in_use from exc
                 logger.warning(
                     "auth_login_launch_failed",
                     strategy=self.name,

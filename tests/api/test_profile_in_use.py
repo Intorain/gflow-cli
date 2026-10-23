@@ -100,3 +100,19 @@ async def test_a_target_closed_launch_keeps_the_293_hint(tmp_path: Path) -> None
     with pytest.raises(ProfileLockedError) as info:
         await client._launch_persistent_context({})  # noqa: SLF001
     assert "crashed at startup for another reason" in info.value.remediation_hint
+
+
+@pytest.mark.parametrize(
+    "lock_line",
+    [
+        "Lock file can not be created: Access is denied. (0x5)",
+        "Lock file can not be created: 拒绝访问。 (0x5)",  # zh-CN, see test_concurrency
+        "Lock file can not be created: Acesso negado. (0x5)",  # pt-BR
+        "Lock file can not be created: Zugriff verweigert (0x5)",  # de-DE
+        "Lock file can not be created! Error code: 5",  # older Chrome wording
+    ],
+)
+def test_a_read_only_lock_line_is_not_a_profile_in_use(tmp_path: Path, lock_line: str) -> None:
+    """The helper excludes it itself, for call sites without an access check (#1059);
+    Chrome's prefix stays English, only the OS text after it is translated."""
+    assert profile_in_use_error(Error(f"{_IN_USE}\n{lock_line}"), tmp_path) is None
