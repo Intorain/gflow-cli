@@ -15,7 +15,7 @@ import json
 import re
 import uuid
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import structlog
 
@@ -24,6 +24,7 @@ from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
     AuthExpiredError,
+    ConfigurationError,
     ContentPolicyError,
     FlowAccessUnavailableError,
     FlowAccountChooserError,
@@ -184,6 +185,14 @@ def flow_landing_kind(url: object) -> str | None:
         return "signin"
     if host_kind == "migrated" and path.rstrip("/") == "/about":
         return "public"
+    # #974: Flow's answer to a /project/<id> it will not open. Measured 2026-10-23
+    # (ffroliva, an all-zero id); labs' equivalent is unobserved, so it stays None.
+    if (
+        host_kind == "migrated"
+        and path.rstrip("/") == "/404"
+        and parse_qs(parts.query).get("reason") == ["project"]
+    ):
+        return "missing_project"
     return None
 
 
@@ -320,6 +329,21 @@ async def raise_if_known_landing(page: object, *, requested: str, at: str) -> No
                 f"{requested} — the session needs a person to pick an account. "
                 f"Not selector drift."
             )
+        )
+    if kind == "missing_project":
+        # A user-input fault Flow states outright, so exit 11 and never retryable,
+        # unlike /about below, where Flow does not say why (#974).
+        raise ConfigurationError(
+            detail=(
+                f"Flow answered {requested} with its project-not-found page "
+                f"({safe}, reason=project): that project id is not found, or not "
+                f"accessible to this account. Not selector drift."
+            ),
+            remediation_hint=(
+                "Check the --project id: copy it from the project's flow.google.com URL "
+                "(…/project/<id>), make sure the profile is the account that owns it, or "
+                "create one with `gflow project create`."
+            ),
         )
     if kind == "signin":
         raise AuthExpiredError(
