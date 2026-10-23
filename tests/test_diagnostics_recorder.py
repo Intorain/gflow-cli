@@ -438,3 +438,12 @@ def test_every_mode_switch_error_arm_is_a_capture_trigger() -> None:
     shot = _screenshot_triggers()
     assert [a for a in arms if a not in captured] == []
     assert [a for a in arms if a not in shot] == []
+
+
+def test_a_rejected_upload_writes_an_incident_bundle() -> None:
+    """#770: exit 27 names "some dialog" without being able to say which; the bundle's
+    screenshot is the only evidence of what that dialog was."""
+    from gflow_cli.diagnostics import _capture_triggers
+    from gflow_cli.errors import MediaUploadRejectedError
+
+    assert MediaUploadRejectedError in _capture_triggers()

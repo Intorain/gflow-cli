@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import warnings
 from collections.abc import Mapping
 from enum import StrEnum
@@ -562,6 +563,30 @@ class Settings(BaseSettings):
             "same proxy. Override via GFLOW_CLI_BROWSER_PROXY."
         ),
     )
+
+    project: str | None = Field(
+        default=None,
+        description=(
+            "Default Flow project id for the generation commands and MCP generate tools "
+            "(#1039): used when no --project / --project-name is given, instead of "
+            "creating a new project per run. Never applies where --project names the "
+            "project that owns existing media (extend, upscale) or is required. "
+            "Override via GFLOW_CLI_PROJECT."
+        ),
+    )
+
+    @field_validator("project", mode="before")
+    @classmethod
+    def _validate_project(cls, v: object) -> object:
+        if isinstance(v, str):
+            v = v.strip()
+        if v is None or v == "":
+            return None
+        # Same pattern as _cli_helpers._FLOW_ID_RE, which imports this module.
+        if not isinstance(v, str) or not re.fullmatch(r"[A-Za-z0-9\-]{1,128}", v):
+            msg = "GFLOW_CLI_PROJECT must be a Flow project id: 1-128 letters, digits, or hyphens"
+            raise ValueError(msg)
+        return v
 
     @field_validator("browser_proxy", mode="before")
     @classmethod

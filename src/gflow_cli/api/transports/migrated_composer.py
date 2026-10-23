@@ -1184,31 +1184,20 @@ async def _guard_image_submit(
     return None
 
 
-def _redacted_page_url(page: Any) -> str:
-    """Return a diagnostic URL without query parameters or fragments."""
-    try:
-        parsed = urlsplit(str(getattr(page, "url", "") or ""))
-    except (TypeError, ValueError):
-        return "<unavailable>"
-    if not parsed.scheme or not parsed.netloc:
-        return "<unavailable>"
-    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-
-
 def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
     """Why the trigger did not come back after the agent chip was clicked (#749)."""
     if pressed:
         return (
             f"migrated host: the account was in Flow's agent mode, the chip was "
             f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
-            f"{page.url} (host=migrated) — the mode is pinned on this account; "
+            f"{safe_page_url(page.url)} (host=migrated) — the mode is pinned on this account; "
             f"turn the Agent chip off in a browser and re-run: {error}"
         )
     if pressed is None:
         return (
             f"migrated host: the account was in Flow's agent mode, the chip was "
             f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
-            f"back within {AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) "
+            f"back within {AGENT_RECOVERY_S:.0f}s on {safe_page_url(page.url)} (host=migrated) "
             f"— the chip could not be read back, so whether the mode is still "
             f"on is unknown; check the Agent chip in a browser before filing "
             f"this as drift: {error}"
@@ -1216,105 +1205,13 @@ def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
     return (
         f"migrated host: Flow's agent mode was left, but the settings "
         f"trigger ({READY_ANCHOR}) still did not become visible within "
-        f"{AGENT_RECOVERY_S:.0f}s on {page.url} (host=migrated) — the mode "
+        f"{AGENT_RECOVERY_S:.0f}s on {safe_page_url(page.url)} (host=migrated) — the mode "
         f"is off, so this is ordinary selector drift: {error}"
     )
 
 
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
-
-    def __init__(self, *, out_dir: Path | None = None) -> None:
-        self._out_dir = out_dir
-
-    async def _capture_ui_failure(
-        self,
-        page: Page,
-        *,
-        phase: str,
-        selector: str,
-        error: BaseException | str,
-    ) -> tuple[Path, ...]:
-        """Persist a bounded screenshot + structural DOM snapshot for UI failures.
-
-        The snapshot deliberately excludes page text and prompt contents. The viewport
-        screenshot can still contain the authenticated account indicator, so it follows
-        the existing debug-screenshot PII warning policy. Capture is best-effort and can
-        never replace the typed selector error that triggered it.
-        """
-        if self._out_dir is None:
-            return ()
-        safe_phase = re.sub(r"[^A-Za-z0-9_.-]+", "_", phase).strip("_") or "ui"
-        stem = f"{time.time_ns()}-{safe_phase}"
-        diagnostics_dir = self._out_dir / "ui-failures"
-        screenshot_path = diagnostics_dir / f"{stem}.png"
-        snapshot_path = diagnostics_dir / f"{stem}.json"
-        try:
-            diagnostics_dir.mkdir(parents=True, exist_ok=True)
-            snapshot = await page.evaluate(
-                """() => {
-                    const visible = (selector) => Array.from(document.querySelectorAll(selector))
-                        .filter((el) => {
-                            const rect = el.getBoundingClientRect();
-                            const style = getComputedStyle(el);
-                            return rect.width > 0 && rect.height > 0 &&
-                                style.display !== "none" && style.visibility !== "hidden";
-                        })
-                        .slice(0, 20)
-                        .map((el) => ({
-                            tag: el.tagName,
-                            id: el.id || null,
-                            role: el.getAttribute("role"),
-                            className: String(el.className || "").slice(0, 160),
-                        }));
-                    return {
-                        title: String(document.title || "").slice(0, 120),
-                        activeElement: document.activeElement?.tagName || null,
-                        cookieBars: visible(
-                            "#glue-cookie-notification-bar-1, .glue-cookie-notification-bar"
-                        ),
-                        overlays: visible(".cdk-overlay-pane"),
-                        radiogroups: visible("[role='radiogroup']"),
-                        menuitems: visible("[role='menuitem']"),
-                        composers: visible("[contenteditable='true']"),
-                    };
-                }"""
-            )
-            snapshot_path.write_text(
-                json.dumps(
-                    {
-                        "contract": MIGRATED_SETTINGS_CONTRACT,
-                        "phase": phase,
-                        "selector": selector,
-                        "error": str(error)[:500],
-                        "url": _redacted_page_url(page),
-                        "snapshot": snapshot,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-            await page.screenshot(path=str(screenshot_path), full_page=False)
-        except Exception as capture_error:  # noqa: BLE001 - diagnostics are non-authoritative
-            log.warning(
-                "migrated.ui_failure_artifacts_unavailable",
-                phase=phase,
-                error=str(capture_error)[:200],
-            )
-            for partial in (snapshot_path, screenshot_path):
-                try:
-                    partial.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            return ()
-        log.warning(
-            "migrated.ui_failure_artifacts",
-            phase=phase,
-            screenshot=str(screenshot_path),
-            snapshot=str(snapshot_path),
-        )
-        return screenshot_path, snapshot_path
 
     async def _ui_failure_detail(
         self,
@@ -1325,16 +1222,20 @@ class MigratedComposer:
         detail: str,
         error: BaseException | str,
     ) -> str:
-        artifacts = await self._capture_ui_failure(
-            page,
+        """The drift detail, stamped with the settings contract.
+
+        No files: the incident bundle the raise produces already holds the screenshot
+        and the structural DOM, inside its `sensitive/` review boundary and retention.
+        A second copy in the user's output directory sat outside both (#890).
+        """
+        del page  # kept so every raise site reads the same; the bundle captures it
+        log.warning(
+            "migrated.ui_failure",
             phase=phase,
             selector=selector,
-            error=error,
+            error=error if isinstance(error, str) else type(error).__name__,
         )
-        suffix = f" [contract={MIGRATED_SETTINGS_CONTRACT}"
-        if artifacts:
-            suffix += "; diagnostics=" + ",".join(str(path) for path in artifacts)
-        return detail + suffix + "]"
+        return f"{detail} [contract={MIGRATED_SETTINGS_CONTRACT}]"
 
     # --- readiness ------------------------------------------------------------
 
@@ -1385,7 +1286,8 @@ class MigratedComposer:
                     detail=(
                         f"migrated host: the account is in Flow's agent mode, which hides "
                         f"the settings trigger, and the chip ({AGENT_MODE_CHIP}) could not "
-                        f"be clicked on {page.url} after {timeout_s:.0f}s (host=migrated) — "
+                        f"be clicked on {safe_page_url(page.url)} after {timeout_s:.0f}s "
+                        f"(host=migrated) — "
                         f"something is covering it; turn the Agent chip off in a browser and "
                         f"re-run. Readiness gate: {e}. Chip click: {click_error}"
                     ),
@@ -1445,7 +1347,7 @@ class MigratedComposer:
         raise UiSelectorDriftError(
             detail=(
                 f"migrated host: the settings trigger ({READY_ANCHOR}) did not "
-                f"become visible within {timeout_s:.0f}s on {page.url} "
+                f"become visible within {timeout_s:.0f}s on {safe_page_url(page.url)} "
                 f"(host=migrated): {error}"
             ),
         ) from error
@@ -2109,7 +2011,7 @@ class MigratedComposer:
                     f"'{model.value}' — a gap in gflow's table, not a reading of Flow's menu"
                 ),
                 remediation_hint=(
-                    "Use nano-banana-2 or nano-pro. GFLOW_CLI_FLOW_HOST=labs.google only "
+                    "Use nano2 or nano-pro. GFLOW_CLI_FLOW_HOST=labs.google only "
                     "helps if Flow still serves you labs."
                 ),
             )
@@ -3238,12 +3140,16 @@ class MigratedComposer:
             state: Any = await page.evaluate(
                 """
                 ({x, y}) => {
-                    const describe = (element) => element ? {
-                        tag: element.tagName,
-                        id: element.id || null,
-                        role: element.getAttribute('role'),
-                        className: String(element.className || '').slice(0, 160),
-                    } : null;
+                    // #778's closed vocabulary: tag + framework class tokens. Never the
+                    // id or the raw class list, which carry account identifiers (#890).
+                    const describe = (element) => {
+                        if (!element) return null;
+                        const cls = [...element.classList]
+                            .filter((c) => /^(cdk|mat|mdc|flow|glue)-/.test(c))
+                            .slice(0, 3);
+                        return element.tagName.toLowerCase() +
+                            (cls.length ? '.' + cls.join('.') : '');
+                    };
                     const submit = [...document.querySelectorAll('button')].find((button) =>
                         [...button.querySelectorAll('mat-icon')].some((icon) =>
                             (icon.textContent || '').trim() === 'arrow_forward'));
@@ -3287,7 +3193,7 @@ class MigratedComposer:
                 selector="button -> arrow_forward",
                 detail=(
                     "migrated host: an unexpected element receives pointer events at the "
-                    f"image submit target (blocker={blocker!r}) (host=migrated)"
+                    f"image submit target (blocker={blocker}) (host=migrated)"
                 ),
                 error="submit target is covered",
             )
@@ -3558,6 +3464,7 @@ class MigratedComposer:
                 route="flow-content.google",
                 max_redirects=0,
                 remediation=recoverable_clip_hint(record.media_id),
+                retryable=False,  # billed: a re-run bills again (#941)
             )
             if resp.status >= 300:
                 raise WireFormatError(
@@ -3765,7 +3672,7 @@ async def run_images(
                 "image generation on flow.google.com needs an existing project; pass --project <id>"
             )
         )
-    composer = MigratedComposer(out_dir=out_dir)
+    composer = MigratedComposer()
     if await composer.ensure_editor(page, pid) == "agent_only":
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:

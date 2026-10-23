@@ -354,6 +354,13 @@ class TestFlowLandingKind:
             # The one `auth/internal_chromium.py` already knew about, from #767.
             ("https://labs.google/fx/api/auth/callback/google?state=x&code=y", "signin"),
             ("https://flow.google.com/about/", "public"),
+            # #974: a --project id Flow will not open. Measured 2026-10-23 on ffroliva
+            # with an all-zero id; matched on path + query, never on page text.
+            ("https://flow.google.com/404?reason=project", "missing_project"),
+            ("https://flow.google.com/404?x=1&reason=project", "missing_project"),
+            ("https://flow.google.com/404", None),
+            ("https://flow.google.com/404?reason=other", None),
+            ("https://labs.google/fx/404?reason=project", None),
             # Real app pages: nothing recognised, so the caller's own diagnosis stands.
             ("https://flow.google.com/project/abc-123", None),
             ("https://labs.google/fx/tools/flow", None),

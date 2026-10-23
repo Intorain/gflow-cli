@@ -16,6 +16,7 @@ import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.image_upscale import TargetResolution
+from gflow_cli.api.transports._common import raise_if_known_landing
 from gflow_cli.api.transports.batchexecute import parse_frames, rpc_errors
 from gflow_cli.api.transports.migrated_composer import MIGRATED_PROJECT_URL
 from gflow_cli.errors import (
@@ -137,6 +138,8 @@ async def open_tile_download_menu(
     )
     tile = await wait_for_or_none(page, tile_selector, tile_timeout_ms)
     if not tile:
+        # A --project Flow will not open lands on a known page, not drift (#1053).
+        await raise_if_known_landing(page, requested=f"project {project_id}", at=route)
         raise UiSelectorDriftError(
             detail=f"{prefix}: {kind} tile for media_id {media_id} not found on {page.url}",
             route=route,
@@ -161,6 +164,10 @@ def _unavailable_error(target_resolution: TargetResolution) -> UpscaleUnavailabl
         detail="2K upscale is not available on this account.",
         route="upsampleImage",
         status=403,
+        remediation_hint=(
+            "Flow offers no 2K upscale on this account's plan; check the options in "
+            "Google Flow's download menu for this image."
+        ),
     )
 
 

@@ -29,10 +29,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
+import click
 import structlog
 
 from gflow_cli import auth as auth_mod
-from gflow_cli._cli_helpers import _FLOW_ID_RE
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -57,6 +58,7 @@ from gflow_cli.profile_store import (
 from gflow_cli.services.credits import inspect_all_profiles as inspect_all_credit_profiles
 from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
 from gflow_cli.services.media_recovery import download_media
+from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
@@ -777,10 +779,11 @@ def _build_video_media_inputs(
 @server.tool(
     name="gflow_generate_image",
     description=(
-        "Generate an image using Google Flow's Imagen model. "
+        "Generate an image using Google Flow's image models. "
         "Produces 1-4 images from a text prompt. "
-        "Models: nano2 (fast), nano2-lite (lightweight), nano-pro (balanced), "
-        "image4 (highest quality). "
+        "Models: nano2 (Nano Banana 2.1, fast; 'nano2.1' also accepted), "
+        "nano2-lite (Nano Banana 2 Lite), "
+        "nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in Flow's menu). "
         "Aspects: 1:1, 9:16, 16:9, 4:3, 3:4. "
         "The prompt supports @AssetName mentions to tag saved project characters/assets by name "
         "(resolves to referenceEntities/referenceImages). Reference a SAVED named asset via "
@@ -824,7 +827,8 @@ async def gflow_generate_image(
             referenceEntities / referenceImages, deduped against reference_images). Use
             ``@Name`` for a saved named asset; use ``reference_images`` for an arbitrary
             one-off image. See ``docs/REFERENCE_STRATEGIES.md``.
-        model: Model to use — 'nano2', 'nano2-lite', 'nano-pro', or 'image4'.
+        model: Model to use — 'nano2' (Nano Banana 2.1; 'nano2.1' also accepted), 'nano2-lite',
+            'nano-pro', or 'image4'.
         aspect: Aspect ratio — '1:1', '9:16', '16:9', '4:3', '3:4'.
         count: Number of images to generate (1-4).
         reference_images: Optional list of reference images for image-to-image generation.
@@ -848,7 +852,8 @@ async def gflow_generate_image(
             ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
-            CLI ``--project`` flag). When omitted, a fresh project is created —
+            CLI ``--project`` flag). When omitted, ``GFLOW_CLI_PROJECT`` is used if set
+            and ``project_name`` is not; otherwise a fresh project is created —
             on labs.google or flow.google.com, whichever serves the account.
         project_name: Optional human-readable project title to use when creating a
             fresh Flow project.
@@ -894,6 +899,10 @@ async def gflow_generate_image(
     if isinstance(resolved, dict):
         return resolved  # profile error — bail out early
     resolved_profile = resolved
+    try:
+        project = default_project(project, project_name, resolved_profile)
+    except click.UsageError as exc:
+        return _bad_param("Default Project Belongs To Another Profile", exc.message)
 
     log.info(
         "mcp.tool.generate_image",
@@ -1116,7 +1125,8 @@ async def gflow_generate_video(  # NOSONAR
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
-            omitted, a fresh project is created (titled ``project_name`` when
+            omitted, ``GFLOW_CLI_PROJECT`` is used if set and ``project_name`` is
+            not; otherwise a fresh project is created (titled ``project_name`` when
             given) on labs.google or flow.google.com, whichever serves the
             account. On an account served flow.google.com (``GFLOW_CLI_FLOW_HOST``,
             read from the server/daemon environment, not per call) the ported
@@ -1147,6 +1157,8 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+    if output is not None:
+        refuse_cloud_storage_for_local_file(get_settings().storage_uri, "output")
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False);
@@ -1214,6 +1226,10 @@ async def gflow_generate_video(  # NOSONAR
     resolved_profile = _resolve_and_validate_profile(profile)
     if isinstance(resolved_profile, dict):
         return resolved_profile  # profile error — bail out early
+    try:
+        project = default_project(project, project_name, resolved_profile)
+    except click.UsageError as exc:
+        return _bad_param("Default Project Belongs To Another Profile", exc.message)
 
     log.info(
         "mcp.tool.generate_video",
@@ -1306,6 +1322,25 @@ async def gflow_list_tools() -> dict[str, Any]:
             for s in iter_tools()
         ]
     }
+
+
+@server.tool(
+    name="gflow_list_models",
+    description=(
+        "List the image and video models the generate tools accept: name, Flow's menu "
+        "label (image), accepted aliases, reference cap, max duration (video), aspects "
+        "and tiers. Static catalog, the same as `gflow models --json`; no browser, no spend."
+    ),
+)
+@_guarded
+async def gflow_list_models() -> dict[str, Any]:
+    """Return the model catalog (``cli_models.build_catalog``), the MCP twin of
+    ``gflow models --json`` (#883). Built from the enums the generate tools use, so
+    every alias it lists is accepted back as ``model``.
+    """
+    from gflow_cli.cli_models import build_catalog
+
+    return build_catalog()
 
 
 @server.tool(
@@ -2288,6 +2323,7 @@ __all__ = [
     "gflow_generate_image",
     "gflow_generate_video",
     "gflow_list_tools",
+    "gflow_list_models",
     "gflow_list_projects",
     "gflow_download_media",
     "gflow_upscale_image",

@@ -63,6 +63,9 @@ Browse the local project catalog.
 ### gflow_list_tools
 List available gflow prompt tools (name, title, description, category).
 
+### gflow_list_models
+List the models `model` accepts, with aliases, reference caps and durations.
+
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow ...` via the terminal.
 2. **Generation is disabled here by operator choice.** Do not work around it.
@@ -75,8 +78,10 @@ You have access to the following tools for generating media via Google Flow:
 ## Available Tools
 
 ### gflow_generate_image
-Generate images using Google's Imagen model.
-- **Models:** nano2 (fastest), nano-pro (balanced), image4 (highest quality)
+Generate images using Google Flow's image models.
+- **Models:** nano2 (Nano Banana 2.1, fastest; `nano2.1` also accepted), nano2-lite
+  (Nano Banana 2 Lite), nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in
+  Flow's menu)
 - **Aspects:** 1:1, 9:16, 16:9, 4:3, 3:4
 - **Count:** 1-4 images per call
 
@@ -95,6 +100,9 @@ Browse the local project catalog.
 
 ### gflow_list_tools
 List available gflow prompt tools (name, title, description, category).
+
+### gflow_list_models
+List the models `model` accepts, with aliases, reference caps and durations.
 
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow image t2i ...` via the terminal.

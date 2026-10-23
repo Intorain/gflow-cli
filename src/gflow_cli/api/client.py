@@ -88,6 +88,7 @@ from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
 from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
+    profile_in_use_error,
     window_position_args,
 )
 from gflow_cli.config import BrowserEngine, Settings
@@ -1185,6 +1186,11 @@ class FlowApiClient:
                     if ref is not None and locked.incident_ref is None:
                         locked.incident_ref = ref
                 raise locked from exc
+            # Last: a generic Error that names the profile as in use (#984, the user's
+            # own Chrome). A read-only profile and #293's TargetClosedError share the
+            # header and are handled above, with their own hints and incident.
+            if (in_use := profile_in_use_error(exc, self.profile_dir)) is not None:
+                raise in_use from exc
             raise
 
     async def _open_page_pool(self, n: int) -> list[Page]:
@@ -2155,7 +2161,12 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_retry(attempt, route=route)
+        try:
+            resp = await self._run_with_retry(attempt, route=route)
+        except NetworkError as exc:
+            # The image exists and spent quota: a re-run spends it again (#941).
+            exc.retryable = False
+            raise
         _validate_fife_final_url(str(resp.url))
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
@@ -2552,11 +2563,13 @@ class FlowApiClient:
 
     def served_route(self, *, prefer_migrated: bool) -> str:
         """``migrated_route`` for the host this client's page was actually served."""
-        return migrated_route(
-            getattr(self._page, "url", None),
-            self.settings.flow_host,
-            prefer_migrated=prefer_migrated,
-        )
+        url = getattr(self._page, "url", None)
+        if flow_host_kind(url) is None and getattr(self.transport, "parked_after_migrated", False):
+            # Parked on about:blank after a migrated run (image, video or upload): the
+            # URL no longer names the host, and reading it as labs mints reCAPTCHA on
+            # about:blank (#914).
+            url = "https://flow.google.com/"
+        return migrated_route(url, self.settings.flow_host, prefer_migrated=prefer_migrated)
 
     def _write_target(self, out_path: Path) -> AnyPath:
         """``out_path``, or its key under the configured cloud ``storage_uri``."""

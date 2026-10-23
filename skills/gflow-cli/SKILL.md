@@ -74,7 +74,7 @@ gflow image t2i "<prompt>" [--model {nano2|nano2-lite|nano-pro|image4}] \
                             [-n 1..4] [--out DIR]
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 gflow image upscale <mediaId> --scale {2k|4k} [--project ID] [--out DIR]  # 4K is Ultra-only
-gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts; refuses any row ref (exit 2)
+gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts; refuses any row ref (exit 11, like any manifest error)
 gflow run --config <batch.json> [--project ID]            # JSON image batch; a row's "ref" may be "batch:N" (an earlier
                                                           # row's image, in place, no upload) or a local file (uploaded once);
                                                           # --project (or "project" in the config) reuses an existing project
@@ -87,6 +87,10 @@ gflow run --config <batch.json> [--project ID]            # JSON image batch; a 
 # --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 # An agent-only composer (#799) is different: t2i and t2v only;
 # i2i, i2v, r2v and character references exit 36 there.
+
+# A run without --project creates a new Flow project, unless GFLOW_CLI_PROJECT=<id> is set
+# (#1039): t2i/i2i/t2v/i2v/r2v, `gflow run` and the MCP generate tools then use that
+# project. Set it once when looping, instead of leaving one project per call.
 
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: omni-flash only; without --project a project is created first, on either host (#864); 10s is omni-flash-only
@@ -294,7 +298,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | Running two generations on the same `--profile` in parallel | Use different `--profile` names — Chromium refuses two persistent contexts on the same dir |
 | `GFLOW_CLI_HEADLESS=true` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS=false` — headless mode *causes* bot-detection, not prevents it |
 | Calling `gflow image upload` again for an already-uploaded UUID | Pass the UUID directly to `--ref UUID` (i2i) or `--initial-frame/--end-frame UUID` (i2v, with `--project`) — no re-upload needed |
-| `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
+| `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 4, no longer in Flow's menu), `--model nano-pro` (Nano Banana Pro), `--model nano2` (Nano Banana 2.1; `nano2.1` also works). `gflow models` lists each model's Flow name |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
 | `gflow video t2v`/`i2v`/`r2v` with an unported UUID/entity reference or model on an account served `flow.google.com` (exit 36) | Pass local files instead — migrated hosts support video t2v, local-file i2v/r2v, single-segment video extend, and image t2i/i2i (local refs, a same-`--project` catalogued UUID ref (#995), plus `@Character` mentions on images, #723) only — and an agent-only composer (#799) image t2i and video t2v only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |

@@ -7,6 +7,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.89.0] — 2026-10-23
+
+### Added
+
+- **MCP `gflow_list_models`** ([#883](https://github.com/ffroliva/gflow-cli/issues/883)).
+  MCP clients can now read the model catalog that `gflow models --json` prints (names,
+  Flow menu labels, accepted aliases, reference caps, durations, aspects, tiers) instead
+  of hard-coding one. It needs no profile or browser and spends nothing.
+
+- **`GFLOW_CLI_PROJECT` sets a default project**
+  ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039), reported by @error-Sench).
+  Every generation run without `--project` used to create a new Flow project, so a loop
+  of `image t2i` calls left one project per call. Set `GFLOW_CLI_PROJECT=<id>` (in the
+  environment or `.env`) and `image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`, `gflow run`
+  and the MCP generate tools use that project instead, printing a line on stderr that
+  says so. `--project` and a typed `--project-name` still win (`GFLOW_CLI_PROJECT_NAME`
+  names the pinned project instead). It is never used by `extend`, `upscale`, `scene`,
+  `character` or `instructions`, where `--project` means a specific existing project;
+  `image batch` and `image upload` have no `--project` and are unchanged. A pin the local catalog records only under another profile is
+  refused before a browser starts (exit 2), because a project belongs to one account.
+
+- **`gflow models` shows the name Flow's menu uses**
+  ([#1038](https://github.com/ffroliva/gflow-cli/issues/1038), reported by @error-Sench).
+  Each image model now has a `label` in the table and in `--json`: Nano Banana 2.1,
+  Nano Banana Pro, Nano Banana 2 Lite. `NARWHAL`'s label also names labs' Nano Banana 2,
+  and Imagen 4 is marked as no longer in Flow's menu. `--model nano2.1` and `nano-2.1`
+  (and the same values in a batch file, a `gflow run` config and over MCP) now select
+  the `nano2` tier, the one Flow calls 2.1. `character create --model` keeps its own two
+  choices. A model-selector hint on flow.google.com named `nano-banana-2`, which `--model`
+  rejects; it now says `nano2`.
+
+### Fixed
+
+- **A rejected upload (exit 27) now writes an incident bundle**
+  ([#770](https://github.com/ffroliva/gflow-cli/issues/770)). The error can only say that
+  some dialog opened after the file was chosen; the bundle's screenshot shows which one.
+
+- **An upscale or extend on the same client after a flow.google.com run no
+  longer fails with a reCAPTCHA error** ([#914](https://github.com/ffroliva/gflow-cli/issues/914)).
+  After an image, video or upload run gflow parks its page on `about:blank`, and the
+  next call read that page as the labs host and tried to mint reCAPTCHA there. The
+  route now remembers that the page was parked from flow.google.com. This was reachable when one
+  `FlowApiClient` was reused in a script; a single CLI run or MCP task was not affected.
+
+- **A failed download of a finished, billed clip is no longer marked `retryable`**
+  ([#941](https://github.com/ffroliva/gflow-cli/issues/941), part 1). `MediaDownloadError`
+  inherited `retryable: true` from `NetworkError`. A scheduler that re-runs anything
+  retryable would generate, and pay for, the clip a second time. On the generation
+  downloads (flow.google.com and labs), the clip writer and the image download (whose
+  re-run spends daily quota again), it is now `retryable: false`
+  in `--json`, MCP envelopes and the worker record. The fix is `gflow data download` /
+  `gflow_download_media`, which spends nothing and stays `retryable: true`. Exit code 6
+  is unchanged.
+
+- **flow.google.com failure diagnostics no longer leak account identifiers**
+  ([#890](https://github.com/ffroliva/gflow-cli/issues/890)). When the image submit
+  button was covered, the drift error named the covering element with its raw `id` and
+  class list, which on a signed-in page can hold the account email. It now names only
+  the tag and framework class tokens (`div.glue-cookie-notification-bar`), as the click
+  post-mortem already did. The composer also stopped writing its own screenshot and
+  DOM snapshot into `<out>/ui-failures/`. Those files sat outside the incident bundle's
+  review boundary and retention, and the snapshot carried the page title. The incident
+  bundle still captures both.
+  The same holds on the remaining paths
+  ([#1062](https://github.com/ffroliva/gflow-cli/issues/1062)): the labs count-panel DOM
+  dump (page title, element ids, class lists, labels and text) is removed, the debug
+  screenshots written next to your output now follow `GFLOW_CLI_INCIDENT_CAPTURE`, and
+  agent-mode recovery errors show the page URL without its query.
+
+- **A profile open in your own Chrome window is now exit 11 with a clear message, not
+  an unexpected error** ([#984](https://github.com/ffroliva/gflow-cli/issues/984)). When
+  a Chrome you opened yourself holds the profile, Chrome refuses gflow's launch with
+  "the profile is already in use by another instance". That text matched none of the
+  checks for a stale gflow browser, so `credits user` (and any generation command)
+  ended in `UnexpectedError`, exit 1. It is now `ProfileLockedError` (exit 11, MCP
+  `profile-locked`), telling you to close that window or use another `--profile`.
+  `auth login` (both `--browser internal`, which exited 1, and `--browser chrome`,
+  which fell back to a second launch and exited 8) and the Playwright cookie read do
+  the same ([#1059](https://github.com/ffroliva/gflow-cli/issues/1059)).
+
+- **`gflow image batch` reports manifest errors as exit 11, like `gflow run`**
+  ([#935](https://github.com/ffroliva/gflow-cli/issues/935)). The same malformed row
+  exited 11 under `gflow run --config` and 2 under `gflow image batch`. A manifest's
+  contents are configuration, so both now exit 11 with a `Manifest error:` line. That
+  includes a row `ref`, which `image batch` does not support. Scripts that branched on
+  exit 2 for a bad `image batch` manifest need to check 11.
+
+- **Image and video generation into a `--project` id Flow will not open now fails in
+  seconds with exit 11, not as selector drift** ([#974](https://github.com/ffroliva/gflow-cli/issues/974)). Flow
+  answers such an id with its `flow.google.com/404?reason=project` page; gflow waited
+  30 s for the composer and reported exit 23 ("Flow's UI changed"), telling a user with a
+  typo the wrong cause. It now recognises that page by its URL and stops with a
+  configuration error naming the id as not found or not accessible to the account, not
+  retryable, on the CLI and over MCP (`image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`,
+  `gflow run`). `image upscale`, `video upscale` and `video extend` into such a project
+  now end with the same exit 11 instead of exit 23 or a transport timeout (exit 9)
+  ([#1053](https://github.com/ffroliva/gflow-cli/issues/1053)). They still wait out
+  their own page budget (about 30 s) first.
+
+- **A downloaded clip's media id is checked before it becomes a filename**
+  ([#1004](https://github.com/ffroliva/gflow-cli/issues/1004)). Hardening: the local
+  branch of the shared clip saver, used by the flow.google.com and agent-only video
+  downloads, wrote `<media_id>.mp4` without the check the cloud branch applied, and so
+  did `gflow data download`'s flow.google.com recovery. An id holding a path separator
+  is now refused before anything is written.
+
+- **A cloud storage URI with `video -o`, `video chain`, `movie run --stitch` or MCP
+  `output` is refused before billing** ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). With
+  `GFLOW_CLI_STORAGE_URI` set to `s3://` or `gs://`, the clip comes back as a bucket
+  object, which `-o/--output` and the MCP video `output` could not move to a local path
+  and `video chain` and `movie run --stitch` could not hand to ffmpeg. Each failed with a raw exception after
+  Flow had billed the clip. gflow now stops before submitting, with exit 11 (an MCP
+  configuration error) naming the setting.
+
+- **`video upscale` no longer says "Image upscale unavailable"**
+  ([#966](https://github.com/ffroliva/gflow-cli/issues/966)). Exit 22's title, shared by
+  the image and video upscale paths, is now "Upscale unavailable for this account" in the
+  CLI message, `--json` and MCP error envelopes. The exit code and `type` are unchanged. A refused
+  2K image upscale no longer advises `--scale 2k`.
+
 ## [0.88.0] — 2026-10-22
 
 ### Added
@@ -6405,7 +6525,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.88.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.89.0...HEAD
+[0.89.0]: https://github.com/ffroliva/gflow-cli/compare/v0.88.0...v0.89.0
 [0.88.0]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...v0.88.0
 [0.87.1]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...v0.87.1
 [0.87.0]: https://github.com/ffroliva/gflow-cli/compare/v0.86.0...v0.87.0

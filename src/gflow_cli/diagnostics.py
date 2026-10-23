@@ -1855,6 +1855,7 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
         FlowAgentUiError,
         FlowAppError,
         FlowHostMigratedError,
+        MediaUploadRejectedError,
         NetworkError,
         TransportTimeoutError,
         UiModeUnavailableError,
@@ -1877,6 +1878,8 @@ def _capture_triggers() -> tuple[type[BaseException], ...]:
         WireFormatError,
         WafRejectionError,
         NetworkError,
+        # #770: exit 27 can say only that "some dialog" opened; the screenshot says which.
+        MediaUploadRejectedError,
     )
 
 

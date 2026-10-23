@@ -723,7 +723,11 @@ _EDITOR_READY_ANCHOR = "div[role='textbox'][data-slate-editor='true'], div[conte
 async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: str) -> Path | None:
     """Best-effort viewport screenshot for debugging. Duplicated from
     `ui_automation.py` to keep this module free of a circular import."""
-    if out_dir is None:
+    from gflow_cli.config import get_settings  # noqa: PLC0415 - import cycle
+
+    # A page capture outside the incident bundle: opting out of incident capture
+    # opts out of this too (#1062).
+    if out_dir is None or not get_settings().incident_capture:
         return None
     out_dir.mkdir(parents=True, exist_ok=True)
     shot_path = out_dir / filename
@@ -1282,6 +1286,7 @@ class VideoGenerationMixin:
             route="media.getMediaUrlRedirect",
             max_redirects=5,
             remediation=recoverable_clip_hint(media_id),
+            retryable=False,  # billed: a re-run bills again (#941)
         )
         if resp.status >= 400:
             raise WireFormatError(
@@ -1306,13 +1311,15 @@ class VideoGenerationMixin:
     async def _save_clip(self, media_id: str, body: bytes, out_dir: Path | None) -> AnyPath:
         """Store a downloaded clip on either host (#1003): under the configured cloud
         ``storage_uri`` when set, otherwise in ``_clip_dir(out_dir)``."""
+        from gflow_cli import paths as _paths
+
+        # Both branches use the id as a filename; checked here, not upstream (#1004).
+        _paths.validate_job_id(media_id)
         storage_uri: str | None = getattr(self, "_storage_uri", None)
         if storage_uri:
             from datetime import date
 
-            from gflow_cli import paths as _paths
-
-            key = f"videos/{date.today().isoformat()}/{_paths.validate_job_id(media_id)}.mp4"
+            key = f"videos/{date.today().isoformat()}/{media_id}.mp4"
             # output_dir fallback only used for key computation when cloud is active
             output_dir = getattr(self, "_output_dir", None) or Path("tmp")
             target: AnyPath = storage_path(storage_uri, output_dir, key)
@@ -1329,6 +1336,7 @@ class VideoGenerationMixin:
                 # detail that is persisted to the catalog.
                 detail=f"storing clip {media_id} failed ({type(exc).__name__})",
                 remediation_hint=recoverable_clip_hint(media_id),
+                retryable=False,  # billed: a re-run bills again (#941)
             ) from exc
         log.info(
             "ui_automation_video.video_saved",

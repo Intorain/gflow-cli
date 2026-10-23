@@ -20,6 +20,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    default_project,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
@@ -44,7 +45,7 @@ from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import ConfigurationError, DataStoreError, FlowApiError, GFlowError
 from gflow_cli.image_batch import resolve_jitter_range
-from gflow_cli.storage import cloud_info_from_path
+from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -290,9 +291,11 @@ async def _generate_and_report(
     """
     from gflow_cli.api.video import VideoStarted
 
+    settings = get_settings()
+    if output_file is not None:
+        refuse_cloud_storage_for_local_file(settings.storage_uri, "-o/--output")
     if not as_json:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
-    settings = get_settings()
     recorder = OperationRecorder.open(settings)
     started_media_ids: list[str] = []
     try:
@@ -1003,6 +1006,8 @@ async def _run_chain(
         raise ChainManifestError(msg)
 
     settings = get_settings()
+    # ffmpeg reads each link's clip from disk to seed the next one (#1008).
+    refuse_cloud_storage_for_local_file(settings.storage_uri, "video chain")
 
     # Resume: bind the prior chain_id and skip completed links so they are not
     # regenerated. A fresh run mints a new id.
@@ -1218,6 +1223,7 @@ def t2v(
     _reject_agentic_ui_mode(ui_mode)
     _reject_duration_without_control(model, duration)
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_t2v(
@@ -1418,6 +1424,7 @@ def i2v(  # NOSONAR
     end_path, end_ref_id = _classify_frame(end_frame, end_hint)
 
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     display_names, local_files = _media_picker_metadata([start_ref_id, end_ref_id], profile_name)
     start_local = local_files.get(start_ref_id or "")
     end_local = local_files.get(end_ref_id or "")
@@ -1590,6 +1597,7 @@ def r2v(
             )
 
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_r2v(

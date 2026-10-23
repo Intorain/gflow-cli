@@ -298,7 +298,7 @@ prompts through one Flow session/project.
 
 > **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2.1
 > (`nano2`, #958), Nano Banana 2 Lite (`nano2-lite`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
-> `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project`, gflow creates a fresh project
+> `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project` (and without `GFLOW_CLI_PROJECT`), gflow creates a fresh project
 > there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
 > migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
 > character/entity references and `image batch` remain unavailable on that host and
@@ -325,7 +325,7 @@ Options:
                             to disable. Widen (e.g. 10-30) if runs hit WAF
                             403s. [default: 0.5-1.5; GFLOW_CLI_JITTER_RANGE
                             overrides the default]
-  --model [nano2|nano-pro|nano2-lite|image4]
+  --model [nano2|nano2.1|nano-2.1|nano-pro|nano2-lite|image4|imagen4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
@@ -361,10 +361,10 @@ Options:
 
 | Alias | Backing model | Notes |
 |---|---|---|
-| `nano2` | Nano Banana 2 (`NARWHAL`) | Default. Fast, balanced quality. On `flow.google.com` Flow now offers Nano Banana 2.1 (wire `BELUGA`) in its place, and `nano2` selects it (#958). |
+| `nano2` (also `nano2.1`, `nano-2.1`) | Nano Banana 2 (`NARWHAL`) | Default. Fast, balanced quality. On `flow.google.com` Flow now offers Nano Banana 2.1 (wire `BELUGA`) in its place, and `nano2` selects it (#958). The `2.1` spellings select the same tier (#1038); a labs request for that tier carries `NARWHAL` (last seen there as Nano Banana 2). |
 | `nano-pro` | Nano Banana Pro (`GEM_PIX_2`) | Higher quality, slower. |
 | `nano2-lite` | Nano Banana 2 Lite (`HARBOR_SEAL`) | Lightweight Nano Banana 2 variant. Its i2i reference cap is a provisional 3 and its daily quota is unmeasured (#787). |
-| `image4` | Imagen 4 (`IMAGEN_3_5`) | Photoreal-leaning Imagen variant. |
+| `image4` | Imagen 4 (`IMAGEN_3_5`) | Photoreal-leaning Imagen variant. No longer in Flow's model menu (absent since 2026-08-26), and the flow.google.com composer refuses it before submit. |
 
 **Multi-prompt shortcut.**
 
@@ -463,7 +463,7 @@ Arguments:
 
 Options:
   --ref PATH_OR_UUID        Reference image. Repeat for multiple. [required]
-  --model [nano2|nano-pro|nano2-lite|image4]
+  --model [nano2|nano2.1|nano-2.1|nano-pro|nano2-lite|image4|imagen4]
                             Image model alias.                [default: nano2]
   --aspect [9:16|16:9|1:1|4:3|3:4]
                             Aspect ratio.                     [default: 9:16]
@@ -618,7 +618,7 @@ an isometric pixel-art bakery	1	1:1	nano2
 
 ### JSON manifest
 
-`gflow image batch` refuses any `ref` or `reference_entity` in a row (exit 2) —
+`gflow image batch` refuses any `ref` or `reference_entity` in a row (exit 11) —
 `"ref": "batch:N"` and local files included. Use `gflow run --config`
 ([earlier row](#referencing-an-earlier-row), [local file](#referencing-a-local-file)).
 
@@ -882,6 +882,26 @@ multi-clip storyboard:
 ```bash
 gflow video t2v "establishing shot" --project PROJ123
 gflow video t2v "close-up reaction" --project PROJ123
+```
+
+To make that the default, set **`GFLOW_CLI_PROJECT=<id>`** in the environment or
+`.env` ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039)). `image t2i`/`i2i`,
+`video t2v`/`i2v`/`r2v`, `gflow run` and the MCP generate tools then generate into that
+project whenever no project is named, and print `Using the default project <id>
+(GFLOW_CLI_PROJECT).` on stderr. `--project` (or `"project"` in a `gflow run` config)
+and `--project-name`, which asks for a new named project, both win over it. It never
+applies where `--project` names the project that owns existing media (`video extend`,
+`image`/`video upscale`) or is required (`scene`, `character`, `instructions`), and
+`image batch` / `image upload`, which have no `--project`, still create their own. A
+`GFLOW_CLI_PROJECT_NAME` set in the environment names the pinned project rather than
+asking for a new one. Project
+ids belong to one Google account, so a pin the local catalog records only under another
+profile is refused (exit 2) before a browser starts.
+
+```bash
+export GFLOW_CLI_PROJECT=$(gflow project create --name my-batch --json | jq -r .project_id)
+gflow image t2i "a red bicycle"      # lands in my-batch
+gflow video t2v "a tram at dusk"     # so does this
 ```
 
 ## Batch video generation (shell loop)
@@ -1803,13 +1823,16 @@ Print the image and video model catalog — the source of truth for what
 gflow models [OPTIONS]
 ```
 
-Per model the catalog reports: `name`, the CLI aliases the matching generation
-command's `--model` choice actually accepts, `ref_cap` (max reference images),
+Per model the catalog reports: `name`, `label` (image models: the name Flow's
+model menu shows, read on English accounts, such as `Nano Banana Pro`; display
+only), the CLI aliases the matching generation command's `--model` choice
+actually accepts, `ref_cap` (max reference images),
 plus `default` (image models) and `max_duration` (video models). Because it is
 built from the same `Model` / `VideoModel` enums + alias maps the generation
 commands use, any alias it prints is guaranteed to be accepted back by
 `--model` — a UI populating its model picker from `gflow models --json` can
-round-trip every value.
+round-trip every value. MCP clients read the same object from
+`gflow_list_models` ([#883](https://github.com/ffroliva/gflow-cli/issues/883)).
 
 ```bash
 # Human-readable table
@@ -1907,7 +1930,7 @@ catalog has not seen yet is recorded without one, as with `t2i --project`).
 | `prompts` | **yes** | — | 1–50 entries. |
 | `prompts[].text` | **yes** | — | 1–2000 chars. |
 | `prompts[].aspect_ratio` | no | `9:16` | `9:16` / `16:9` / `1:1` / `4:3` / `3:4`. |
-| `prompts[].model` | no | `nano2` | `nano2` / `nano-pro` / `imagen4`. |
+| `prompts[].model` | no | `nano2` | Any image `--model` value: `nano2`, `nano2.1`, `nano-2.1`, `nano-pro`, `nano2-lite`, `image4`, `imagen4`. |
 | `prompts[].count` | no | `1` | 1–4. |
 | `prompts[].output_filename` | no | `prompt_<index>` | Filename stem; saved as `<stem>_<image-index>.png`. |
 | `prompts[].ref` | no | — | `"batch:N"` (generate from row N's image) or a local image file. See [Referencing an earlier row](#referencing-an-earlier-row) and [Referencing a local file](#referencing-a-local-file). |
@@ -2127,12 +2150,12 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403), or Flow served one of its OAuth/sign-in routes instead of the page gflow asked for ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | `gflow auth login --profile <name>` — **but read the error's own `remediation_hint` first.** `AisandboxAuthError` shares this code. (Before v0.87.1, when `gflow credits` failed on an account migrated to `flow.google.com`, re-logging in could not help and could roll the profile's browser-strategy marker back ([#795](https://github.com/ffroliva/gflow-cli/issues/795), [#791](https://github.com/ffroliva/gflow-cli/issues/791)).) Since v0.87.1 a credits exit 3 means a sign-in landing, fixable with `gflow credits --refresh` |
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
 | `5`  | `ContentPolicyError`  | Flow rejected the prompt (200 + empty `media[]`) | Soften prompt wording                                      |
-| `6`  | `NetworkError`        | Network failure persisted across 3 attempts — including a signed-media download whose connection dropped on every attempt ([#895](https://github.com/ffroliva/gflow-cli/issues/895)) | Check connectivity — **but read the error's own `remediation_hint` first.** When a *generation* download fails this way the clip was already produced and billed: the hint names it, and `gflow data download <media_id>` recovers it for free. Re-generating pays twice |
+| `6`  | `NetworkError`        | Network failure persisted across 3 attempts. A failed download of media Flow already made (`MediaDownloadError`) is `retryable: false` ([#941](https://github.com/ffroliva/gflow-cli/issues/941)): use `gflow data download` instead of re-running — including a signed-media download whose connection dropped on every attempt ([#895](https://github.com/ffroliva/gflow-cli/issues/895)) | Check connectivity — **but read the error's own `remediation_hint` first.** When a *generation* download fails this way the clip was already produced and billed: the hint names it, and `gflow data download <media_id>` recovers it for free. Re-generating pays twice |
 | `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed. **Also `RpcResponseUnavailableError`** (flow.google.com): Chrome lost the reply body of a project create, rename or upload ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)), or a project create or rename got no reply within 120 s ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)), and gflow could not confirm the outcome by reading the project back | File a bug (do NOT include captured tokens or signed URLs). **For `RpcResponseUnavailableError` the write may have saved:** open the project and check its title or the uploaded file before re-running, or you may get a duplicate (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout. **If the detail says `clicking submit`, `not terminal` or `unreadable`, or `--json` shows `retryable: false`, the submit already went out ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): check the project in Flow before re-running, because a re-run bills again.** For a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
-| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile), `ProfileAccessError` (Windows Chrome cannot write the profile directory; raised at the generation client's launch), and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; for profile access denial grant write access to the complete profile directory or use a writable profile; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
+| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid, including a malformed row in a `gflow run` config, an `image batch` manifest, a `movie` manifest or a `video chain` manifest (#935: `image batch` reported these as exit 2 before); a `--project` id Flow answers with its `/404?reason=project` page, meaning not found or not accessible to this account ([#974](https://github.com/ffroliva/gflow-cli/issues/974), [#1053](https://github.com/ffroliva/gflow-cli/issues/1053)); a cloud `GFLOW_CLI_STORAGE_URI` combined with `-o`, `video chain` or `movie run --stitch`, refused before billing ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)) — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile; also a Chrome window you opened yourself holding the profile, [#984](https://github.com/ffroliva/gflow-cli/issues/984) — close it or use another `--profile`), `ProfileAccessError` (Windows Chrome cannot write the profile directory; raised at the generation client's launch), and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; for profile access denial grant write access to the complete profile directory or use a writable profile; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Sign-in rejected the browser for `navigator.webdriver` | Re-run `gflow auth login`; with Chrome installed the `chrome` strategy retries automatically |

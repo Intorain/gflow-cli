@@ -25,6 +25,7 @@ from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.transports.migrated_video_upscale import mp4_track_dimensions
 from gflow_cli.config import get_settings
 from gflow_cli.data.queries import list_images, list_videos
+from gflow_cli.errors import UpscaleUnavailableError
 
 pytestmark = [pytest.mark.e2e]
 
@@ -34,6 +35,41 @@ _2K_LONG_SIDE_FLOOR = 2000
 
 def _events(capture: structlog.testing.LogCapture) -> list[str]:
     return [str(e["event"]) for e in capture.entries]
+
+
+#: Clips tried before a capability refusal becomes a skip (#967).
+_CLIP_TRIES = 3
+
+
+async def _export_first_offered(
+    client: FlowApiClient,
+    rows: list[Any],
+    *,
+    scale: str,
+    out_for: Any,
+) -> tuple[Any, Any]:
+    """Export ``scale`` from the newest clip Flow offers it for: ``(row, result)``.
+
+    Exit 22 (``UpscaleUnavailableError``) is Flow declining that scale for that clip,
+    an answer about the account, not about gflow, so the next clip is tried. Every
+    other error propagates: selector drift (exit 23) must stay a failure (#967).
+    """
+    refused: list[str] = []
+    for row in rows[:_CLIP_TRIES]:
+        try:
+            result = await client.upsample_video(
+                media_id=row.media_id,
+                project_id=row.project_id,
+                scale=scale,
+                out_path=out_for(row),
+            )
+        except UpscaleUnavailableError as exc:
+            refused.append(f"{row.media_id}: {exc.detail}")
+            continue
+        return row, result
+    # Exit 22 is raised only once the download menu item has been read, so the driver
+    # did reach the menu; only Flow's offer for this scale was missing.
+    pytest.skip(f"Flow offers no {scale} for the newest {len(refused)} clip(s): {refused}")
 
 
 @pytest.fixture
@@ -156,16 +192,12 @@ async def test_migrated_video_upscale_1080p_e2e(
     if not usable:
         pytest.skip(f"no catalogued videos for profile {profile!r} to upscale")
 
-    row = usable[0]
-    assert row.project_id is not None
-    out_file = tmp_path / f"{row.media_id}_1080p.mp4"
-
     async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
-        result = await client.upsample_video(
-            media_id=row.media_id,
-            project_id=row.project_id,
+        _row, result = await _export_first_offered(
+            client,
+            usable,
             scale="1080p",
-            out_path=out_file,
+            out_for=lambda r: tmp_path / f"{r.media_id}_1080p.mp4",
         )
 
     saved_path = Path(str(result))
@@ -205,15 +237,12 @@ async def test_migrated_video_export_270p_gif_e2e(
     ]
     if not usable:
         pytest.skip(f"no catalogued videos for profile {profile!r} to export")
-    row = usable[0]
-    assert row.project_id is not None
-
     async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
-        result = await client.upsample_video(
-            media_id=row.media_id,
-            project_id=row.project_id,
+        _row, result = await _export_first_offered(
+            client,
+            usable,
             scale="270p",
-            out_path=tmp_path / f"{row.media_id}_270p.gif",
+            out_for=lambda r: tmp_path / f"{r.media_id}_270p.gif",
         )
 
     data = Path(str(result)).read_bytes()

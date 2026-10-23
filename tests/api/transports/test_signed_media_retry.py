@@ -147,11 +147,24 @@ class TestExhaustedTransferIsTyped:
             await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert caught.value.media_id == MEDIA_ID
 
-    async def test_it_exits_6_and_is_marked_retryable(self) -> None:
+    async def test_it_exits_6_and_is_not_retryable_after_billing(self) -> None:
+        """#941: the clip exists and was billed, so a scheduler that re-runs anything
+        `retryable: true` would bill it again; the free recovery is `gflow data download`."""
         page = FakePage(PlaywrightError())
         with pytest.raises(NetworkError) as caught:
             await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert EXIT_CODE_MAP[NetworkError] == 6
+        assert is_retryable(caught.value) is False
+
+    async def test_the_free_recovery_download_stays_retryable(self) -> None:
+        """`gflow_download_media` spends nothing, so calling it again is the right move."""
+        from gflow_cli.api.transports._common import get_signed_media
+
+        page = FakePage(PlaywrightError())
+        with pytest.raises(NetworkError) as caught:
+            await get_signed_media(
+                page, "https://x", media_id=MEDIA_ID, route="r", max_redirects=0, remediation="h"
+            )
         assert is_retryable(caught.value) is True
 
     async def test_it_leaks_no_signed_url_credentials(self) -> None:

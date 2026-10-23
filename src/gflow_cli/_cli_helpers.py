@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import click
 import structlog
+from click.core import ParameterSource
 from rich.console import Console
 from rich.markup import escape
 
@@ -81,6 +82,7 @@ __all__ = [
     "_resolve_profile",
     "_validate_project_id",
     "apply_tool_option",
+    "default_project",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
@@ -104,6 +106,44 @@ def _validate_project_id(
         msg = "project id must be 1-128 chars of letters, digits, or hyphens."
         raise click.BadParameter(msg, param=param)
     return value
+
+
+def default_project(project_id: str | None, project_name: str | None, profile: str) -> str | None:
+    """The project a generation runs in: ``--project``, else the ``GFLOW_CLI_PROJECT``
+    pin unless ``--project-name`` asked for a new project (#1039). ``None`` = create one.
+
+    ``GFLOW_CLI_PROJECT_NAME`` names the pinned project, so a ``--project-name`` that came
+    from that variable (not the command line) does not ask for a new one. Project ids
+    are account-scoped and the pin is not, so a pin the catalog records only under other
+    profiles is refused before any browser starts.
+    """
+    settings = get_settings()
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.get_parameter_source("project_name") == ParameterSource.ENVIRONMENT:
+        project_name = None
+    pinned = settings.project
+    if project_id is not None or project_name is not None or pinned is None:
+        return project_id
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+    from gflow_cli.errors import DataStoreError
+
+    owner = None
+    try:
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            if repo.get_project(profile, pinned) is None:
+                owner = repo.get_project(None, pinned)
+    except DataStoreError:
+        pass  # an unreadable catalog never blocks generation
+    if owner is not None:
+        msg = (
+            f"GFLOW_CLI_PROJECT={pinned} is a project of profile {owner.profile_name!r}, "
+            f"not {profile!r}. Pass --project or --project-name, or change the setting."
+        )
+        raise click.UsageError(msg)
+    click.echo(f"Using the default project {pinned} (GFLOW_CLI_PROJECT).", err=True)
+    return pinned
 
 
 def slugify_project_name(prompt: str | None, prefix: str = "gflow") -> str:
