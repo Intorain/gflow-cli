@@ -65,7 +65,11 @@ from typing import Any
 
 import structlog
 
-from gflow_cli.errors import ConfigurationError, ProfileEngineDowngradeError
+from gflow_cli.errors import (
+    ConfigurationError,
+    ProfileEngineDowngradeError,
+    ProfileLockedError,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -215,6 +219,31 @@ def window_position_args(position: str) -> list[str]:
     ``UiAutomationTransport``) so they cannot drift. Login launches stay visible.
     """
     return [f"--window-position={position}"] if position else []
+
+
+#: Playwright's launch error when Chrome hands the profile to a running instance
+#: (#984, measured 2026-10-23, Windows, Chrome 141), e.g. the user's own Chrome window.
+_PROFILE_IN_USE_MARKER = "profile is already in use by another instance"
+
+
+def profile_in_use_error(exc: BaseException, profile_dir: Path) -> ProfileLockedError | None:
+    """The typed error for a launch refused because another Chrome holds the profile.
+
+    ``None`` for any other launch failure. ``ProfileLease`` cannot see a Chrome gflow did
+    not start, so this message is the only signal; it states the cause outright.
+    """
+    if _PROFILE_IN_USE_MARKER not in str(exc):
+        return None
+    return ProfileLockedError(
+        detail=(
+            f"Chrome reports the profile dir {profile_dir} is already in use by another "
+            "Chrome window, so gflow cannot open it"
+        ),
+        remediation_hint=(
+            "Close the Chrome window that is using this profile (one you opened yourself, "
+            "or one left by a crashed gflow run) and re-run, or use a different --profile."
+        ),
+    )
 
 
 def browser_proxy_kwargs(proxy: str | None) -> dict[str, Any]:

@@ -88,6 +88,7 @@ from gflow_cli.auth.internal_chromium import GOOGLE_REJECTED_BROWSER_ROUTE
 from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
+    profile_in_use_error,
     window_position_args,
 )
 from gflow_cli.config import BrowserEngine, Settings
@@ -1153,6 +1154,10 @@ class FlowApiClient:
                         "the directory is not writable by this process"
                     ),
                 ) from exc
+            # After the access check: Chrome words a read-only profile with the same
+            # "already in use by another instance" header (#984).
+            if (in_use := profile_in_use_error(exc, self.profile_dir)) is not None:
+                raise in_use from exc
             if _is_target_closed(exc):
                 # A TargetClosedError at LAUNCH usually means the profile dir
                 # is held by another Chrome — most commonly a stale browser
