@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rejected upload (exit 27) now writes an incident bundle**
+  ([#770](https://github.com/ffroliva/gflow-cli/issues/770)). The error can only say that
+  some dialog opened after the file was chosen; the bundle's screenshot shows which one.
+
 - **An upscale or extend on the same client after a flow.google.com run no
   longer fails with a reCAPTCHA error** ([#914](https://github.com/ffroliva/gflow-cli/issues/914)).
   After an image, video or upload run gflow parks its page on `about:blank`, and the
