@@ -374,6 +374,7 @@ class TestGenerateVideoWired:
                     resolved_db_path=lambda: temp_db.path,
                     profile_subdir=lambda _: tmp_path / "profile_default",
                     timeout_seconds=30,
+                    storage_uri=None,  # local storage: -o is allowed (#1008)
                 ),
             ),
             patch(
