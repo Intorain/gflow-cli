@@ -1309,8 +1309,11 @@ class OperationRecorder:
         repo = self.repository
         pf = prompt_fields(personality, mode=self.prompt_mode)
 
-        # Collect safe metadata (workflow/media ids + optional redacted fields)
+        # Collect safe metadata (workflow/media ids + optional redacted fields). The
+        # write replaces the column, so the STARTED row's identity is carried over (#737).
+        started = repo.get_operation_metadata(row_id)
         meta: dict[str, object] = {
+            **{k: started[k] for k in ("entity_id", "name") if k in started},
             "workflow_ids": workflow_ids,
             "primary_media_ids": primary_media_ids,
         }
