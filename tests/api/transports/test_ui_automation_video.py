@@ -966,6 +966,16 @@ class TestDownloadVideo:
         assert "PermissionError" in str(caught.value.detail)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ["../escape", "a/b", r"..\x", ""])
+    async def test_save_clip_refuses_an_unsafe_media_id(self, tmp_path: Path, bad: str) -> None:
+        """#1004: the local branch used the media id as a filename unchecked; the
+        migrated and agent-only downloads both reach it through ``save``."""
+        transport = UiAutomationTransport()
+
+        with pytest.raises(ValueError, match="Unsafe"):
+            await transport._save_clip(bad, b"mp4", tmp_path)
+
+    @pytest.mark.asyncio
     async def test_download_video_refuses_bytes_from_an_unexpected_host(
         self, tmp_path: Path
     ) -> None:

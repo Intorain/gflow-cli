@@ -1306,13 +1306,15 @@ class VideoGenerationMixin:
     async def _save_clip(self, media_id: str, body: bytes, out_dir: Path | None) -> AnyPath:
         """Store a downloaded clip on either host (#1003): under the configured cloud
         ``storage_uri`` when set, otherwise in ``_clip_dir(out_dir)``."""
+        from gflow_cli import paths as _paths
+
+        # Both branches use the id as a filename; checked here, not upstream (#1004).
+        _paths.validate_job_id(media_id)
         storage_uri: str | None = getattr(self, "_storage_uri", None)
         if storage_uri:
             from datetime import date
 
-            from gflow_cli import paths as _paths
-
-            key = f"videos/{date.today().isoformat()}/{_paths.validate_job_id(media_id)}.mp4"
+            key = f"videos/{date.today().isoformat()}/{media_id}.mp4"
             # output_dir fallback only used for key computation when cloud is active
             output_dir = getattr(self, "_output_dir", None) or Path("tmp")
             target: AnyPath = storage_path(storage_uri, output_dir, key)
