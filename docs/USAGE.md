@@ -891,7 +891,10 @@ project whenever no project is named, and print `Using the default project <id>
 (GFLOW_CLI_PROJECT).` on stderr. `--project` (or `"project"` in a `gflow run` config)
 and `--project-name`, which asks for a new named project, both win over it. It never
 applies where `--project` names the project that owns existing media (`video extend`,
-`image`/`video upscale`) or is required (`scene`, `character`, `instructions`). Project
+`image`/`video upscale`) or is required (`scene`, `character`, `instructions`), and
+`image batch` / `image upload`, which have no `--project`, still create their own. A
+`GFLOW_CLI_PROJECT_NAME` set in the environment names the pinned project rather than
+asking for a new one. Project
 ids belong to one Google account, so a pin the local catalog records only under another
 profile is refused (exit 2) before a browser starts.
 

@@ -178,3 +178,95 @@ async def test_mcp_refuses_a_pin_from_another_profile(pin: str) -> None:
         result = await tools_mod.gflow_generate_image(prompt="a cat")
     assert result["status"] == "error"
     assert "other-acct" in str(result["error"])
+
+
+def test_i2i_generates_in_the_pinned_project(pin: str, tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+    from tests.cli.test_cli_image import _make_i2i_client
+
+    client = _make_i2i_client()
+    uuid = "11111111-1111-1111-1111-111111111111"
+    with (
+        patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["image", "i2i", "stylize", "--ref", uuid, "--out", str(tmp_path / "o")],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    client.create_project.assert_not_called()
+    assert client.generate_image.await_args.kwargs["project_id"] == pin
+
+
+def test_multiprompt_t2i_runs_the_batch_in_the_pinned_project(pin: str, tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+
+    async def _fake_run_batch(**_kwargs: object) -> list[object]:
+        return []
+
+    with (
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "p"),
+        patch("gflow_cli.cli_image.run_image_batch", side_effect=_fake_run_batch) as run,
+        patch("gflow_cli.cli_image.render_image_batch_summary", return_value=0),
+    ):
+        result = CliRunner().invoke(
+            main, ["image", "t2i", "a", "b", "--out", str(tmp_path / "o")], catch_exceptions=False
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["project_id"] == pin
+
+
+def test_project_name_from_its_env_var_keeps_the_pin(
+    pin: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GFLOW_CLI_PROJECT_NAME names the pinned project; only a typed --project-name asks
+    for a new one."""
+    from click.testing import CliRunner
+
+    from gflow_cli.cli_video import video
+
+    captured: dict[str, Any] = {}
+
+    async def _capture(request: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setenv("GFLOW_CLI_PROJECT_NAME", "My Project")
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+    ):
+        CliRunner().invoke(video, ["t2v", "a sunset"])
+        assert captured["project_id"] == pin
+        CliRunner().invoke(video, ["t2v", "a sunset", "--project-name", "fresh"])
+        assert captured["project_id"] is None
+
+
+def test_unreadable_catalog_uses_the_pin(pin: str) -> None:
+    from gflow_cli.errors import DataStoreError
+
+    with patch("gflow_cli.data.store.DataStore.open", side_effect=DataStoreError("locked")):
+        assert default_project(None, None, "acct") == pin
+
+
+def test_video_extend_never_reads_the_pin(pin: str) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+
+    def _never(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("extend must not consult GFLOW_CLI_PROJECT")
+
+    media = "22222222-2222-2222-2222-222222222222"
+    with patch("gflow_cli.cli_video.default_project", _never):
+        result = CliRunner().invoke(main, ["video", "extend", media, "go", "--dry-run"])
+    assert pin not in result.output

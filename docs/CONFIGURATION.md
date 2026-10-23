@@ -63,6 +63,27 @@ A profile maps to a directory `$GFLOW_CLI_HOME/profile_<name>/`. Profiles are is
 4. Auto: if exactly one `profile_*` dir exists, it's the de-facto default
 5. Fail with the list of available profiles (lowest)
 
+### `GFLOW_CLI_PROJECT`
+
+**What:** Default Flow project id for generation runs that name no project
+([#1039](https://github.com/ffroliva/gflow-cli/issues/1039)).
+**Values:** a Flow project id (1-128 letters, digits or hyphens); anything else fails at startup (exit 11).
+**Default:** unset, so every generation run without `--project` creates a new project.
+**CLI override:** `--project <id>`, or `--project-name <title>` for a new project.
+
+Set, `image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`, `gflow run` and the MCP
+`gflow_generate_image`/`gflow_generate_video` tools generate into it, and say so on stderr.
+
+- `--project` (or a `gflow run` config's `"project"`) wins, and so does a `--project-name`
+  typed on the command line (MCP `project_name`), which asks for a new named project.
+  `GFLOW_CLI_PROJECT_NAME` does not: it names the pinned project.
+- It is ignored where `--project` names the project that owns existing media
+  (`video extend`, `upscale`) or is required (`scene`, `character`, `instructions`).
+  `image batch` and `image upload` have no `--project` and still create their own project.
+- A project belongs to one Google account. When the local catalog records the id only
+  under other profiles, the run is refused before a browser starts (exit 2; MCP: a 400
+  envelope). An id the catalog has never seen is used as given.
+
 ### `GFLOW_CLI_OUTPUT_DIR`
 
 **What:** Root directory where downloaded assets land. Subfolders are created per kind/date.
@@ -395,24 +416,6 @@ Linux, or for runs whose polling lasts longer than about five minutes.
 Measurement script: `scripts/dev/spike_offscreen_window.py`.
 
 **Malformed values** (`100`, `1,2,3`, `a,b`) fail at startup with a validation error.
-
-### `GFLOW_CLI_PROJECT`
-
-Default Flow project id ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039)).
-Unset (the default), every generation run without `--project` creates a new project.
-Set, `image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`, `gflow run` and the MCP
-`gflow_generate_image`/`gflow_generate_video` tools generate into it instead, and say so
-on stderr.
-
-- `--project` (or a `gflow run` config's `"project"`) wins, and so does `--project-name`
-  (MCP `project_name`), which asks for a new named project.
-- It is ignored where `--project` names the project that owns existing media
-  (`video extend`, `upscale`) or is required (`scene`, `character`, `instructions`).
-- A project belongs to one Google account. When the local catalog records the id only
-  under other profiles, the run is refused before a browser starts (exit 2; MCP: a 400
-  envelope). An id the catalog has never seen is used as given.
-- The value must be a Flow project id (1-128 letters, digits or hyphens); anything else
-  fails at startup.
 
 ### `GFLOW_CLI_BROWSER_PROXY`
 

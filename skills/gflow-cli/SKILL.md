@@ -88,6 +88,10 @@ gflow run --config <batch.json> [--project ID]            # JSON image batch; a 
 # An agent-only composer (#799) is different: t2i and t2v only;
 # i2i, i2v, r2v and character references exit 36 there.
 
+# A run without --project creates a new Flow project, unless GFLOW_CLI_PROJECT=<id> is set
+# (#1039): t2i/i2i/t2v/i2v/r2v, `gflow run` and the MCP generate tools then use that
+# project. Set it once when looping, instead of leaving one project per call.
+
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: omni-flash only; without --project a project is created first, on either host (#864); 10s is omni-flash-only
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project)
