@@ -41,6 +41,7 @@ import structlog
 from gflow_cli.api.transports._common import get_signed_media, retry_the_recovery_hint
 from gflow_cli.api.transports.batchexecute import generation_record, parse_frames
 from gflow_cli.exceptions import WireFormatError
+from gflow_cli.paths import validate_job_id
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from playwright.async_api import Page
@@ -207,6 +208,7 @@ async def recover_clip(
     :class:`WireFormatError` when the app never reports a signed URL for this media id,
     or when the bytes it serves are not the recorded asset.
     """
+    validate_job_id(media_id)  # it becomes the filename below (#1004)
     found = await _await_signed_record(
         page, media_id=media_id, project_id=project_id, wait_s=wait_s
     )

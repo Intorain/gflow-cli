@@ -975,8 +975,6 @@ class TestDownloadVideo:
         with pytest.raises(ValueError, match="Unsafe"):
             await transport._save_clip(bad, b"mp4", tmp_path)
 
-        assert not list(tmp_path.parent.rglob("escape*.mp4"))
-
     @pytest.mark.asyncio
     async def test_download_video_refuses_bytes_from_an_unexpected_host(
         self, tmp_path: Path

@@ -41,8 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A downloaded clip's media id is checked before it becomes a filename**
   ([#1004](https://github.com/ffroliva/gflow-cli/issues/1004)). Hardening: the local
   branch of the shared clip saver, used by the flow.google.com and agent-only video
-  downloads, wrote `<media_id>.mp4` without the check the cloud branch applied. An id
-  holding a path separator is now refused before anything is written.
+  downloads, wrote `<media_id>.mp4` without the check the cloud branch applied, and so
+  did `gflow data download`'s flow.google.com recovery. An id holding a path separator
+  is now refused before anything is written.
 
 - **A cloud storage URI with `video -o`, `video chain`, `movie run --stitch` or MCP
   `output` is refused before billing** ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). With
