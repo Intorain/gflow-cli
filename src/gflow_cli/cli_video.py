@@ -20,6 +20,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    default_project,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
@@ -1218,6 +1219,7 @@ def t2v(
     _reject_agentic_ui_mode(ui_mode)
     _reject_duration_without_control(model, duration)
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_t2v(
@@ -1418,6 +1420,7 @@ def i2v(  # NOSONAR
     end_path, end_ref_id = _classify_frame(end_frame, end_hint)
 
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     display_names, local_files = _media_picker_metadata([start_ref_id, end_ref_id], profile_name)
     start_local = local_files.get(start_ref_id or "")
     end_local = local_files.get(end_ref_id or "")
@@ -1590,6 +1593,7 @@ def r2v(
             )
 
     profile_name = _resolve_profile(profile)
+    project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_r2v(

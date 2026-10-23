@@ -884,6 +884,26 @@ gflow video t2v "establishing shot" --project PROJ123
 gflow video t2v "close-up reaction" --project PROJ123
 ```
 
+To make that the default, set **`GFLOW_CLI_PROJECT=<id>`** in the environment or
+`.env` ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039)). `image t2i`/`i2i`,
+`video t2v`/`i2v`/`r2v`, `gflow run` and the MCP generate tools then generate into that
+project whenever no project is named, and print `Using the default project <id>
+(GFLOW_CLI_PROJECT).` on stderr. `--project` (or `"project"` in a `gflow run` config)
+and `--project-name`, which asks for a new named project, both win over it. It never
+applies where `--project` names the project that owns existing media (`video extend`,
+`image`/`video upscale`) or is required (`scene`, `character`, `instructions`), and
+`image batch` / `image upload`, which have no `--project`, still create their own. A
+`GFLOW_CLI_PROJECT_NAME` set in the environment names the pinned project rather than
+asking for a new one. Project
+ids belong to one Google account, so a pin the local catalog records only under another
+profile is refused (exit 2) before a browser starts.
+
+```bash
+export GFLOW_CLI_PROJECT=$(gflow project create --name my-batch --json | jq -r .project_id)
+gflow image t2i "a red bicycle"      # lands in my-batch
+gflow video t2v "a tram at dusk"     # so does this
+```
+
 ## Batch video generation (shell loop)
 
 `gflow video` has no `batch` subcommand — a manifest-driven video runner

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`GFLOW_CLI_PROJECT` sets a default project**
+  ([#1039](https://github.com/ffroliva/gflow-cli/issues/1039), reported by @error-Sench).
+  Every generation run without `--project` used to create a new Flow project, so a loop
+  of `image t2i` calls left one project per call. Set `GFLOW_CLI_PROJECT=<id>` (in the
+  environment or `.env`) and `image t2i`/`i2i`, `video t2v`/`i2v`/`r2v`, `gflow run`
+  and the MCP generate tools use that project instead, printing a line on stderr that
+  says so. `--project` and a typed `--project-name` still win (`GFLOW_CLI_PROJECT_NAME`
+  names the pinned project instead). It is never used by `extend`, `upscale`, `scene`,
+  `character` or `instructions`, where `--project` means a specific existing project;
+  `image batch` and `image upload` have no `--project` and are unchanged. A pin the local catalog records only under another profile is
+  refused before a browser starts (exit 2), because a project belongs to one account.
+
 - **`gflow models` shows the name Flow's menu uses**
   ([#1038](https://github.com/ffroliva/gflow-cli/issues/1038), reported by @error-Sench).
   Each image model now has a `label` in the table and in `--json`: Nano Banana 2.1,
