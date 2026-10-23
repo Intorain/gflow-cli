@@ -641,8 +641,8 @@ class VideoModelSelectionError(ConfigurationError):
 
 
 class UpscaleUnavailableError(GFlowError):
-    """Raised when an image upscale target resolution is unavailable for the account
-    (issue #171).
+    """Raised when an upscale target resolution is unavailable for the account
+    (issue #171; shared by the image and video upscale paths, #966).
 
     The canonical case: a non-Ultra (e.g. Pro) account requests ``--scale 4k``.
     Flow's ``upsampleImage`` endpoint returns HTTP 403 for the tier gate, which is

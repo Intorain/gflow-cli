@@ -756,3 +756,12 @@ def test_upscale_unavailable_title_is_media_neutral() -> None:
     assert "image" not in err.title.lower()
     assert "image" not in str(err).lower()
     assert err.to_problem_details()["title"] == "Upscale unavailable for this account"
+
+
+def test_refused_2k_image_upscale_does_not_advise_2k() -> None:
+    """The 2K site inherited the class default, which says "use --scale 2k"."""
+    from gflow_cli.api.image_upscale import TargetResolution
+    from gflow_cli.api.transports.migrated_upscale import _unavailable_error
+
+    err = _unavailable_error(TargetResolution.RES_2K)
+    assert "--scale 2k" not in (err.remediation_hint or "")

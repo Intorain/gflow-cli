@@ -44,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`video upscale` no longer says "Image upscale unavailable"**
   ([#966](https://github.com/ffroliva/gflow-cli/issues/966)). Exit 22's title, shared by
   the image and video upscale paths, is now "Upscale unavailable for this account" in the
-  CLI message, `--json` and MCP error envelopes. The exit code and `type` are unchanged.
+  CLI message, `--json` and MCP error envelopes. The exit code and `type` are unchanged. A refused
+  2K image upscale no longer advises `--scale 2k`.
 
 ## [0.88.0] — 2026-10-22
 
