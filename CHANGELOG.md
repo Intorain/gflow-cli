@@ -42,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#941](https://github.com/ffroliva/gflow-cli/issues/941), part 1). `MediaDownloadError`
   inherited `retryable: true` from `NetworkError`. A scheduler that re-runs anything
   retryable would generate, and pay for, the clip a second time. On the generation
-  downloads (flow.google.com and labs) and the clip writer, it is now `retryable: false`
+  downloads (flow.google.com and labs), the clip writer and the image download (whose
+  re-run spends daily quota again), it is now `retryable: false`
   in `--json`, MCP envelopes and the worker record. The fix is `gflow data download` /
   `gflow_download_media`, which spends nothing and stays `retryable: true`. Exit code 6
   is unchanged.

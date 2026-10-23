@@ -390,6 +390,21 @@ def _make_image(fife_url: str = _FAKE_FIFE_URL) -> GeneratedImage:
 
 
 class TestDownloadImage:
+    async def test_an_exhausted_download_of_a_generated_image_is_not_retryable(
+        self, client: FlowApiClient, tmp_path: Path
+    ) -> None:
+        """#941: the image exists and spent quota, so re-running the generation spends it
+        again; the download's NetworkError must say `retryable: false`."""
+        from gflow_cli.errors import NetworkError, is_retryable
+
+        async def exhausted(*_a: object, **_k: object) -> None:
+            raise NetworkError(detail="5xx on every attempt", route="cdn")
+
+        client._run_with_retry = exhausted  # type: ignore[method-assign]
+        with pytest.raises(NetworkError) as caught:
+            await client.download_image(_make_image(), tmp_path / "out.png")
+        assert is_retryable(caught.value) is False
+
     async def test_download_image_writes_bytes_to_path(
         self, client: FlowApiClient, tmp_path: Path
     ) -> None:

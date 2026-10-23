@@ -144,7 +144,8 @@ Problem Details as the CLI, plus a **`retryable`** boolean. `retryable: true`
 marks a transient failure a scheduler can re-run without operator intervention —
 WAF/reCAPTCHA bounce (`WafRejectionError`), rate-limit (`RateLimitError`),
 transport timeout (`TransportTimeoutError` — but one raised after a submit click is
-`false`, see below), network blip (`NetworkError`), a
+`false`, see below), network blip (`NetworkError` — but not a failed download of media Flow already made,
+see below), a
 dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
 (`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError` — but see the
 agent-only exception in § 6.1, which overrides it to `false`), an unreachable
