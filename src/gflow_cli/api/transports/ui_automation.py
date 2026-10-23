@@ -971,6 +971,9 @@ class UiAutomationTransport(VideoGenerationMixin):
         # The route the last image call took ("labs" / "migrated"): the page is
         # parked on about:blank afterwards, so its URL no longer says (#1035).
         self.last_image_route: str | None = None
+        # Set when a flow.google.com composer page is parked on about:blank (image,
+        # video or upload run), so the client can still tell the host it served (#914).
+        self.parked_after_migrated: bool = False
         # Cross-process profile lease (D3). Held ONLY on the standalone-context
         # path (setup with page=None), where this transport owns the persistent
         # context. On the shared-page path the caller (FlowApiClient) owns both
@@ -1494,6 +1497,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         its own shape (an unmoved account's i2v -> exit 36, or a silently reused
         project), and the next borrower would inherit a mounted composer.
         """
+        self.parked_after_migrated = True
         try:
             await page.goto("about:blank", wait_until="commit", timeout=5_000)
         except Exception as exc:  # noqa: BLE001 - parking is best-effort

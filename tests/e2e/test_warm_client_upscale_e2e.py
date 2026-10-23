@@ -38,8 +38,9 @@ async def test_e2e_upscale_after_an_image_run_on_one_warm_client(
     )
     async with FlowApiClient(profile_dir=e2e_profile_dir, out_dir=tmp_path) as client:
         image = await client.generate_image(project_id=project, req=req)
-        if client.served_route(prefer_migrated=False) != "migrated":
-            pytest.skip("profile is not on the migrated host")
+        # Decided by what the run did, never by served_route: that is under test.
+        if not getattr(client.transport, "parked_after_migrated", False):
+            pytest.skip("the image run was not served flow.google.com")
         await asyncio.sleep(_TILE_LISTING_PAUSE_S)
         path = await client.upsample_image(
             media_id=image.media_name,
