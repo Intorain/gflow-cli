@@ -660,8 +660,13 @@ async def get_signed_media(
     route: str,
     max_redirects: int,
     remediation: str,
+    retryable: bool | None = None,
 ) -> APIResponse:
     """GET a signed media URL, surviving a transient connection reset (#895).
+
+    ``retryable`` overrides the class flag of the error raised when every attempt fails:
+    a generation download passes ``False``, since the clip is billed and a re-run bills
+    it again, while the free recovery (``gflow data download``) keeps the default (#941).
 
     Every caller reaches here **after** Flow has already reported the generation done, so
     a failure at this point discards an artifact the user has already been billed for. Two
@@ -711,6 +716,7 @@ async def get_signed_media(
             ),
             remediation_hint=remediation,
             route=route,
+            retryable=retryable,
         ) from exc
 
 

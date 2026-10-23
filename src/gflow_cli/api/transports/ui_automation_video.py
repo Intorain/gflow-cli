@@ -1286,6 +1286,7 @@ class VideoGenerationMixin:
             route="media.getMediaUrlRedirect",
             max_redirects=5,
             remediation=recoverable_clip_hint(media_id),
+            retryable=False,  # billed: a re-run bills again (#941)
         )
         if resp.status >= 400:
             raise WireFormatError(
@@ -1335,6 +1336,7 @@ class VideoGenerationMixin:
                 # detail that is persisted to the catalog.
                 detail=f"storing clip {media_id} failed ({type(exc).__name__})",
                 remediation_hint=recoverable_clip_hint(media_id),
+                retryable=False,  # billed: a re-run bills again (#941)
             ) from exc
         log.info(
             "ui_automation_video.video_saved",

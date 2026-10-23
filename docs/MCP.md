@@ -144,7 +144,8 @@ Problem Details as the CLI, plus a **`retryable`** boolean. `retryable: true`
 marks a transient failure a scheduler can re-run without operator intervention —
 WAF/reCAPTCHA bounce (`WafRejectionError`), rate-limit (`RateLimitError`),
 transport timeout (`TransportTimeoutError` — but one raised after a submit click is
-`false`, see below), network blip (`NetworkError`), a
+`false`, see below), network blip (`NetworkError` — but not a failed download of media Flow already made,
+see below), a
 dropped browser session (`BrowserSessionClosedError`), a Flow web-app crash
 (`FlowAppError`), an agentic-cohort flap (`FlowAgentUiError` — but see the
 agent-only exception in § 6.1, which overrides it to `false`), an unreachable
@@ -167,7 +168,11 @@ agent's last reply. The
 flow.google.com composer for any `TransportTimeoutError` raised **after the submit click**
 ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): an unreadable or missing
 submit reply, or a generation that is not terminal in time, is `retryable: false`, because
-Flow may already have made and billed it. The override also runs the other
+Flow may already have made and billed it. Likewise a failed download of a finished
+generation (`MediaDownloadError`, exit 6, `type` `…/errors/media-download`) is
+`retryable: false` ([#941](https://github.com/ffroliva/gflow-cli/issues/941)): the clip
+exists and was billed, so the recovery is `gflow_download_media` with its `media_id`, which
+spends nothing and stays `retryable: true`. The override also runs the other
 way: a reCAPTCHA mint failure (`type` `…/errors/recaptcha-mint`, exit 1, no request sent,
 no credit spent) is `retryable: true` when a navigation raced the mint or the page was a
 Flow page whose script had not loaded yet, and `false` on a page that is not a web page —

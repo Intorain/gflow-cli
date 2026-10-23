@@ -2161,7 +2161,12 @@ class FlowApiClient:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_retry(attempt, route=route)
+        try:
+            resp = await self._run_with_retry(attempt, route=route)
+        except NetworkError as exc:
+            # The image exists and spent quota: a re-run spends it again (#941).
+            exc.retryable = False
+            raise
         _validate_fife_final_url(str(resp.url))
         if resp.status >= 400:
             _raise_for_non_retryable(resp, await resp.text(), route=route)
