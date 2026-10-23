@@ -57,6 +57,7 @@ def test_no_spend_removes_both_generate_tools(
     # Read-only surfaces stay available.
     assert "gflow_list_projects" in names
     assert "gflow_list_tools" in names
+    assert "gflow_list_models" in names
 
 
 @pytest.mark.parametrize("value", ["0", "false", ""])
