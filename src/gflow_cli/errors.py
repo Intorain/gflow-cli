@@ -641,8 +641,8 @@ class VideoModelSelectionError(ConfigurationError):
 
 
 class UpscaleUnavailableError(GFlowError):
-    """Raised when an image upscale target resolution is unavailable for the account
-    (issue #171).
+    """Raised when an upscale target resolution is unavailable for the account
+    (issue #171; shared by the image and video upscale paths, #966).
 
     The canonical case: a non-Ultra (e.g. Pro) account requests ``--scale 4k``.
     Flow's ``upsampleImage`` endpoint returns HTTP 403 for the tier gate, which is
@@ -657,7 +657,7 @@ class UpscaleUnavailableError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/upscale-unavailable"
-    title = "Image upscale unavailable for this account"
+    title = "Upscale unavailable for this account"
     _default_remediation = (
         "This upscale resolution is not available on your account. 4K upscaling "
         "requires a Flow Ultra subscription — use --scale 2k, or upgrade your plan. "
