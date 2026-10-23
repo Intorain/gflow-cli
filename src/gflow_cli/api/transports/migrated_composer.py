@@ -2272,6 +2272,23 @@ class MigratedComposer:
                     log.info("migrated.upload_readback_unverified", error_type=type(exc).__name__)
                 raise service_error
             media_id = _first_uuid(text)
+            if media_id is None and any(
+                e.rpcid == UPLOAD_RPC and e.code == 3 for e in rpc_errors(text)
+            ):
+                # gRPC 3 INVALID_ARGUMENT: Flow refused this file (a 1x1 PNG, measured
+                # 3/3 on 2026-10-20), not a protocol break (#755).
+                raise MediaUploadRejectedError(
+                    detail=(
+                        f"migrated host: Flow declined the image {display_name} "
+                        f"({UPLOAD_RPC} answered INVALID_ARGUMENT)"
+                    ),
+                    status=status,
+                    route=route,
+                    remediation_hint=(
+                        "Flow refuses very small or degenerate images. Re-try with a "
+                        "normal-sized image; nothing was spent."
+                    ),
+                )
             if media_id is None:
                 raise MediaUploadRejectedError(
                     detail=f"migrated host: {UPLOAD_RPC} answered 200 without a media id",

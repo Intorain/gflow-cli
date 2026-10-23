@@ -475,6 +475,11 @@ class FakeFileChooser:
             "no_id": ["CAE", 1],
             "project_first": [PROJ_UUID, MEDIA_UP, "CAE"],
         }
+        if reply == "declined":  # Flow's own refusal, measured 2026-10-20 (#755)
+            refusal = [["wrb.fr", "maseQ", None, None, None, [3], "generic"]]
+            text = ")]}'\n\n10\n" + json.dumps(refusal) + "\n"
+            self.page._fire_response(FakeResponse(_batch_url("maseQ"), text, 200))
+            return
         status = 200 if reply in payloads else int(reply)
         text = _frame("maseQ", payloads[str(reply)]) if status == 200 else ""
         self.page._fire_response(FakeResponse(_batch_url("maseQ"), text, status))
@@ -2204,6 +2209,21 @@ async def test_attach_is_upload_rejected_on_a_non_200_maseq(tmp_path: Path) -> N
     with pytest.raises(MediaUploadRejectedError, match="400") as ei:
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
     assert ei.value.route == "batchexecute:maseQ" and ei.value.status == 400
+    assert page.dom.picked == []
+
+
+async def test_a_declined_upload_says_flow_declined_the_image(tmp_path: Path) -> None:
+    """#755: a readable gRPC 3 (INVALID_ARGUMENT) maseQ reply is Flow refusing the image,
+    not a protocol break; the message must say so and point at the image."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.maseq_reply = "declined"
+    with pytest.raises(MediaUploadRejectedError, match="declined the image") as ei:
+        await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
+    assert "without a media id" not in str(ei.value)
+    assert "normal-sized" in (ei.value.remediation_hint or "")
+    assert EXIT_CODE_MAP[MediaUploadRejectedError] == 27
     assert page.dom.picked == []
 
 

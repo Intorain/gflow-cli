@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An image Flow refuses on upload is reported as declined, not as a broken reply**
+  ([#755](https://github.com/ffroliva/gflow-cli/issues/755)). When Flow answers an upload
+  with its INVALID_ARGUMENT refusal (measured for a 1x1 PNG), the error now says Flow
+  declined the image and suggests a normal-sized one, instead of "answered 200 without a
+  media id". The exit code (27) is unchanged.
+
+### Fixed
+
 - **A successful `character create` keeps the character's id and name in the local
   catalog** ([#737](https://github.com/ffroliva/gflow-cli/issues/737)). The completion
   record replaced the whole metadata column, so succeeded rows kept the voice and media
