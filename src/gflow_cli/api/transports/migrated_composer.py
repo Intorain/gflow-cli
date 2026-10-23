@@ -3464,6 +3464,7 @@ class MigratedComposer:
                 route="flow-content.google",
                 max_redirects=0,
                 remediation=recoverable_clip_hint(record.media_id),
+                retryable=False,  # billed: a re-run bills again (#941)
             )
             if resp.status >= 300:
                 raise WireFormatError(

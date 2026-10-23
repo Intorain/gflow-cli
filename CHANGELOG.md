@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed download of a finished, billed clip is no longer marked `retryable`**
+  ([#941](https://github.com/ffroliva/gflow-cli/issues/941), part 1). `MediaDownloadError`
+  inherited `retryable: true` from `NetworkError`. A scheduler that re-runs anything
+  retryable would generate, and pay for, the clip a second time. On the generation
+  downloads (flow.google.com and labs) and the clip writer, it is now `retryable: false`
+  in `--json`, MCP envelopes and the worker record. The fix is `gflow data download` /
+  `gflow_download_media`, which spends nothing and stays `retryable: true`. Exit code 6
+  is unchanged.
+
 - **flow.google.com failure diagnostics no longer leak account identifiers**
   ([#890](https://github.com/ffroliva/gflow-cli/issues/890)). When the image submit
   button was covered, the drift error named the covering element with its raw `id` and
