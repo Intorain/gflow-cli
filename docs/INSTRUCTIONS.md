@@ -105,7 +105,7 @@ gflow instructions add "Hero look" \
 
 `gflow instructions` and generation commands take `--project <id>` to target a
 specific project's brief. Generation with `--project` uses that project's **active**
-(enabled) cards. Without `--project`, generation creates a scratch project (so
+(enabled) cards. Without `--project` (or a `GFLOW_CLI_PROJECT` default), generation creates a scratch project (so
 persistent cards only make sense with `--project`).
 
 ### `apply FILE` — declarative sync
