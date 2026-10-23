@@ -1154,10 +1154,6 @@ class FlowApiClient:
                         "the directory is not writable by this process"
                     ),
                 ) from exc
-            # After the access check: Chrome words a read-only profile with the same
-            # "already in use by another instance" header (#984).
-            if (in_use := profile_in_use_error(exc, self.profile_dir)) is not None:
-                raise in_use from exc
             if _is_target_closed(exc):
                 # A TargetClosedError at LAUNCH usually means the profile dir
                 # is held by another Chrome — most commonly a stale browser
@@ -1190,6 +1186,11 @@ class FlowApiClient:
                     if ref is not None and locked.incident_ref is None:
                         locked.incident_ref = ref
                 raise locked from exc
+            # Last: a generic Error that names the profile as in use (#984, the user's
+            # own Chrome). A read-only profile and #293's TargetClosedError share the
+            # header and are handled above, with their own hints and incident.
+            if (in_use := profile_in_use_error(exc, self.profile_dir)) is not None:
+                raise in_use from exc
             raise
 
     async def _open_page_pool(self, n: int) -> list[Page]:

@@ -78,3 +78,25 @@ async def test_a_read_only_profile_stays_an_access_error(tmp_path: Path) -> None
     client._pw = _Pw()  # type: ignore[assignment]  # noqa: SLF001
     with pytest.raises(ProfileAccessError):
         await client._launch_persistent_context({})  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_a_target_closed_launch_keeps_the_293_hint(tmp_path: Path) -> None:
+    """#293's stale-Chrome shape carries the same header; it keeps its own hint."""
+
+    class TargetClosedError(Exception):  # noqa: N818 - mimics Playwright's class name
+        pass
+
+    client = FlowApiClient(tmp_path / "profile", settings=Settings(home=tmp_path))
+
+    class _Chromium:
+        async def launch_persistent_context(self, **_kw: Any) -> None:
+            raise TargetClosedError(_IN_USE)
+
+    class _Pw:
+        chromium = _Chromium()
+
+    client._pw = _Pw()  # type: ignore[assignment]  # noqa: SLF001
+    with pytest.raises(ProfileLockedError) as info:
+        await client._launch_persistent_context({})  # noqa: SLF001
+    assert "crashed at startup for another reason" in info.value.remediation_hint
