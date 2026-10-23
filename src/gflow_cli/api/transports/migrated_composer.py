@@ -284,6 +284,27 @@ ARROW_STEP_MS = 150
 _CAPTION_MAX = 120
 
 
+async def _visible_model_picker(page: Page, pane: Any, *, what: str) -> Any:
+    """The settings pane's model picker button, visible, or a refusal.
+
+    A picker present but hidden (#749's agent-mode shape) used to fall through and have
+    its text read: that text "matched" the requested model, so the run went on and billed
+    whatever Flow had bound (#788). A hidden control is refused, never read.
+    """
+    button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
+    try:
+        await button.wait_for(state="visible", timeout=4000)
+    except Exception:
+        state = "hidden" if await button.count() else "missing"
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the {what} (arrow_drop_down) is {state} in the settings "
+                "pane, so the model cannot be checked or chosen (host=migrated)"
+            ),
+        ) from None
+    return button
+
+
 def _require_appended(before: list[dict[str, str]], chips: list[dict[str, str]]) -> None:
     """Refuse a mention that did not land after every chip already in the prompt (#997).
 
@@ -1944,17 +1965,7 @@ class MigratedComposer:
                 ),
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )
-        button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
-        try:
-            await button.wait_for(state="visible", timeout=4000)
-        except Exception:
-            if not await button.count():
-                raise UiSelectorDriftError(
-                    detail=(
-                        "migrated host: model picker button (arrow_drop_down) not found in the "
-                        "settings pane (host=migrated)"
-                    ),
-                ) from None
+        button = await _visible_model_picker(page, pane, what="model picker")
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
             # Logged, because otherwise this path is invisible: a run that short-circuits
@@ -2015,14 +2026,7 @@ class MigratedComposer:
                     "helps if Flow still serves you labs."
                 ),
             )
-        button = pane.locator("button").filter(has=_ligature(page, "arrow_drop_down")).first
-        try:
-            await button.wait_for(state="visible", timeout=4000)
-        except Exception:
-            if not await button.count():
-                raise UiSelectorDriftError(
-                    detail="migrated host: image model picker is missing (host=migrated)"
-                ) from None
+        button = await _visible_model_picker(page, pane, what="image model picker")
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
             log.info("migrated.image_model_already_selected", model=current, requested=model.value)
