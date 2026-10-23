@@ -657,7 +657,7 @@ class UpscaleUnavailableError(GFlowError):
     """
 
     problem_type = "https://gflow-cli.dev/errors/upscale-unavailable"
-    title = "Image upscale unavailable for this account"
+    title = "Upscale unavailable for this account"
     _default_remediation = (
         "This upscale resolution is not available on your account. 4K upscaling "
         "requires a Flow Ultra subscription — use --scale 2k, or upgrade your plan. "

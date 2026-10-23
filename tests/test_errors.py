@@ -746,3 +746,13 @@ def test_reference_not_found_error_problem_details():
     assert body["title"] == "Referenced media was not found"
     # The remediation must not name a CLI flag that does not exist.
     assert "--ref-name" not in err.remediation_hint
+
+
+def test_upscale_unavailable_title_is_media_neutral() -> None:
+    """#966: the video upscale raise site printed "Image upscale unavailable"."""
+    from gflow_cli.api.transports.migrated_video_upscale import _unavailable_error
+
+    err = _unavailable_error("1080p")
+    assert "image" not in err.title.lower()
+    assert "image" not in str(err).lower()
+    assert err.to_problem_details()["title"] == "Upscale unavailable for this account"
