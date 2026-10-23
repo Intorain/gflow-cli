@@ -60,7 +60,7 @@ from gflow_cli.movie_manifest import (
 )
 from gflow_cli.paths import resolve_batch_output_dir
 from gflow_cli.services.character_create import character_create
-from gflow_cli.storage import cloud_info_from_path
+from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 console = Console()
 log = structlog.get_logger(__name__)
@@ -578,6 +578,9 @@ async def _run_movie(
     stitch: bool = False,
 ) -> None:
     settings = get_settings()
+    if stitch:
+        # ffmpeg concatenates the clips from disk (#1008).
+        refuse_cloud_storage_for_local_file(settings.storage_uri, "movie run --stitch")
     recorder = OperationRecorder.open(settings)
     include_prompts = getattr(settings, "history_prompts", "store") == "store"
 
