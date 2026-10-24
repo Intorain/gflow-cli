@@ -295,11 +295,19 @@ async def _visible_model_picker(page: Page, pane: Any, *, what: str) -> Any:
     try:
         await button.wait_for(state="visible", timeout=4000)
     except Exception:
-        state = "hidden" if await button.count() else "missing"
+        hidden = bool(await button.count())
         raise UiSelectorDriftError(
             detail=(
-                f"migrated host: the {what} (arrow_drop_down) is {state} in the settings "
-                "pane, so the model cannot be checked or chosen (host=migrated)"
+                f"migrated host: the {what} (arrow_drop_down) is "
+                f"{'hidden' if hidden else 'missing'} in the settings pane, so the model "
+                "cannot be checked or chosen (host=migrated)"
+            ),
+            # Hidden is #749's agent-mode shape, the one cause with a user action.
+            remediation_hint=(
+                "Nothing was submitted. If the Agent chip is on in this project, turn it "
+                "off in a browser and re-run."
+                if hidden
+                else None
             ),
         ) from None
     return button
