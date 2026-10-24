@@ -83,8 +83,6 @@ async def _main(
     project_id: str,
     seconds: float,
     dump: Path | None,
-    save_media: str | None,
-    save_to: Path | None,
 ) -> int:
     seen: dict[str, dict[str, Any]] = {}
     frames: list[dict[str, Any]] = []
@@ -122,21 +120,6 @@ async def _main(
             flush=True,
         )
         await page.wait_for_timeout(int(seconds * 1000))
-        if save_to is not None:
-            # The signed CDN URL is cookie-gated: fetched outside the browser context it
-            # returns the Google login page, so the GET rides the page's own request
-            # context exactly as `MigratedComposer.download` does.
-            row = seen.get(save_media or "")
-            if row is None or not row["media_url"]:
-                print(f"[spike] no signed URL for {save_media}", file=sys.stderr, flush=True)
-                return 2
-            resp = await page.request.get(row["media_url"], timeout=180_000, max_redirects=0)
-            body = await resp.body()
-            if body[4:8] != b"ftyp":
-                print(f"[spike] not an mp4: {body[:4].hex()}", file=sys.stderr, flush=True)
-                return 2
-            save_to.write_bytes(body)
-            print(f"[spike] {len(body)} B -> {save_to}", file=sys.stderr, flush=True)
 
     print(f"[spike] rpcids seen: {dict(rpcids.most_common())}", file=sys.stderr, flush=True)
     if dump is not None:
@@ -152,12 +135,9 @@ def main() -> int:
     parser.add_argument("project_id")
     parser.add_argument("--seconds", type=float, default=45.0)
     parser.add_argument("--dump", type=Path, default=None, help="write every decoded frame here")
-    parser.add_argument("--save-media", default=None, help="media id to download")
-    parser.add_argument("--save-to", type=Path, default=None, help="where to write it")
     args = parser.parse_args()
-    return asyncio.run(
-        _main(args.profile, args.project_id, args.seconds, args.dump, args.save_media, args.save_to)
-    )
+    # Downloading a done clip is `gflow data download` (#759: a spike copy was never run).
+    return asyncio.run(_main(args.profile, args.project_id, args.seconds, args.dump))
 
 
 if __name__ == "__main__":

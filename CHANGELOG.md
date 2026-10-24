@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could never show it and ended in exit 23. It now reloads the grid every 10 s within the
   same budget (image and video upscale).
 
+- **An image whose reply Chrome loses is still returned** on flow.google.com
+  ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)). Flow made the image every
+  time; only the submit reply's body was unreadable, and the run ended in exit 9. gflow
+  now reads the new tile off the project grid and downloads it. When the grid does not
+  show exactly the requested number of new images, the run still stops with exit 9, now
+  naming the project page to check.
+
+- **A hidden model picker on flow.google.com is refused instead of trusted**
+  ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). When the picker was in the
+  page but hidden (an agent-mode screen), gflow read its text, took the requested model as
+  already selected, and went on to generate with whatever Flow had bound, billing it.
+  Image and video runs now stop with exit 23 before submitting, naming the hidden picker.
+
 - **An image Flow refuses on upload is reported as declined, not as a broken reply**
   ([#755](https://github.com/ffroliva/gflow-cli/issues/755)). When Flow answers an upload
   with its INVALID_ARGUMENT refusal (measured for a 1x1 PNG), the error now says Flow

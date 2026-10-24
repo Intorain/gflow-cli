@@ -12,9 +12,9 @@ exact run left two images in the project (spike
 **How the loss is provoked.** ``Response.text`` raises the exact error #1009 captured for
 the first ``ogiZ0b`` reply; every submit request is counted on the browser context.
 
-**What the image run does not separate.** The transport already returns a non-retryable
-error on the fixed tree, so the image run passes with or without the client's
-``max_attempts=1``; that half rests on ``test_client_never_resubmits_a_page_owned_image_run``.
+**The image is recovered, not reported lost (#1075).** Flow made it on every reported run,
+so the run reads the new tile off the project grid and downloads it; the one-submit count
+still proves nothing re-submitted.
 
 **Cost.** Image: one image of daily quota, zero credits. Video: one Veo lite clip at the
 default length.
@@ -77,7 +77,7 @@ def _run_counting(world: dict[str, Any], rpcids: tuple[str, ...], generate: Any)
             assert client._context is not None  # noqa: SLF001
             client._context.on("request", count)  # noqa: SLF001
             try:
-                await generate(client)
+                world["result"] = await generate(client)
             except Exception as exc:  # noqa: BLE001 — the raised error is what Then checks
                 world["error"] = exc
 
@@ -96,14 +96,62 @@ def _armed(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @when("gflow generates the image on the migrated host")
-def _generate(world: dict[str, Any]) -> None:
-    _run_counting(
-        world,
-        (mc.IMAGE_SUBMIT_RPC,),
-        lambda client: client.generate_image(
+def _generate(world: dict[str, Any], tmp_path: Path) -> None:
+    async def generate(client: FlowApiClient) -> Path:
+        image = await client.generate_image(
             req=GenerateImageRequest(prompt="a teal origami crane on a wooden table")
-        ),
+        )
+        return Path(str(await client.download_image(image, tmp_path / "recovered.png")))
+
+    _run_counting(world, (mc.IMAGE_SUBMIT_RPC,), generate)
+
+
+def _png(path: Path, size: int = 256) -> Path:
+    """A plain gradient PNG; Flow declines a 1x1 (#755), so it is a real size."""
+    import struct
+    import zlib
+
+    def chunk(typ: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + typ
+            + data
+            + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+        )
+
+    rows = b"".join(
+        b"\x00" + b"".join(bytes((x, y, 128)) for x in range(size)) for y in range(size)
     )
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
+    return path
+
+
+@when("gflow generates an image from a local reference on the migrated host")
+def _generate_i2i(world: dict[str, Any], tmp_path: Path) -> None:
+    ref = _png(tmp_path / "ref.png")
+
+    async def generate(client: FlowApiClient) -> Path:
+        image = await client.generate_image(
+            req=GenerateImageRequest(
+                prompt="the same colours as a watercolour landscape", ref_paths=(ref,)
+            )
+        )
+        world["media_name"] = image.media_name
+        return Path(str(await client.download_image(image, tmp_path / "recovered.png")))
+
+    _run_counting(world, (mc.IMAGE_SUBMIT_RPC,), generate)
+
+
+@then("gflow returns the one image the submit made, not the uploaded reference")
+def _recovered_not_reference(world: dict[str, Any]) -> None:
+    _recovered(world)
+    # The reference is a 256x256 gradient; Flow's output is never that file back.
+    assert world["result"].read_bytes() != (world["result"].parent / "ref.png").read_bytes()
 
 
 @then("exactly one image submit reached Flow")
@@ -139,6 +187,13 @@ def _generate_video(world: dict[str, Any], tmp_path: Path) -> None:
 @then("exactly one video submit reached Flow")
 def _one_video_submit(world: dict[str, Any]) -> None:
     _assert_one_submit(world)
+
+
+@then("gflow returns the one image the submit made, downloadable")
+def _recovered(world: dict[str, Any]) -> None:
+    assert "error" not in world, repr(world.get("error"))
+    path: Path = world["result"]
+    assert path.stat().st_size > 1000, path.stat().st_size
 
 
 @then("gflow reports a timeout that is not retryable and says to check the project")
