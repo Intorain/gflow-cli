@@ -732,6 +732,7 @@ async def run_image_batch(
     # caller's failure rows with another command's name (#341 review).
     _command: str,
     project_id: str | None = None,
+    resumed: dict[int, BatchOutcome] | None = None,
 ) -> list[BatchOutcome]:
     """Run prompts sequentially through one FlowApiClient session.
 
@@ -741,6 +742,9 @@ async def run_image_batch(
 
     ``project_id`` generates every row into that existing project instead of a new
     one titled ``project_title``; its catalog title is then left as it is.
+
+    ``resumed`` maps a row index to the outcome a previous run already produced in this
+    project (#934): that row is not submitted, and a ``batch:N`` child references it.
     """
     results: dict[int, BatchOutcome] = {}
     # One upload per distinct local file per run (one run, one project).
@@ -755,6 +759,9 @@ async def run_image_batch(
         _position: int,
         item: BatchPromptItem,
     ) -> BatchOutcome:
+        if resumed and (done := resumed.get(item.index)) is not None:
+            results[item.index] = done
+            return done
         parent = batch_parent(item)
         reference: ImageRef | None = None
         if parent is not None:
@@ -1530,6 +1537,9 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
         if outcome.status == "ok":
             detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)
             status_str = "[green]OK[/green]"
+        elif outcome.status == "resumed":
+            detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)
+            status_str = "[cyan]RESUMED[/cyan]"
         elif outcome.status == "fail":
             detail = outcome.error or ""
             status_str = "[red]FAIL[/red]"
@@ -1547,7 +1557,9 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
     succeeded = sum(1 for outcome in outcomes if outcome.status == "ok")
     failed = sum(1 for outcome in outcomes if outcome.status == "fail")
     skipped = sum(1 for outcome in outcomes if outcome.status == "skipped")
+    resumed = sum(1 for outcome in outcomes if outcome.status == "resumed")
     console.print(
-        f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped",
+        f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped"
+        + (f" · {resumed} resumed" if resumed else ""),
     )
     return max((outcome.exit_code for outcome in outcomes), default=0)

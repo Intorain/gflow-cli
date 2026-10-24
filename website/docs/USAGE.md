@@ -1889,7 +1889,7 @@ For MCP over HTTP, see `gflow serve` and [MCP.md](MCP.md).
 Sequential JSON-described batch image generation. New in v0.5.0a1.
 
 ```text
-gflow run --config FILE [--output-dir DIR] [--profile NAME] [--project ID] [--continue-on-error|--fail-fast]
+gflow run --config FILE [--output-dir DIR] [--profile NAME] [--project ID] [--resume] [--continue-on-error|--fail-fast]
 ```
 
 The config is a JSON file with a top-level `prompts` array; each entry
@@ -1976,8 +1976,13 @@ that row's position in `prompts` (0-based).
   was generated but whose download failed still counts as generated: its children run.
 - **Tracking.** Each row is recorded in the local catalog; a referencing row is recorded
   as image-to-image with its parent as the input (`gflow data`).
-- **No resume.** A re-run regenerates every row, parents included, in a new project
-  (or, with `--project`, in that same project).
+- **Resume with `--resume`** ([#934](https://github.com/ffroliva/gflow-cli/issues/934)).
+  Re-run the same config into the same project (`--project` or `"project"`; without one,
+  exit 11) and output folder. A row whose files (`<stem>_<n>.<ext>`, e.g. `prompt_0_0.jpg`) are all there and are
+  recorded in the local catalog as images of that project is shown as `RESUMED` and not
+  submitted; its `batch:N` children reference it in place. Every other row is generated.
+  The default output folder is dated, so to resume on another day pass the same
+  `--output-dir` (or `output_dir`). Without `--resume`, a re-run regenerates every row.
 - **`batch:N` or a local file.** A media id or `reference_entity` in a row is refused
   (exit 11); for those use `gflow image i2i --ref` or `--reference-entity`.
 - **A parent Flow returned without a caption** cannot be found in the composer's `@`
