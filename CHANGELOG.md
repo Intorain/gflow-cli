@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An advisory CI check for what a change silently removes**
+  ([#713](https://github.com/ffroliva/gflow-cli/issues/713)). `scripts/ci/check_deletions.py`,
+  run by the Governance advisory workflow, warns when a Markdown doc loses far more lines than
+  it gains (more than 50 net and 3x), and lists every tracked file still referencing a path the
+  PR deletes (e.g. a Dependabot `directory:` entry). It never fails the build.
+
 ### Fixed
 
 - **An image Flow refuses on upload is reported as declined, not as a broken reply**
