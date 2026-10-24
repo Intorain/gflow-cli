@@ -45,3 +45,19 @@ def test_for_surface_returns_every_entry_including_mode_scoped_ones() -> None:
     reach the report as EXPECTED_ABSENT rather than vanishing from it."""
     keys = {s.key for s in registry.for_surface("editor")}
     assert "editor.crop_control" in keys
+
+
+def test_the_migrated_editor_is_registered_from_the_driver_s_own_constants() -> None:
+    """#1083: labs.google 308s to flow.google.com, so the `editor` surface reaches
+    nothing. The migrated editor is watched instead, and every candidate is the
+    composer's own constant, so a selector edit in the driver moves the probe with it."""
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    surface = registry.SURFACES["migrated_editor"]
+    assert surface.url_template.startswith("https://flow.google.com/project/")
+    entries = {s.key: s for s in registry.for_surface("migrated_editor")}
+    assert entries["migrated.composer.input"].candidates == (mc.COMPOSER,)
+    assert entries["migrated.settings_trigger"].candidates == (mc.READY_ANCHOR,)
+    assert entries["migrated.agent_chip"].candidates == (mc.AGENT_MODE_CHIP_ANY,)
+    assert entries["migrated.project_title"].candidates == (mc.PROJECT_TITLE_INPUT,)
+    assert entries["migrated.agent_only.settings"].candidates == (mc.AGENT_ONLY_ANCHOR,)

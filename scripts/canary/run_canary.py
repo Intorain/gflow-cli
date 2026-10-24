@@ -221,9 +221,12 @@ def _run(
     )
 
 
-def _child_env(profile: str) -> dict[str, str]:
+def _child_env(profile: str, project: str = "") -> dict[str, str]:
     env = dict(os.environ)
     env["GFLOW_CLI_E2E_PROFILE"] = profile
+    if project:
+        # The migrated selector-drift e2e reads it; without it that test skips (#1083).
+        env["GFLOW_CLI_E2E_PROJECT"] = project
     # FORCE_COLOR leaks ANSI into plain-text assertions and reds ~26 CLI tests.
     env.pop("FORCE_COLOR", None)
     return env
@@ -235,7 +238,7 @@ def probe_auth(profile: str) -> bool:
     return proc.returncode == 0
 
 
-def run_tiers(profile: str, markers: str) -> tuple[int, str, float]:
+def run_tiers(profile: str, markers: str, project: str = "") -> tuple[int, str, float]:
     """Run the selected $0 tiers. Returns (returncode, combined_output, seconds)."""
     JUNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -255,7 +258,7 @@ def run_tiers(profile: str, markers: str) -> tuple[int, str, float]:
         "-q", "--no-header",
     ]  # fmt: skip
     try:
-        proc = _run(argv, env=_child_env(profile), timeout=_TIER_TIMEOUT_S)
+        proc = _run(argv, env=_child_env(profile, project), timeout=_TIER_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         # Report the hang rather than letting Task Scheduler kill us silently.
         return 1, "E   CanaryTimeout: tier exceeded the wall-clock cap", time.monotonic() - started
@@ -439,6 +442,11 @@ def main() -> int:
     p.add_argument("--profile", default=os.environ.get("GFLOW_CLI_E2E_PROFILE", ""))
     p.add_argument("--issue", type=int, default=int(os.environ.get("GFLOW_CANARY_ISSUE", 0)))
     p.add_argument("--markers", default="e2e_auth", help="pytest -m expression ($0 tiers only)")
+    p.add_argument(
+        "--project",
+        default=os.environ.get("GFLOW_CLI_E2E_PROJECT", ""),
+        help="a project the profile owns, for the selector-drift e2e (#1083)",
+    )
     p.add_argument("--dry-run", action="store_true", help="execute, print payload, skip GitHub")
     p.add_argument(
         "--pull",
@@ -470,7 +478,7 @@ def main() -> int:
     if refused:
         result = Result(state=DEFERRED, note=refused)
     elif probe_auth(args.profile):
-        rc, output, secs = run_tiers(args.profile, args.markers)
+        rc, output, secs = run_tiers(args.profile, args.markers, args.project)
         passed, failed, skipped, failing = parse_junit(JUNIT_PATH)
         # Re-probe only when something failed and it was not a profile
         # precondition: the post-probe separates session rot from real

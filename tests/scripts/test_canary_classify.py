@@ -409,3 +409,13 @@ def test_continuity_tolerates_a_hand_edited_state(tmp_path: Path) -> None:
     """`runs` arriving as a string, or missing, must not crash the report."""
     state, note = continuity({"fingerprint": "x", "runs": "not-a-number"}, ("t::a",))
     assert state["runs"] == 1 and note == ""
+
+
+def test_the_project_reaches_the_e2e_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1083: the migrated selector-drift e2e needs a project id; without one it skips,
+    and an all-skipped drift check is the probe that watched nothing again."""
+    from scripts.canary.run_canary import _child_env
+
+    monkeypatch.delenv("GFLOW_CLI_E2E_PROJECT", raising=False)
+    assert _child_env("p", "proj-1")["GFLOW_CLI_E2E_PROJECT"] == "proj-1"
+    assert "GFLOW_CLI_E2E_PROJECT" not in _child_env("p", "")

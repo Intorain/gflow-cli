@@ -340,54 +340,36 @@ tokens**. Published content is sanitized for a public repo: SHA, pass/fail
 counts, duration, failure class, and failing test *names* only — never raw logs,
 profile paths, prompts, or signed URLs.
 
-## Selector drift probe (#563)
+## Selector drift check (#563, moved to the canary in #1083)
 
-The canary answers *"does gflow still work on the maintainer's cohort?"*; the
-probe answers *"which Flow DOM selector moved?"* — from hosted CI, with no
-maintainer machine involved. It walks the structured selector inventory in
-`gflow_cli.flow_selectors` (the incident families from #404/#493/#313) against
-a live editor at the pinned 1920×1080 viewport: navigate and read only, **$0**,
-never submits.
+The canary answers *"does gflow still work on the maintainer's cohort?"*; the drift check
+answers *"which Flow DOM selector moved?"*. It grades the structured selector inventory in
+`gflow_cli.flow_selectors` against a live editor: navigate and read only, **$0**, never
+submits.
 
-Runs via `.github/workflows/selector-probe.yml` on `schedule` (05:00 UTC daily)
-plus `workflow_dispatch`. **Never add a `pull_request` trigger**: same-repo
-branch PRs receive repository secrets while running attacker-editable probe
-code (fork PRs are safe — GitHub withholds secrets — but the same-repo case is
-not).
+**Where it runs.** `tests/e2e/test_migrated_selector_drift_e2e.py` (`e2e_auth`) grades the
+registry's `migrated_editor` surface (flow.google.com) with the probe's own `resolve` and
+report, so the nightly canary runs it with every other `$0` tier. Give the canary a project
+the profile owns: `run_canary.py --project <id>` (or `register_task.ps1 -Project <id>`);
+without one the test skips.
 
-### Exit contract
+**Why it moved.** It used to run from `.github/workflows/selector-probe.yml` against the
+labs.google editor with one NextAuth cookie. labs answers 308 to flow.google.com for every
+account we hold, so that workflow exited 2 ("no recognizable editor") on every run from
+2026-08-21 until it was retired, about two months in which nothing watched for drift
+(#1083). Running it in GitHub would now need a full Google session in repository secrets;
+the canary already holds a warm profile on the maintainer's machine.
 
-| Exit | Meaning | Action |
+### Reading the report
+
+| Grade | Meaning | Action |
 |---|---|---|
-| `0` | every registered selector resolved (`ok` / `FALLBACK[n]` / `n/a`) | none |
-| `1` | **drift** — a selector graded MISS or AMBIGUOUS; the report names its key | re-derive that selector, ship a registry edit |
-| `2` | **inconclusive** — expired token, dead project, known alternate UI state, or no recognizable editor arm | fix the credential/project; says nothing about Flow |
+| `ok` / `FALLBACK[n]` | the selector resolved (a later candidate held for `FALLBACK`) | none; a FALLBACK says how far the page drifted |
+| `n/a` | a mode-scoped entry is absent on the arm Flow served (e.g. the agent-only composer's anchor on a classic account) | none |
+| `DRIFT` / `AMBIGUOUS` | the selector matched nothing, or more than one element where one is expected | the canary turns RED and names the key; re-derive that selector and edit the registry |
 
-Keeping `1` and `2` apart is the whole design: an expired credential must never
-be published as "Google changed the page". The deciding gate is a poll on
-production's own arm indicators (the six `crop_*` variants ⇒ classic, the
-agentic ligatures ⇒ agentic); a page showing neither within 25 s — a sign-in
-wall renders neither — is inconclusive, not drift. Mode-scoped selectors absent
-on the observed arm grade `n/a` (`EXPECTED_ABSENT`), never drift — the probe's
-first two live runs landed on opposite arms (classic locally, agentic on the
-runner) and both graded clean.
-
-### Secrets and token care
-
-Two repository secrets, from a **dedicated throwaway Google account**, never
-the maintainer's: `GFLOW_CI_SESSION_TOKEN` (the
-`__Secure-next-auth.session-token` cookie) and `GFLOW_CI_PROJECT_ID` (any
-project that account owns — a deleted id renders an error shell the probe
-reports as exit 2).
-
-The token **re-issues on every profile open** (observed live 2026-08-21: three
-values in 15 minutes; the first CI dispatch failed exit 2 on a superseded
-snapshot). Harvest accordingly: open the throwaway profile once, read the
-cookie, close the browser, `gh secret set GFLOW_CI_SESSION_TOKEN` from stdin —
-and never reopen that profile without re-syncing the secret afterwards. The
-value also hard-dies at day 30 with no warning. Either way an aged token shows
-as a red exit-2 run, never as drift, and the nightly schedule itself is the
-aging test.
+`scripts/probe/run_probe.py` still holds `resolve` and `render_report`; its labs `editor`
+surface is kept for an account that is served labs, which none of ours is today.
 
 ---
 
@@ -403,6 +385,7 @@ tests/
     ├── conftest.py                       # e2e_profile_dir, e2e_nosession_profile,
     │                                     #   e2e_env (shared fixtures)
     ├── test_auth_verification_e2e.py     # [e2e, e2e_auth]
+    ├── test_migrated_selector_drift_e2e.py # [e2e, e2e_auth] registry vs flow.google.com — 0 credits
     ├── test_auth_renew_e2e.py            # [e2e, e2e_auth] `gflow auth renew` leaf — 0 credits
     ├── test_credits_refresh_e2e.py       # [e2e, e2e_auth] `--refresh` on CLI + MCP — 0 credits
     ├── test_transports_e2e.py            # [e2e, e2e_{auth,image,batch,video}]
