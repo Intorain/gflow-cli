@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Upscaling an image right after generating it no longer fails as selector drift**
+  ([#1067](https://github.com/ffroliva/gflow-cli/issues/1067)). Flow lists a just-made
+  tile on the project grid only after a reload, so the upscale waited 30 s on a page that
+  could never show it and ended in exit 23. It now reloads the grid every 10 s within the
+  same budget (image and video upscale).
+
 - **An image whose reply Chrome loses is still returned** on flow.google.com
   ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)). Flow made the image every
   time; only the submit reply's body was unreadable, and the run ended in exit 9. gflow
