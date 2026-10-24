@@ -34,6 +34,15 @@ def _short_grid_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(migrated_composer, "EXISTING_REF_WAIT_S", 0.2)
 
 
+@pytest.fixture
+def _reload_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For a test that MUST reach the reload: 0.2 s of real clock expired before it
+    under a loaded parallel suite (seen 2026-10-24, -n 6), raising the miss instead."""
+    from gflow_cli.api.transports import migrated_composer
+
+    monkeypatch.setattr(migrated_composer, "EXISTING_REF_WAIT_S", 30.0)
+
+
 OTHER = "90879017-ff54-4232-9186-f6a61298a6cc"
 
 
@@ -165,6 +174,7 @@ async def test_a_parent_missing_from_the_grid_is_refused_before_searching() -> N
     assert "<Enter>" not in page.typed
 
 
+@pytest.mark.usefixtures("_reload_budget")
 async def test_a_search_miss_reloads_the_editor_and_tries_again() -> None:
     # Live e2e 2026-10-01: three searches in one page load offered nothing; the next
     # row's fresh load found the same image at once.
@@ -175,6 +185,7 @@ async def test_a_search_miss_reloads_the_editor_and_tries_again() -> None:
     assert page.typed.index("<Escape>") < [i for i, t in enumerate(page.typed) if t == "@"][1]
 
 
+@pytest.mark.usefixtures("_reload_budget")
 async def test_a_reload_that_lands_on_the_agent_only_composer_is_refused() -> None:
     """#799: that composer has no `@` picker; carrying on would mention into a chat box."""
     from gflow_cli.errors import FlowHostMigratedError
