@@ -353,15 +353,14 @@ async def raise_if_known_landing(page: object, *, requested: str, at: str) -> No
                 f"none of the controls gflow drives are on the page. Not selector drift."
             )
         )
-    # Deliberately says WHAT arrived and stops. #756 measured the redirect and did not
-    # measure its cause — `gflow auth status` reports the session verified while this
-    # happens — so naming one here would just be a second confident wrong diagnosis.
+    # Says WHAT arrived; the page itself does not say why. The one cause measured since
+    # (Google's identity re-check, 2026-09-23) goes in the hint as ONE cause, not the cause.
     raise FlowAppError(
         detail=(
             f"Flow redirected to its public landing page ({safe}) instead of "
-            f"{requested}. gflow cannot tell from here why it declined — this account "
-            f"may not have access to that project on this host. It is not selector "
-            f"drift, and no gflow-cli release changes it."
+            f"{requested}. The page does not say why it declined; see the hint for the "
+            f"one measured cause. It is not selector drift, and no gflow-cli release "
+            f"changes it."
         ),
         # MEASURED, as of 2026-09-11: 5/5 consecutive attempts over ~3 minutes on a
         # live occurrence all landed here, on the account's own project, with a healthy

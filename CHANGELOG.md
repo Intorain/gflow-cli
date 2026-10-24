@@ -7,18 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.89.1] — 2026-10-24
+
 ### Added
 
 - **An advisory CI check for what a change silently removes**
   ([#713](https://github.com/ffroliva/gflow-cli/issues/713)). `scripts/ci/check_deletions.py`,
-  run by the Governance advisory workflow, warns when a Markdown doc loses far more lines than
+  run by the Governance advisory workflow, warns when a Markdown doc under `docs/` or at the root loses far more lines than
   it gains (more than 50 net and 3x), and lists every tracked file still referencing a path the
   PR deletes (e.g. a Dependabot `directory:` entry). It never fails the build.
 
 ### Fixed
 
 - **A redirect to flow.google.com/about now names the one measured cause**
-  ([#881](https://github.com/ffroliva/gflow-cli/pull/881), [#902](https://github.com/ffroliva/gflow-cli/issues/902)).
+  ([#1080](https://github.com/ffroliva/gflow-cli/pull/1080), superseding [#881](https://github.com/ffroliva/gflow-cli/pull/881); [#902](https://github.com/ffroliva/gflow-cli/issues/902)).
   Exit 31 used to say only "open the project in a browser". On the account that
   reproduces it, the cause was Google asking the account to "Confirm it's you" while its
   cookies were healthy; the hint now says to run `gflow auth login`, which waits on that
@@ -28,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#1067](https://github.com/ffroliva/gflow-cli/issues/1067)). Flow lists a just-made
   tile on the project grid only after a reload, so the upscale waited 30 s on a page that
   could never show it and ended in exit 23. It now reloads the grid every 10 s within the
-  same budget (image and video upscale).
+  same budget: three grid loads for an image upscale, two for a video upscale (the video
+  reload is covered offline; the live run was the image upscale).
 
 - **An image whose reply Chrome loses is still returned** on flow.google.com
   ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)). Flow made the image every
@@ -48,8 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with its INVALID_ARGUMENT refusal (measured for a 1x1 PNG), the error now says Flow
   declined the image and suggests a normal-sized one, instead of "answered 200 without a
   media id". The exit code (27) is unchanged.
-
-### Fixed
 
 - **A successful `character create` keeps the character's id and name in the local
   catalog** ([#737](https://github.com/ffroliva/gflow-cli/issues/737)). The completion
@@ -6575,7 +6576,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.89.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.89.1...HEAD
+[0.89.1]: https://github.com/ffroliva/gflow-cli/compare/v0.89.0...v0.89.1
 [0.89.0]: https://github.com/ffroliva/gflow-cli/compare/v0.88.0...v0.89.0
 [0.88.0]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...v0.88.0
 [0.87.1]: https://github.com/ffroliva/gflow-cli/compare/v0.87.0...v0.87.1

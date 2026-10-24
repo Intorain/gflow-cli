@@ -4,6 +4,25 @@
 
 ## Current release
 
+**v0.89.1 — alpha.** Images Flow made are no longer lost to a dropped reply, and an upscale
+right after generating works.
+
+**Recovered, not reported lost.** When Chrome cannot hand over an image submit's reply on
+flow.google.com, gflow now reads the new image off the project grid and downloads it,
+instead of exit 9 for an image Flow had made (#1075). It takes exactly the requested count,
+once that count holds still across a settle read; an i2i reference never counts as output. An upscale
+straight after a generation reloads the grid until Flow lists the new tile, instead of
+exit 23 after 30 s (#1067).
+
+**Refused before billing, and named.** A hidden model picker is refused (exit 23) instead
+of trusted, with the Agent-chip hint (#788). An `/about` redirect names the one measured
+cause, Google's "Confirm it's you" (#881, #902). A declined upload says so (#755), and a
+completed `character create` keeps its id and name in the catalog (#737).
+
+Full ledger: [LIVE_VERIFICATION_v0.89.1](LIVE_VERIFICATION_v0.89.1.md).
+
+<details><summary>v0.89.0 — a default project, errors that name the cause, fewer ways to pay twice</summary>
+
 **v0.89.0 — alpha.** Clearer answers when something is wrong, a default project, and
 fewer ways to pay twice.
 
@@ -23,6 +42,8 @@ longer marked retryable (#941, part 1). Failure diagnostics no longer carry acco
 identifiers, and `GFLOW_CLI_INCIDENT_CAPTURE=false` stops every page capture (#890, #1062).
 
 Full ledger: [LIVE_VERIFICATION_v0.89.0](LIVE_VERIFICATION_v0.89.0.md).
+
+</details>
 
 <details><summary>v0.88.0 — browser proxy; writes Flow saved are no longer reported as failures</summary>
 
@@ -608,6 +629,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Lost image replies recovered from the grid, upscale after generating, hidden picker refused (#1075, #1067, #788) | ✅ done (v0.89.1) |
 | Default project, Flow model names, clearer exit-11 causes, refuse-before-billing and diagnostics privacy (#1039, #1038, #883, #974, #984, #1008, #890) | ✅ done (v0.89.0) |
 | Browser proxy setting (#1036); slow-link create and lost-reply writes no longer report false failures (#1037, #992, #1035) | ✅ done (v0.88.0) |
 | `gflow credits` reads the balance from flow.google.com (#795); 2K image upscale survives a lost reply (#1027) | ✅ done (v0.87.1) |
