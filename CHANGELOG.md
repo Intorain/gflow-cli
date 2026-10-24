@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A signed media URL that answers an HTTP error is a failed download, exit 6, not
+  exit 7** ([#941](https://github.com/ffroliva/gflow-cli/issues/941), part 2). After Flow
+  reports a clip done, an error status on its download link (an expired link, for example)
+  used to raise `WireFormatError` (exit 7) and leave the clip `pending` in the catalog. It
+  now raises `MediaDownloadError` (exit 6, `retryable: false`) naming the clip, so the
+  catalog marks it generated and `gflow data download <media_id>` recovers it for free.
+  Scripts that branch on exit 7 for this case should branch on 6.
+
 ## [0.89.1] — 2026-10-24
 
 ### Added

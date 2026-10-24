@@ -269,3 +269,24 @@ class TestRetryIsObservable:
             await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert "Signature=" not in caplog.text
         assert "Expires=" not in caplog.text
+
+
+class TestAnHttpErrorOnTheSignedUrlIsADownloadFailure:
+    """#941 part 2 (owner ruling 2026-10-24): an error status from the signed URL after
+    Flow reported the clip done is a failed DOWNLOAD of a billed clip, not a wire fault.
+    It must name the clip (so the recorder marks it generated, not ``pending``), exit 6,
+    stay not retryable, and point at the free recovery."""
+
+    async def test_composer_download(self) -> None:
+        from gflow_cli.errors import MediaDownloadError
+
+        page = FakePage(_Response(b"", status=403))
+        with pytest.raises(MediaDownloadError) as ei:
+            await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
+        assert ei.value.media_id == MEDIA_ID
+        from gflow_cli._cli_helpers import _exit_code_for
+
+        assert _exit_code_for(ei.value) == 6
+        assert not is_retryable(ei.value)
+        assert "403" in ei.value.detail
+        assert "Signature=" not in _rendered(ei.value)

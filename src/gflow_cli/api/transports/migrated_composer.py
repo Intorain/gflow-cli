@@ -82,6 +82,7 @@ from gflow_cli.errors import (
     FlowHostMigratedError,
     GFlowError,
     InsufficientCreditsError,
+    MediaDownloadError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
     RpcResponseUnavailableError,
@@ -3575,11 +3576,14 @@ class MigratedComposer:
                 retryable=False,  # billed: a re-run bills again (#941)
             )
             if resp.status >= 300:
-                raise WireFormatError(
+                # #941: the clip is done and billed; this is a failed DOWNLOAD, recoverable.
+                raise MediaDownloadError(
+                    media_id=record.media_id,
                     detail=f"migrated host: signed media URL returned HTTP {resp.status}",
                     status=resp.status,
                     route="flow-content.google",
                     remediation_hint=expired_link_hint(record.media_id),
+                    retryable=False,
                 )
             body = await resp.body()
             if body[4:8] == b"ftyp":

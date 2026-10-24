@@ -1289,7 +1289,9 @@ class VideoGenerationMixin:
             retryable=False,  # billed: a re-run bills again (#941)
         )
         if resp.status >= 400:
-            raise WireFormatError(
+            # #941: the clip is done and billed; this is a failed DOWNLOAD, recoverable.
+            raise MediaDownloadError(
+                media_id=media_id,
                 detail=(
                     f"video download returned HTTP {resp.status} for {media_id!r} "
                     f"via media.getMediaUrlRedirect"
@@ -1297,6 +1299,7 @@ class VideoGenerationMixin:
                 status=resp.status,
                 route="media.getMediaUrlRedirect",
                 remediation_hint=expired_link_hint(media_id),
+                retryable=False,
             )
         if not _is_allowed_download_host(resp.url):
             raise WireFormatError(
