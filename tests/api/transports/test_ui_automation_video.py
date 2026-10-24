@@ -1001,8 +1001,10 @@ class TestDownloadVideo:
 
     @pytest.mark.asyncio
     async def test_download_video_raises_on_http_error(self, tmp_path: Path) -> None:
-        """_download_video raises WireFormatError on non-2xx response."""
-        from gflow_cli.errors import WireFormatError
+        """#941 part 2: a non-2xx signed-URL answer is a failed download of a billed clip
+        (MediaDownloadError, exit 6, names the clip), not a wire fault."""
+        from gflow_cli._cli_helpers import _exit_code_for
+        from gflow_cli.errors import MediaDownloadError, is_retryable
 
         transport = UiAutomationTransport()
 
@@ -1011,8 +1013,11 @@ class TestDownloadVideo:
         fake_resp.status = 403
         fake_page.request.get = AsyncMock(return_value=fake_resp)
 
-        with pytest.raises(WireFormatError):
+        with pytest.raises(MediaDownloadError) as ei:
             await transport._download_video("test-uuid-456", tmp_path, fake_page)
+        assert ei.value.media_id == "test-uuid-456"
+        assert _exit_code_for(ei.value) == 6
+        assert not is_retryable(ei.value)
 
 
 class TestGenerateVideoReturnType:
