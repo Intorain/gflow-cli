@@ -117,6 +117,7 @@ def main() -> int:
         return 2
 
     results: list[bool] = []
+    unavailable: list[str] = []
     for arm, clip, expected in (
         ("reject-arm", args.reject, Verdict.REJECT),
         ("accept-arm", args.accept, Verdict.ACCEPT),
@@ -129,9 +130,14 @@ def main() -> int:
             # An unavailable judge is NOT a failed arm — it is no measurement at all,
             # and scoring it as a miss would blame the judge for the gateway.
             print(f"[????] {arm}: no verdict — {exc}", file=sys.stderr)
-            results.append(False)
+            unavailable.append(arm)
 
     print()
+    # A real miss on either arm is decisive; otherwise a missing verdict leaves the
+    # run unscored, with the same exit as a failed sight proof.
+    if all(results) and unavailable:
+        print("BENCH: INCOMPLETE", f"(no verdict on {', '.join(unavailable)})")
+        return 2
     print("BENCH:", "PASS" if all(results) else "FAIL", f"({sum(results)}/2 arms correct)")
     return 0 if all(results) else 1
 

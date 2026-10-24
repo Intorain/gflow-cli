@@ -319,3 +319,36 @@ def test_the_scripted_judge_satisfies_the_same_port(tmp_path: Path) -> None:
     )
     judge: Any = ScriptedFrameJudge([expected])
     assert judge.assess(_sheet(tmp_path)) == expected
+
+
+# --- the bench ---------------------------------------------------------------
+
+
+def test_an_unavailable_judge_is_not_scored_as_a_failed_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#745 item 11: a gateway 503 on an arm is no measurement, so the bench must not
+    print ``BENCH: FAIL`` (which blames the judge) — it reports the run incomplete."""
+    from acceptance import bench
+
+    class _Judge:
+        def __init__(self, _settings: Any) -> None: ...
+
+        def prove_sight(self, **_: Any) -> str:
+            return "vision-model"
+
+        def assess(self, _sheet: Any) -> Assessment:
+            raise JudgeUnavailableError("gateway 503")
+
+    monkeypatch.setattr(bench, "VisionFrameJudge", _Judge)
+    monkeypatch.setattr(bench.JudgeSettings, "from_env", classmethod(lambda _cls: None))
+    monkeypatch.setattr(bench, "build_sheet", lambda clip, _out: _sheet(tmp_path))
+    argv = ["bench.py", "--reject", "bad.mp4", "--accept", "good.mp4", "--out", str(tmp_path)]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    code = bench.main()
+
+    out = capsys.readouterr().out
+    assert "BENCH: FAIL" not in out
+    assert "BENCH: INCOMPLETE" in out
+    assert code == 2

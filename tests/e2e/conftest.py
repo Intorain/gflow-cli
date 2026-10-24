@@ -44,6 +44,18 @@ from gflow_cli.errors import FlowHostMigratedError
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
+# Read at import, i.e. at collection, before the autouse `_isolate_settings` in
+# tests/conftest.py overwrites it for every test (#745).
+_REAL_GFLOW_CLI_HOME = os.environ.get("GFLOW_CLI_HOME")
+
+
+def _restore_real_home(env: dict[str, str]) -> None:
+    """Give a child the developer's own GFLOW_CLI_HOME, or none (the default home)."""
+    if _REAL_GFLOW_CLI_HOME is None:
+        env.pop("GFLOW_CLI_HOME", None)
+    else:
+        env["GFLOW_CLI_HOME"] = _REAL_GFLOW_CLI_HOME
+
 
 @pytest.fixture
 def e2e_profile_dir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
@@ -140,8 +152,9 @@ def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     # profile and the subprocess exits 2 with "No session for profile '<name>'" while
     # the profile is perfectly valid. DB and output stay isolated below — only the home,
     # which is where PROFILES live, is restored. Six e2e modules each carried their own
-    # copy of this pop; it belongs here, once.
-    env.pop("GFLOW_CLI_HOME", None)
+    # copy of this pop; it belongs here, once. A developer's custom home is put back
+    # rather than dropped, or the child loses it the same way (#745).
+    _restore_real_home(env)
     env["PYTHONUTF8"] = "1"
     env["GFLOW_CLI_DB_PATH"] = str(db)
     env["GFLOW_CLI_OUTPUT_DIR"] = str(out)
