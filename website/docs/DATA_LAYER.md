@@ -210,7 +210,8 @@ async worker (which mirrors its `generation_queue.error_json` failure into
   (`MediaDownloadError`, exit 6, `error_type=media-download`, #896) also marks that
   clip's asset `MEDIA_GENERATION_STATUS_SUCCESSFUL`: the operation failed, the
   generation did not, and `gflow data download <media_id>` recovers it for free. An
-  HTTP error answer on the signed URL (e.g. an expired link) still leaves it `pending`.
+  HTTP error answer on the signed URL (e.g. an expired link) is the same
+  `MediaDownloadError` and marks it the same way (#941; it was exit 7 and stayed `pending`).
 - A poll that COMPLETES with a Flow-reported failure (`succeeded=false`) is
   recorded as `failed` with `error_type=generation-failed` and the
   `failure_reasons` as detail — not as a success.
