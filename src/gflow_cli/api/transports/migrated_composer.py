@@ -3715,12 +3715,14 @@ async def run_video(
     await composer.send_prompt(page, request.prompt, append=has_mentions)
     if request.mode is Mode.R2V:
         attached = await composer.read_chips(page)
-        if len(attached) != len(request.reference_images) + len(request.reference_entities):
+        n_images, n_chars = len(request.reference_images), len(request.reference_entities)
+        if len(attached) != n_images + n_chars:
             raise ReferenceNotFoundError(
                 detail=(
-                    f"migrated host: {len(request.reference_images)} reference(s) requested "
-                    f"but {len(attached)} on the prompt at submit time — refusing to spend "
-                    f"credits on a run that would ignore them"
+                    f"migrated host: {n_images} image reference(s) + {n_chars} character(s) "
+                    f"= {n_images + n_chars} chip(s) requested but {len(attached)} on the "
+                    f"prompt at submit time — refusing to spend credits on a run that would "
+                    f"ignore them"
                 ),
             )
     record = await composer.submit_and_observe(

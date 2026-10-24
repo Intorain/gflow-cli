@@ -524,3 +524,43 @@ def test_character_references_are_still_refused_until_a_submit_completes() -> No
         _unported_form(_r2v(reference_entities=("ent-kael",), reference_entity_names=("Kael",)))
         is not None
     )
+
+
+async def test_the_chip_count_refusal_states_the_numbers_it_compared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#745 item 9: the guard counts images AND characters, so its message must too —
+    reporting only the image count printed "1 requested but 1 on the prompt"."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from gflow_cli.api.transports import migrated_composer as mc
+
+    composer = MagicMock()
+    composer.ensure_editor = AsyncMock(return_value="classic")
+    composer.apply_video_settings = AsyncMock()
+    composer.attach_references = AsyncMock(return_value=("m1",))
+    composer.attach_character_entities = AsyncMock(return_value=("ent-kael",))
+    composer.send_prompt = AsyncMock()
+    composer.read_chips = AsyncMock(return_value=[{"reference_type": "media"}])
+    monkeypatch.setattr(mc, "MigratedComposer", lambda **_: composer)
+    # The character gate is lifted only to reach the guard it would sit behind.
+    monkeypatch.setattr(mc, "_unported_form", lambda _r: None)
+
+    request = _r2v(
+        reference_images=(Path("a.png"),),
+        reference_entities=("ent-kael",),
+        reference_entity_names=("Kael",),
+    )
+    with pytest.raises(ReferenceNotFoundError) as exc_info:
+        await mc.run_video(
+            MagicMock(url="about:blank"),
+            request,
+            project_id="p1",
+            save=MagicMock(),
+            poll_timeout_s=1.0,
+            download=False,
+            on_started=None,
+        )
+    detail = str(exc_info.value.detail)
+    assert "1 image reference(s) + 1 character(s) = 2 chip(s) requested" in detail
+    assert "1 on the prompt" in detail
