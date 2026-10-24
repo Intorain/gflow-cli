@@ -96,6 +96,7 @@ class Dom:
     # would trade a false "file a frontend bug" for a false "top up your account".
     submit_anchor_present: bool = True
     credits_warning_present: bool = False
+    credits_warning_visible: bool = True  # #745: mounted but hidden is not a warning
     # The project grid's image tiles, one list per read; the last one repeats (#1075).
     grid_reads: list[list[dict[str, str]]] = field(default_factory=lambda: [[]])
     # Google's `glue` consent bar. Default False because that is the ordinary page —
@@ -743,7 +744,9 @@ class FakePage:
             return FakeLocator(self, "composer", ["composer"])
         if css == migrated_composer.CREDITS_WARNING:
             hits = ["warning"] if dom.credits_warning_present else []
-            return FakeLocator(self, "credits_warning", hits)
+            return FakeLocator(
+                self, "credits_warning", hits, visible=lambda: dom.credits_warning_visible
+            )
         if css == migrated_composer.COOKIE_BAR:
             # Always in the DOM, visibility read LAZILY: the driver holds this locator
             # across the dismiss click and then waits for it to go hidden, so a bool
@@ -1479,6 +1482,32 @@ async def test_a_missing_submit_with_no_credits_warning_is_still_drift() -> None
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
+
+
+async def test_a_hidden_credits_warning_is_not_read_as_a_shortfall() -> None:
+    """#745 item 3: a warning node Flow keeps mounted but hidden on a funded account must
+    not turn every real submit-anchor drift into "top up your credits" (exit 37)."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.dom.submit_anchor_present = False
+    page.dom.credits_warning_present = True
+    page.dom.credits_warning_visible = False
+
+    with pytest.raises(UiSelectorDriftError, match="is missing"):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+        )
+
+
+def test_the_credits_warning_anchor_carries_no_translated_text() -> None:
+    """#745 item 2: AGENTS.md forbids text-label selectors in transports. The measured
+    warning (2026-09-07) is one element carrying both the class and the English
+    aria-label, so the class alone still finds it, and in every UI language."""
+    from gflow_cli.api.transports.migrated_composer import CREDITS_WARNING
+
+    assert CREDITS_WARNING == "button.prompt-warning-button"
 
 
 async def test_a_missing_custom_submit_names_its_own_selector() -> None:

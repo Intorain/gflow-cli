@@ -964,7 +964,7 @@ async def test_an_approved_gate_that_never_turns_read_only_is_drift() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("counts", "missing"),
-    [([0], "editor"), ([1, 0, 0], "submit")],  # editor, submit, credits warning
+    [([0], "editor"), ([1, 0], "submit")],  # editor, submit
 )
 async def test_a_missing_editor_or_submit_is_drift_before_anything_is_sent(
     counts: list[int], missing: str
@@ -972,6 +972,7 @@ async def test_a_missing_editor_or_submit_is_drift_before_anything_is_sent(
     page = _clicks_time_out()
     loc = page.locator.return_value
     loc.count = AsyncMock(side_effect=counts)
+    loc.first.is_visible = AsyncMock(return_value=False)  # no credits warning shown (#745)
     loc.click = AsyncMock()
     page.keyboard = MagicMock(press=AsyncMock(), insert_text=AsyncMock())
     with pytest.raises(UiSelectorDriftError, match=f"{missing} .* missing"):
