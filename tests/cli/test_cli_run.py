@@ -9,6 +9,7 @@ Covers the spec from AUDIT_E1 Section D:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -501,3 +502,163 @@ class TestGflowRunProject:
         )
         assert result.exit_code == 2
         assert client.generate_image.call_count == 0
+
+
+class TestGflowRunResume:
+    """#934: `--resume` re-uses rows a previous run already made in the same project."""
+
+    def _invoke(
+        self,
+        tmp_path: Path,
+        payload: dict[str, Any],
+        *args: str,
+        first_seed: int = 200,
+        jpeg: bool = False,
+    ) -> tuple[Any, Any]:
+        cfg_path = _write_config(tmp_path, payload)
+        # Each run gets its own media ids, as Flow does: the catalog rejects a reused one.
+        fake_client = _patched_client_factory(
+            image_for_prompt=AsyncMock(
+                side_effect=[
+                    replace(_fake_generated_image(seed=s), display_name=f"Run image {s}")
+                    for s in range(first_seed, first_seed + 20)
+                ]
+            )
+        )
+
+        async def _download(img: GeneratedImage, target: Path) -> Path:
+            # Bytes per image, as Flow serves: an overwritten file must hash differently.
+            # With `jpeg` the file is named by its bytes, as the real download does (#96).
+            saved = target.with_suffix(".jpg") if jpeg else target
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            saved.write_bytes(b"\xff\xd8\xff " + img.media_name.encode())
+            return saved
+
+        fake_client.download_image = AsyncMock(side_effect=_download)
+        with (
+            patch("gflow_cli.cli_run.FlowApiClient", return_value=fake_client),
+            patch("gflow_cli.cli_run._resolve_profile", return_value="x"),
+            patch("gflow_cli.cli_run._make_provider_dir", return_value=tmp_path / "p"),
+        ):
+            result = CliRunner().invoke(
+                cli_main,
+                ["run", "--config", str(cfg_path), "--output-dir", str(tmp_path / "out"), *args],
+                catch_exceptions=False,
+            )
+        return result, fake_client
+
+    _CHAIN: dict[str, Any] = {
+        "prompts": [{"text": "a red kite"}, {"text": "the kite at dusk", "ref": "batch:0"}]
+    }
+
+    def test_resume_needs_the_run_s_project(self, tmp_path: Path) -> None:
+        result, client = self._invoke(tmp_path, self._CHAIN, "--resume")
+        assert result.exit_code == 11, result.output
+        assert "--project" in result.output
+        assert client.generate_image.call_count == 0
+
+    def test_a_done_parent_is_reused_and_its_child_references_it(self, tmp_path: Path) -> None:
+        first, _ = self._invoke(tmp_path, self._CHAIN, "--project", "proj-a")
+        assert first.exit_code == 0, first.output
+        (tmp_path / "out" / "prompt_1_0.png").unlink()  # the child's file is lost
+
+        result, client = self._invoke(
+            tmp_path, self._CHAIN, "--project", "proj-a", "--resume", first_seed=300
+        )
+
+        assert result.exit_code == 0, result.output
+        assert client.generate_image.call_count == 1  # only the child
+        ref = client.generate_image.call_args.kwargs["req"].refs[0]
+        assert ref.name == "projects/p/assets/asset-200"
+        assert ref.display_name == "Run image 200"
+        assert ref.in_project
+        assert "RESUMED" in result.output
+
+    def test_a_row_recorded_in_another_project_is_regenerated(self, tmp_path: Path) -> None:
+        first, _ = self._invoke(tmp_path, self._CHAIN, "--project", "proj-a")
+        assert first.exit_code == 0, first.output
+
+        result, client = self._invoke(
+            tmp_path, self._CHAIN, "--project", "proj-b", "--resume", first_seed=300
+        )
+
+        assert result.exit_code == 0, result.output
+        assert client.generate_image.call_count == 2
+
+    def test_a_file_the_catalog_does_not_know_is_regenerated(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "prompt_0_0.png").write_bytes(b"\x89PNG not ours")
+
+        result, client = self._invoke(
+            tmp_path, {"prompts": [{"text": "a red kite"}]}, "--project", "proj-a", "--resume"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert client.generate_image.call_count == 1
+
+
+def test_resume_finds_a_row_whose_image_was_saved_as_jpeg(tmp_path: Path) -> None:
+    """Live 2026-10-24: Flow's images download as JPEG and are saved `prompt_0_0.jpg`, so
+    a lookup for `.png` resumed nothing and regenerated every row."""
+    runner = TestGflowRunResume()
+    first, client = runner._invoke(  # noqa: SLF001
+        tmp_path, {"prompts": [{"text": "a red kite"}]}, "--project", "proj-a", jpeg=True
+    )
+    assert first.exit_code == 0, first.output
+    assert (tmp_path / "out" / "prompt_0_0.jpg").is_file()
+
+    result, client = runner._invoke(  # noqa: SLF001
+        tmp_path,
+        {"prompts": [{"text": "a red kite"}]},
+        "--project",
+        "proj-a",
+        "--resume",
+        first_seed=300,
+        jpeg=True,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.generate_image.call_count == 0
+    assert "RESUMED" in result.output
+
+
+class TestGflowRunResumeNeverReusesTheWrongImage:
+    """Review of #934: a file name and a project are not enough to say a row is done."""
+
+    _CHAIN: dict[str, Any] = TestGflowRunResume._CHAIN  # noqa: SLF001
+
+    def test_a_row_whose_prompt_changed_is_regenerated_and_so_is_its_child(
+        self, tmp_path: Path
+    ) -> None:
+        runner = TestGflowRunResume()
+        first, _ = runner._invoke(tmp_path, self._CHAIN, "--project", "proj-a")  # noqa: SLF001
+        assert first.exit_code == 0, first.output
+        edited = {
+            "prompts": [{"text": "a GREEN kite"}, {"text": "the kite at dusk", "ref": "batch:0"}]
+        }
+
+        result, client = runner._invoke(  # noqa: SLF001
+            tmp_path, edited, "--project", "proj-a", "--resume", first_seed=300
+        )
+
+        assert result.exit_code == 0, result.output
+        # The parent's prompt changed, and a child of a regenerated parent is stale too.
+        assert client.generate_image.call_count == 2
+
+    def test_an_overwritten_file_resolves_to_the_image_now_on_disk(self, tmp_path: Path) -> None:
+        runner = TestGflowRunResume()
+        args = ("--project", "proj-a")
+        assert runner._invoke(tmp_path, self._CHAIN, *args)[0].exit_code == 0  # noqa: SLF001
+        # A plain re-run overwrites both files with new images (300, 301).
+        again, _ = runner._invoke(tmp_path, self._CHAIN, *args, first_seed=300)  # noqa: SLF001
+        assert again.exit_code == 0, again.output
+        (tmp_path / "out" / "prompt_1_0.png").unlink()
+
+        result, client = runner._invoke(  # noqa: SLF001
+            tmp_path, self._CHAIN, *args, "--resume", first_seed=400
+        )
+
+        assert result.exit_code == 0, result.output
+        assert client.generate_image.call_count == 1
+        assert client.generate_image.call_args.kwargs["req"].refs[0].name.endswith("asset-300")

@@ -1048,6 +1048,35 @@ class DataRepository:
         ).fetchone()
         return self._row_to_seed_image(row)
 
+    def resolve_seed_image_by_file(
+        self, profile_name: str, path: Path, sha256: str
+    ) -> SeedImage | None:
+        """The image whose recorded copy at ``path`` has exactly these bytes, newest first.
+
+        A path alone is ambiguous: a re-run that overwrites the file adds a second row for
+        the same path, and ``resolve_seed_image_by_path`` returns either (#934 review).
+        """
+        row = self._store.conn.execute(
+            """
+            SELECT a.id, a.profile_name, a.flow_project_id, a.flow_media_id,
+                   a.flow_workflow_id, a.kind, a.width, a.height,
+                   a.model, a.aspect_ratio, a.created_at,
+                   o.prompt
+            FROM assets a
+            JOIN local_files lf ON lf.asset_id = a.id
+            LEFT JOIN operation_assets oa ON oa.asset_id = a.id AND oa.role = ?
+            LEFT JOIN operations o ON o.id = oa.operation_id
+            WHERE a.profile_name = ?
+              AND a.kind = 'image'
+              AND lf.path = ?
+              AND lf.sha256 = ?
+            ORDER BY lf.created_at DESC
+            LIMIT 1
+            """,
+            (OperationAssetRole.OUTPUT.value, profile_name, str(path), sha256),
+        ).fetchone()
+        return self._row_to_seed_image(row)
+
     def resolve_latest_image(
         self,
         profile_name: str,

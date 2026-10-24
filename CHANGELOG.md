@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow run --resume` picks up where a run stopped**
+  ([#934](https://github.com/ffroliva/gflow-cli/issues/934)). With the same config,
+  project and output folder, a row whose images are already on disk and recorded in the
+  local catalog as that project's is shown as `RESUMED` and not generated again, and a
+  `batch:N` child references it in place. Before, a re-run regenerated every row, parents
+  included, spending image quota twice. `--resume` needs `--project` or a config
+  `"project"` (exit 11 otherwise). CLI only, like `gflow run` itself.
+
 ### Fixed
 
 - **Selector drift is watched again, on flow.google.com**
