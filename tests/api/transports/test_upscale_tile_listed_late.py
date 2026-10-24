@@ -60,3 +60,31 @@ async def test_a_tile_listed_only_after_a_reload_is_found(
         route="upsampleImage",
     )
     assert page.reloads == 1
+
+
+@pytest.mark.asyncio
+async def test_the_video_budget_gets_one_reload_then_reports_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Video upscale's 15 s tile budget is two grid loads: one reload, then exit 23."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    page = _Page()
+
+    async def never(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(mu, "wait_for_or_none", never)
+    monkeypatch.setattr(mu, "raise_if_known_landing", never)
+    with pytest.raises(UiSelectorDriftError):
+        await mu.open_tile_download_menu(
+            page,  # type: ignore[arg-type]
+            project_id="p",
+            media_id=_MEDIA,
+            tile_selector="video",
+            tile_timeout_ms=15_000,
+            kind="video",
+            prefix="migrated video upscale",
+            route="video_upscale",
+        )
+    assert page.reloads == 1
