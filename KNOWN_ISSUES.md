@@ -17,7 +17,7 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 ### Every command lands on `flow.google.com/about` (exit 31) while `gflow auth status` says the session is fine
 
 - **Status:** Open · **Severity:** High for the affected account (nothing runs) · **Affected:** measured on one account (`denon82`, 2026-09-23). Other `/about` occurrences are not yet shown to share the cause.
-- **Tracked:** [#902](https://github.com/ffroliva/gflow-cli/issues/902) (`auth login` cannot clear it) · [#888](https://github.com/ffroliva/gflow-cli/issues/888) · [#756](https://github.com/ffroliva/gflow-cli/issues/756)
+- **Tracked:** [#902](https://github.com/ffroliva/gflow-cli/issues/902) (`auth login` could not clear it before v0.80.0; it now waits on the check) · [#888](https://github.com/ffroliva/gflow-cli/issues/888) · [#756](https://github.com/ffroliva/gflow-cli/issues/756)
 - **Evidence:** [spike](docs/superpowers/spikes/2026-09-23-about-cta-leads-to-google-reauth.md)
 
 Flow sends every visit to its public landing page `/about`, while every Google and Flow cookie
@@ -27,12 +27,13 @@ waiting for the account to re-verify its identity.
 
 **Through v0.79.1, `gflow auth login` does not fix it.** It sees the valid cookies, reports
 `Flow session verified` in about half a second, and closes Chrome before Google can ask (#902).
-From the next release, the login watches where the page lands. If Flow sends it to `/about`, the
+Since v0.80.0 the login watches where the page lands. If Flow sends it to `/about`, the
 login keeps Chrome open and asks you to press the page's main button and finish "Confirm it's
 you". If you close the window or the time limit runs out first, it exits 12
 (`IdentityRecheckPendingError`) instead of reporting success. The failing state could not be
 reproduced live for this fix, because the one measured account was already cleared by hand. The
-detection is tested offline only.
+detection is tested offline only. Since v0.89.1 a run that lands on `/about` (exit 31) names this
+cause in its hint and points at `gflow auth login --profile <name>` ([#1080](https://github.com/ffroliva/gflow-cli/pull/1080)).
 
 **Workaround (needs the account password):** with no gflow command running, open real Chrome on
 the profile directory yourself:
@@ -845,13 +846,15 @@ The contrasting message, **`no upload request ever left the page`**, means somet
 
 ### Chrome loses a reply body although Flow saved the write (migrated host)
 
-- **Status:** Mitigated · **Severity:** Medium (intermittent; the write usually saved) · **Affects:** the migrated `flow.google.com` host, local uploads (`--initial-frame`, `--ref`, `i2i` files), project create and rename · **Tracked:** [#1009](https://github.com/ffroliva/gflow-cli/issues/1009)
+- **Status:** Mitigated · **Severity:** Medium (intermittent; the write usually saved) · **Affects:** the migrated `flow.google.com` host, local uploads (`--initial-frame`, `--ref`, `i2i` files), project create and rename, image submits · **Tracked:** [#1009](https://github.com/ffroliva/gflow-cli/issues/1009), [#1075](https://github.com/ffroliva/gflow-cli/issues/1075)
 
 Distinct from #719 above, where no reply arrives at all. Here the reply arrives, but Chrome cannot hand its body over: `Network.getResponseBody: No data found for resource with given identifier`. Our spike saw it on 2 of 45 real `maseQ` uploads, and a fresh reload found both uploads saved ([spike](docs/superpowers/spikes/2026-10-20-migrated-upload-reply-body-eviction.md)). Before the fix, gflow reported the upload as a refused file (exit 27).
 
 A project create or rename whose reply is late, not lost, takes the same path: on a slow link a 40 s create used to end as a retryable exit 9 while Flow made the project, so a retry made a second one ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)). The reply wait is now 120 s, and past it gflow reads the new project's id from Flow's navigation to it.
 
 **Mitigation:** gflow now opens the project in a second tab and reads the outcome back: the new project's id, the saved title, or exactly one tile with the run's unique file name and a media id. Nothing is submitted twice. The readback can take up to about two minutes on a slow page.
+
+**Image submits (since v0.89.1, [#1075](https://github.com/ffroliva/gflow-cli/issues/1075)).** Flow had made the image every reported time. gflow now reads the run's new tile(s) off the project grid and downloads them, taking exactly the requested count once it holds still for a few seconds; an i2i reference is never counted. Any other count, or a grid it cannot read, still ends in exit **9** (`retryable: false`) naming the project page, and so does a lost **video** submit reply: check the project before re-running.
 
 **If it cannot confirm the outcome**, the command exits **7** with `RpcResponseUnavailableError` (`retryable: false`). The write may have saved. Open the project on flow.google.com and look for the title or the file name in the error before you re-run, or you may get a duplicate project or upload. `gflow run` does not re-upload a reference file after this error in the same run.
 
@@ -1479,6 +1482,7 @@ now names which of three things happened rather than blaming drift:
 | `agent mode was left, but the settings trigger … still did not become visible` | the mode is off — this is real selector drift | file a bug; it is not this issue |
 | `the chip could not be read back, so whether the mode is still on is unknown` | the page went dark mid-recovery | check the **Agent** chip in a browser *before* filing this as drift |
 | `the settings trigger … is not visible — the account is in Flow's agent mode` | the mode flipped **mid-run**, after the editor was already ready | turn the **Agent** chip off in a browser; re-run |
+| `the model picker (arrow_drop_down) is hidden in the settings pane` (since v0.89.1, [#788](https://github.com/ffroliva/gflow-cli/issues/788)) | the pane opened but its model picker is hidden, so `--model` cannot be checked; nothing was submitted | if the **Agent** chip is on, turn it off in a browser; re-run |
 
 **On 0.71.0 and earlier there is no recovery.** Open the project on
 `flow.google.com`, click the **Agent** chip off, and the account works again.

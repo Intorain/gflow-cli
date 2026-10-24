@@ -194,7 +194,6 @@ async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: 
     phase["now"] = "done"
     rpcids = sorted({e["rpcid"] for e in seen if e["rpcid"]})
     after_submit = sorted({e["rpcid"] for e in seen if e["phase"] == "submit" and e["rpcid"]})
-    unwatched = [r for r in after_submit if r not in SUBMIT_RPCS]
     return {
         "project_id": project_id,
         "entity_id": entity_id,
@@ -203,17 +202,6 @@ async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: 
         "chips_after_attach": chips_after_attach,
         "all_rpcids_seen": rpcids,
         "rpcids_after_submit": after_submit,
-        "UNWATCHED_after_submit": unwatched,
-        "verdict": (
-            f"an UNWATCHED rpcid fired after submit: {unwatched} — add it to SUBMIT_RPCS"
-            if unwatched
-            else (
-                "no batchexecute fired after submit at all — the click is not reaching "
-                "the button, or the app refused client-side"
-                if not after_submit
-                else "only watched rpcids fired — the reply shape is the problem, not the id"
-            )
-        ),
         "submit_model_keys": sorted(
             {k for e in seen if e.get("model_keys") for k in e["model_keys"]}
         ),
@@ -231,7 +219,7 @@ async def _main(profile: str, project_id: str, entity_id: str, name: str,
         Path(out_path).write_text(
             json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        _stage(f"VERDICT: {report['verdict']}")
+        _stage(f"rpcids after submit: {report['rpcids_after_submit']} (read the events)")
         _stage(f"report written to {out_path}")
     return 0
 

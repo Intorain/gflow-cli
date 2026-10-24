@@ -101,6 +101,7 @@ def fake_page(
     page = MagicMock()
     page.url = "https://flow.google.com/project/00000000-0000-4000-8000-000000000001"
     page.goto = AsyncMock()
+    page.reload = AsyncMock()
     page.wait_for_timeout = AsyncMock()
     handlers: list[Callable[[Any], Awaitable[None]]] = []
     page.response_handlers = handlers
