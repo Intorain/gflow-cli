@@ -370,6 +370,14 @@ async def raise_if_known_landing(page: object, *, requested: str, at: str) -> No
         # because the redirect had stopped reproducing. See
         # docs/superpowers/spikes/2026-09-11-about-redirect-is-stable-for-an-account.md.)
         retryable=False,
+        # The one cause measured since (2026-09-23, healthy cookies): Google's pending
+        # identity re-check, which `gflow auth login` now waits on (#902/#904).
+        remediation_hint=(
+            'One measured cause: Google wants this account to "Confirm it\'s you". Run '
+            "`gflow auth login --profile <name>`, press the main button on the Flow page "
+            "that opens and finish Google's check. If the app loads and this persists, open "
+            "the project in a browser on flow.google.com to confirm this account can reach it."
+        ),
     )
 
 

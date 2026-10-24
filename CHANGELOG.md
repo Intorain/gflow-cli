@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A redirect to flow.google.com/about now names the one measured cause**
+  ([#881](https://github.com/ffroliva/gflow-cli/pull/881), [#902](https://github.com/ffroliva/gflow-cli/issues/902)).
+  Exit 31 used to say only "open the project in a browser". On the account that
+  reproduces it, the cause was Google asking the account to "Confirm it's you" while its
+  cookies were healthy; the hint now says to run `gflow auth login`, which waits on that
+  check. The exit code and `retryable: false` are unchanged.
+
 - **Upscaling an image right after generating it no longer fails as selector drift**
   ([#1067](https://github.com/ffroliva/gflow-cli/issues/1067)). Flow lists a just-made
   tile on the project grid only after a reload, so the upscale waited 30 s on a page that
