@@ -419,3 +419,37 @@ def test_the_project_reaches_the_e2e_child(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.delenv("GFLOW_CLI_E2E_PROJECT", raising=False)
     assert _child_env("p", "proj-1")["GFLOW_CLI_E2E_PROJECT"] == "proj-1"
     assert "GFLOW_CLI_E2E_PROJECT" not in _child_env("p", "")
+
+
+def test_a_stale_session_is_renewed_before_it_is_called_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-10-22..24: denon82 read AUTH-EXPIRED three nights running, yet a browser run
+    the same day refreshed its cookies and `auth status` then passed. `gflow auth renew`
+    does that refresh headlessly at $0, so the canary renews once before giving up."""
+    from scripts.canary import run_canary
+
+    calls: list[list[str]] = []
+    status_results = iter([1, 0])
+
+    class _Proc:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd: list[str], **_k: object) -> _Proc:
+        calls.append(cmd[3:5])
+        return _Proc(next(status_results) if cmd[4] == "status" else 0)
+
+    monkeypatch.setattr(run_canary, "_run", fake_run)
+    assert run_canary.probe_auth("p") is True
+    assert calls == [["auth", "status"], ["auth", "renew"], ["auth", "status"]]
+
+
+def test_a_session_renew_cannot_fix_is_still_expired(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.canary import run_canary
+
+    class _Proc:
+        returncode = 1
+
+    monkeypatch.setattr(run_canary, "_run", lambda *_a, **_k: _Proc())
+    assert run_canary.probe_auth("p") is False
