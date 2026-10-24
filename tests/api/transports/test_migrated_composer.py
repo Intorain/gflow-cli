@@ -96,6 +96,8 @@ class Dom:
     # would trade a false "file a frontend bug" for a false "top up your account".
     submit_anchor_present: bool = True
     credits_warning_present: bool = False
+    # The project grid's image tiles, one list per read; the last one repeats (#1075).
+    grid_reads: list[list[dict[str, str]]] = field(default_factory=lambda: [[]])
     # Google's `glue` consent bar. Default False because that is the ordinary page —
     # it appears only when Google re-prompts, which is exactly why it went unnoticed
     # until it covered the settings trigger and the submit button on 2026-09-11.
@@ -630,6 +632,11 @@ class FakePage:
     async def evaluate(self, expression: str, argument: Any = None) -> Any:
         if "elementFromPoint" in expression:
             return {"target": True, "top": None}
+        if "flow-image-tile" in expression:
+            reads = self.dom.grid_reads
+            return reads.pop(0) if len(reads) > 1 else reads[0]
+        if "naturalWidth" in expression:
+            return [1376, 768]
         return {}
 
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
@@ -3251,11 +3258,16 @@ async def test_an_image_reply_timeout_after_the_click_is_not_retryable(
     assert "project" in ei.value.remediation_hint
 
 
-async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error() -> None:
+async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """#1010: the raw Playwright error reached the client's retry loop, which re-ran the
-    billed submit. It must arrive typed, named, and marked not retryable."""
+    billed submit. It must arrive typed, named, and marked not retryable — when no new
+    tile on the grid recovers the image (#1075)."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
     from gflow_cli.errors import is_retryable
+
+    monkeypatch.setattr(migrated_composer, "IMAGE_RECOVERY_S", 0.05)
 
     page = FakePage()
     page.dom.prompt = "a blue cup"
@@ -3267,6 +3279,58 @@ async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error() 
     assert "ogiZ0b" in ei.value.detail and "unreadable" in ei.value.detail
     assert not is_retryable(ei.value)
     assert "project" in ei.value.remediation_hint
+    # #1075: the reporter could not find the run without the project id.
+    assert "p1" in ei.value.detail
+
+
+def _tile(media_id: str) -> dict[str, str]:
+    return {
+        "tile": "flow-image-tile",
+        "poster": f"https://flow.google.com/asb/{media_id}=s512-rw",
+        "video": "",
+        "id": media_id,
+    }
+
+
+OLD_TILE = "11111111-1111-1111-1111-111111111111"
+NEW_TILE = "22222222-2222-2222-2222-222222222222"
+
+
+async def test_a_lost_image_reply_body_is_recovered_from_the_new_grid_tile() -> None:
+    """#1075: Flow made the image every time; only the reply body was lost. The new tile
+    on the project grid names it, so the run returns it instead of failing."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup")
+    )
+
+    assert [i.media_name for i in images] == [NEW_TILE]
+    assert images[0].fife_url == f"https://flow.google.com/asb/{NEW_TILE}=s0"
+    assert images[0].dimensions == (1376, 768)
+    assert page.dom.submit_clicked == 1
+
+
+async def test_a_lost_image_reply_with_more_new_tiles_than_asked_is_not_guessed() -> None:
+    """Two new tiles for a one-image run cannot be told apart from a second run's: the
+    outcome stays unknown rather than returning someone else's image."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    third = "33333333-3333-3333-3333-333333333333"
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[], [_tile(NEW_TILE), _tile(third)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    with pytest.raises(TransportTimeoutError, match="2 new"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
 
 
 # ----------------------------------------------------------------------------------

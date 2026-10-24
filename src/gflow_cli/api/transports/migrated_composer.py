@@ -440,6 +440,9 @@ SUBMIT_ENABLE_POLL_S = 0.1
 #: for it before settling for the URL-less record.
 RESULT_URL_GRACE_S = 20.0
 IMAGE_REPLY_BUDGET_S = 180.0
+#: After a lost ``ogiZ0b`` body, how long the project grid may take to show the new
+#: tile(s). Flow made the image on every #1075 run; only the reply body was lost.
+IMAGE_RECOVERY_S = 60.0
 
 #: Product names read back verbatim from the live migrated menu (v0.62.1's refusal
 #: diagnostic, corroborated by the 2026-09-05 spike). These are the tiers a *not yet
@@ -784,6 +787,69 @@ def _outcome_unknown(detail: str) -> TransportTimeoutError:
             "a re-run bills again."
         ),
     )
+
+
+async def _grid_images(page: Page) -> dict[str, str]:
+    """The project grid's image tiles, media id -> tile src. Empty when unreadable."""
+    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
+
+    try:
+        tiles = await page.evaluate(agent._TILES_JS)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    except Exception:  # noqa: BLE001 - a grid we cannot read recovers nothing
+        return {}
+    if not isinstance(tiles, list):
+        return {}
+    found: dict[str, str] = {}
+    for tile in cast("list[dict[str, str]]", tiles):
+        uuid = (
+            agent._tile_uuid(tile, "image")  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+            if tile.get("tile") == "flow-image-tile"
+            else None
+        )
+        if uuid:
+            found.setdefault(uuid, tile.get("poster", ""))
+    return found
+
+
+async def _recover_images(
+    page: Page, request: GenerateImageRequest, baseline: set[str]
+) -> list[GeneratedImage]:
+    """The images a submit made, read off the grid after its reply body was lost (#1075).
+
+    Exactly ``request.count`` new tiles is the only answer: more cannot be told apart
+    from another run's, so the outcome stays unknown rather than guessed."""
+    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
+
+    deadline = time.monotonic() + IMAGE_RECOVERY_S
+    fresh: dict[str, str] = {}
+    while True:
+        fresh = {u: src for u, src in (await _grid_images(page)).items() if u not in baseline}
+        if len(fresh) >= request.count or time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(min(1.0, max(deadline - time.monotonic(), 0.01)))
+    if len(fresh) != request.count or not all(fresh.values()):
+        raise _outcome_unknown(
+            f"migrated host: the {IMAGE_SUBMIT_RPC} submit reply arrived but its body was "
+            f"unreadable, and the grid of {safe_page_url(page.url)} showed {len(fresh)} new "
+            f"image(s) where {request.count} were requested"
+        )
+    log.info("migrated.image_recovered_from_grid", count=len(fresh))
+    images: list[GeneratedImage] = []
+    for uuid, src in fresh.items():
+        url = agent._full_size_src(src)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+        images.append(
+            GeneratedImage(
+                media_name=uuid,
+                workflow_id="",
+                seed=0,
+                prompt=request.prompt,
+                model_name_type=None,  # #789: nothing here observed the model either
+                aspect_ratio=request.aspect.value,
+                fife_url=url,
+                dimensions=await agent._natural_size(page, url),  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+            )
+        )
+    return images
 
 
 def _submit_refusal(
@@ -3273,6 +3339,8 @@ class MigratedComposer:
         loop = asyncio.get_running_loop()
         result: asyncio.Future[list[GeneratedImage]] = loop.create_future()
         route_error: asyncio.Future[WireFormatError] = loop.create_future()
+        body_lost: asyncio.Future[None] = loop.create_future()
+        baseline = set(await _grid_images(page))
 
         def on_request(raw_request: Any) -> None:
             url = str(getattr(raw_request, "url", ""))
@@ -3288,7 +3356,7 @@ class MigratedComposer:
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
-            if url_rpcid(url) != IMAGE_SUBMIT_RPC or result.done():
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or result.done() or body_lost.done():
                 return
             status = int(getattr(response, "status", 0) or 0)
             if status != 200:
@@ -3303,12 +3371,8 @@ class MigratedComposer:
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - a raw Playwright error here was retried (#1010)
-                result.set_exception(
-                    _outcome_unknown(
-                        f"migrated host: the {IMAGE_SUBMIT_RPC} submit reply arrived but "
-                        "its body was unreadable"
-                    )
-                )
+                # #1075: the image was made; read it off the grid instead of the reply.
+                body_lost.set_result(None)
                 return
             try:
                 refusal = _submit_refusal(text, (IMAGE_SUBMIT_RPC,))
@@ -3395,12 +3459,14 @@ class MigratedComposer:
                 await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             done, _ = await asyncio.wait(
-                {result, route_error},
+                {result, route_error, body_lost},
                 timeout=IMAGE_REPLY_BUDGET_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if route_error.done():
                 raise route_error.result()
+            if body_lost.done():
+                return await _recover_images(page, request, baseline)
             if result not in done:
                 raise _outcome_unknown(
                     f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
