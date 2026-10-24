@@ -233,9 +233,21 @@ def _child_env(profile: str, project: str = "") -> dict[str, str]:
 
 
 def probe_auth(profile: str) -> bool:
-    """`gflow auth status` probes the Flow session endpoint — no browser, no credits."""
-    proc = _run([sys.executable, "-m", "gflow_cli", "auth", "status", "--profile", profile])
-    return proc.returncode == 0
+    """`gflow auth status` probes the Flow session endpoint — no credits.
+
+    A failed probe gets one headless `gflow auth renew` and a second probe before it counts
+    as expired: on 2026-10-22..24 a stale-but-renewable denon82 session read AUTH-EXPIRED
+    three nights running, and nothing short of a human re-login would have cleared it.
+    """
+
+    def status() -> bool:
+        cmd = [sys.executable, "-m", "gflow_cli", "auth", "status", "--profile", profile]
+        return _run(cmd).returncode == 0
+
+    if status():
+        return True
+    _run([sys.executable, "-m", "gflow_cli", "auth", "renew", "--profile", profile])
+    return status()
 
 
 def run_tiers(profile: str, markers: str, project: str = "") -> tuple[int, str, float]:
