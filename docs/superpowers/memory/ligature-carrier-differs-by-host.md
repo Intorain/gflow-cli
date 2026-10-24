@@ -30,7 +30,7 @@ failure mode is the dangerous one: not an error, a degrade behind a green exit c
   literals after #727 — across `ui_automation.py`, `ui_automation_video.py`,
   `mode_control.py`, `diagnostics.py` and `drivers/`. Two consecutive PRs have now fixed
   one of these by hand, which makes it a **registry/sweep** problem, not a selector problem;
-  `src/gflow_cli/flow_selectors/registry.py` (driven nightly by `selector-probe.yml`) is
+  `src/gflow_cli/flow_selectors/registry.py` (driven nightly by the canary's `test_migrated_selector_drift_e2e.py` since #1083; the old `selector-probe.yml` reached only labs and was retired) is
   where a real fix belongs.
 - **Prefer a custom element over either carrier.** `<flow-format-prompt-button>`,
   `<flow-slot-chip-button>`, `<flow-generate-icon-button>` are component boundaries, not

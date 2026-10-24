@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Selector drift is watched again, on flow.google.com**
+  ([#1083](https://github.com/ffroliva/gflow-cli/issues/1083)). The nightly GitHub
+  `selector-probe` workflow loaded the labs.google editor, which redirects to
+  flow.google.com for every account we hold, so it failed as "no recognizable editor" on
+  every run from 2026-08-21 and checked nothing. The selector registry gains a
+  `migrated_editor` surface built from the migrated composer's own constants, graded by a
+  new `$0` `e2e_auth` test that the local canary runs nightly (`run_canary.py --project`);
+  the dead workflow is retired. The canary's labs REST upload test now skips with the
+  measured reason (labs.google serves no session token) instead of reading as RED.
+
 ### Changed
 
 - **A signed media URL that answers an HTTP error is a failed download, exit 6, not
