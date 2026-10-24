@@ -443,6 +443,9 @@ IMAGE_REPLY_BUDGET_S = 180.0
 #: After a lost ``ogiZ0b`` body, how long the project grid may take to show the new
 #: tile(s). Flow made the image on every #1075 run; only the reply body was lost.
 IMAGE_RECOVERY_S = 60.0
+#: Once the grid shows enough new tiles, how long it must hold still before they are
+#: taken as this run's: another run's tile can land first (#1075 review).
+IMAGE_RECOVERY_SETTLE_S = 3.0
 
 #: Product names read back verbatim from the live migrated menu (v0.62.1's refusal
 #: diagnostic, corroborated by the 2026-09-05 spike). These are the tiers a *not yet
@@ -789,16 +792,16 @@ def _outcome_unknown(detail: str) -> TransportTimeoutError:
     )
 
 
-async def _grid_images(page: Page) -> dict[str, str]:
-    """The project grid's image tiles, media id -> tile src. Empty when unreadable."""
+async def _grid_images(page: Page) -> dict[str, str] | None:
+    """The project grid's image tiles, media id -> tile src; ``None`` when unreadable."""
     from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
 
     try:
         tiles = await page.evaluate(agent._TILES_JS)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
     except Exception:  # noqa: BLE001 - a grid we cannot read recovers nothing
-        return {}
+        return None
     if not isinstance(tiles, list):
-        return {}
+        return None
     found: dict[str, str] = {}
     for tile in cast("list[dict[str, str]]", tiles):
         uuid = (
@@ -811,26 +814,34 @@ async def _grid_images(page: Page) -> dict[str, str]:
     return found
 
 
+async def _new_grid_images(page: Page, baseline: set[str]) -> dict[str, str]:
+    return {u: src for u, src in ((await _grid_images(page)) or {}).items() if u not in baseline}
+
+
 async def _recover_images(
-    page: Page, request: GenerateImageRequest, baseline: set[str]
+    page: Page, request: GenerateImageRequest, baseline: set[str] | None
 ) -> list[GeneratedImage]:
     """The images a submit made, read off the grid after its reply body was lost (#1075).
 
-    Exactly ``request.count`` new tiles is the only answer: more cannot be told apart
-    from another run's, so the outcome stays unknown rather than guessed."""
+    Exactly ``request.count`` new tiles, unchanged across a settle read, is the only
+    answer: more cannot be told apart from another run's, and without a readable
+    before-picture every old tile would look new, so both stay "outcome unknown"."""
     from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
 
+    lost = f"migrated host: the {IMAGE_SUBMIT_RPC} submit reply arrived but its body was unreadable"
+    if baseline is None:
+        raise _outcome_unknown(f"{lost}, and the grid of {safe_page_url(page.url)} was unreadable")
     deadline = time.monotonic() + IMAGE_RECOVERY_S
-    fresh: dict[str, str] = {}
-    while True:
-        fresh = {u: src for u, src in (await _grid_images(page)).items() if u not in baseline}
-        if len(fresh) >= request.count or time.monotonic() >= deadline:
-            break
+    fresh = await _new_grid_images(page, baseline)
+    while len(fresh) < request.count and time.monotonic() < deadline:
         await asyncio.sleep(min(1.0, max(deadline - time.monotonic(), 0.01)))
+        fresh = await _new_grid_images(page, baseline)
+    if len(fresh) == request.count:
+        await asyncio.sleep(IMAGE_RECOVERY_SETTLE_S)
+        fresh = await _new_grid_images(page, baseline)
     if len(fresh) != request.count or not all(fresh.values()):
         raise _outcome_unknown(
-            f"migrated host: the {IMAGE_SUBMIT_RPC} submit reply arrived but its body was "
-            f"unreadable, and the grid of {safe_page_url(page.url)} showed {len(fresh)} new "
+            f"{lost}, and the grid of {safe_page_url(page.url)} showed {len(fresh)} new "
             f"image(s) where {request.count} were requested"
         )
     log.info("migrated.image_recovered_from_grid", count=len(fresh))
@@ -3340,7 +3351,9 @@ class MigratedComposer:
         result: asyncio.Future[list[GeneratedImage]] = loop.create_future()
         route_error: asyncio.Future[WireFormatError] = loop.create_future()
         body_lost: asyncio.Future[None] = loop.create_future()
-        baseline = set(await _grid_images(page))
+        grid = await _grid_images(page)
+        # References and characters already exist; a late-listed upload is not output.
+        baseline = None if grid is None else {*grid, *reference_ids, *entity_ids}
 
         def on_request(raw_request: Any) -> None:
             url = str(getattr(raw_request, "url", ""))

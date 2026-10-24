@@ -106,6 +106,54 @@ def _generate(world: dict[str, Any], tmp_path: Path) -> None:
     _run_counting(world, (mc.IMAGE_SUBMIT_RPC,), generate)
 
 
+def _png(path: Path, size: int = 256) -> Path:
+    """A plain gradient PNG; Flow declines a 1x1 (#755), so it is a real size."""
+    import struct
+    import zlib
+
+    def chunk(typ: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + typ
+            + data
+            + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+        )
+
+    rows = b"".join(
+        b"\x00" + b"".join(bytes((x, y, 128)) for x in range(size)) for y in range(size)
+    )
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
+    return path
+
+
+@when("gflow generates an image from a local reference on the migrated host")
+def _generate_i2i(world: dict[str, Any], tmp_path: Path) -> None:
+    ref = _png(tmp_path / "ref.png")
+
+    async def generate(client: FlowApiClient) -> Path:
+        image = await client.generate_image(
+            req=GenerateImageRequest(
+                prompt="the same colours as a watercolour landscape", ref_paths=(ref,)
+            )
+        )
+        world["media_name"] = image.media_name
+        return Path(str(await client.download_image(image, tmp_path / "recovered.png")))
+
+    _run_counting(world, (mc.IMAGE_SUBMIT_RPC,), generate)
+
+
+@then("gflow returns the one image the submit made, not the uploaded reference")
+def _recovered_not_reference(world: dict[str, Any]) -> None:
+    _recovered(world)
+    # The reference is a 256x256 gradient; Flow's output is never that file back.
+    assert world["result"].read_bytes() != (world["result"].parent / "ref.png").read_bytes()
+
+
 @then("exactly one image submit reached Flow")
 def _one_submit(world: dict[str, Any]) -> None:
     _assert_one_submit(world)

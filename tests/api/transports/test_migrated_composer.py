@@ -3296,6 +3296,13 @@ OLD_TILE = "11111111-1111-1111-1111-111111111111"
 NEW_TILE = "22222222-2222-2222-2222-222222222222"
 
 
+@pytest.fixture
+def _fast_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(migrated_composer, "IMAGE_RECOVERY_S", 0.05)
+    monkeypatch.setattr(migrated_composer, "IMAGE_RECOVERY_SETTLE_S", 0.01)
+
+
+@pytest.mark.usefixtures("_fast_recovery")
 async def test_a_lost_image_reply_body_is_recovered_from_the_new_grid_tile() -> None:
     """#1075: Flow made the image every time; only the reply body was lost. The new tile
     on the project grid names it, so the run returns it instead of failing."""
@@ -3316,6 +3323,7 @@ async def test_a_lost_image_reply_body_is_recovered_from_the_new_grid_tile() -> 
     assert page.dom.submit_clicked == 1
 
 
+@pytest.mark.usefixtures("_fast_recovery")
 async def test_a_lost_image_reply_with_more_new_tiles_than_asked_is_not_guessed() -> None:
     """Two new tiles for a one-image run cannot be told apart from a second run's: the
     outcome stays unknown rather than returning someone else's image."""
@@ -3331,6 +3339,59 @@ async def test_a_lost_image_reply_with_more_new_tiles_than_asked_is_not_guessed(
         await MigratedComposer().submit_images_and_observe(
             page, GenerateImageRequest(prompt="a blue cup")
         )
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_a_second_new_tile_arriving_a_poll_later_is_not_guessed_either() -> None:
+    """Another run in the same project can land its tile first: the count must hold
+    still across a settle read before any tile is taken as ours."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    third = "33333333-3333-3333-3333-333333333333"
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[], [_tile(third)], [_tile(third), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    with pytest.raises(TransportTimeoutError, match="2 new"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_an_unreadable_baseline_grid_recovers_nothing() -> None:
+    """Without the before-picture every old tile would read as new."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [None, [_tile(OLD_TILE)]]  # type: ignore[list-item]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    with pytest.raises(TransportTimeoutError, match="grid"):
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup")
+        )
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_a_reference_upload_listed_late_is_never_returned_as_the_result() -> None:
+    """Flow lists a fresh upload late: the i2i reference must not read as the output."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[], [_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+    page.route = AsyncMock()  # type: ignore[method-assign]
+    page.unroute = AsyncMock()  # type: ignore[method-assign]
+
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup"), reference_ids=(OLD_TILE,)
+    )
+
+    assert [i.media_name for i in images] == [NEW_TILE]
 
 
 # ----------------------------------------------------------------------------------
