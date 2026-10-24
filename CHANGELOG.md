@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An advisory CI check for what a change silently removes**
+  ([#713](https://github.com/ffroliva/gflow-cli/issues/713)). `scripts/ci/check_deletions.py`,
+  run by the Governance advisory workflow, warns when a Markdown doc loses far more lines than
+  it gains (more than 50 net and 3x), and lists every tracked file still referencing a path the
+  PR deletes (e.g. a Dependabot `directory:` entry). It never fails the build.
+
 ### Fixed
 
 - **A redirect to flow.google.com/about now names the one measured cause**
@@ -15,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reproduces it, the cause was Google asking the account to "Confirm it's you" while its
   cookies were healthy; the hint now says to run `gflow auth login`, which waits on that
   check. The exit code and `retryable: false` are unchanged.
+
+- **Upscaling an image right after generating it no longer fails as selector drift**
+  ([#1067](https://github.com/ffroliva/gflow-cli/issues/1067)). Flow lists a just-made
+  tile on the project grid only after a reload, so the upscale waited 30 s on a page that
+  could never show it and ended in exit 23. It now reloads the grid every 10 s within the
+  same budget (image and video upscale).
 
 - **An image whose reply Chrome loses is still returned** on flow.google.com
   ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)). Flow made the image every

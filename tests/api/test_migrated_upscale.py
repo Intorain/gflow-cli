@@ -123,6 +123,8 @@ async def test_migrated_upscale_missing_tile_raises_drift() -> None:
         await _run(page)
     # A wrong id/project is likelier than a frontend change; the class default blames Google.
     assert "--project" in exc_info.value.remediation_hint
+    # #1067: the 30 s wait spans three grid loads, not one.
+    assert page.reload.await_count == 2
 
 
 async def test_migrated_upscale_missing_download_button_raises_drift() -> None:

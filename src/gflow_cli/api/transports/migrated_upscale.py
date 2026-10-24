@@ -121,6 +121,10 @@ async def click_download_button(page: Page, *, media_id: str, prefix: str, route
     await page.wait_for_timeout(500)
 
 
+#: How long one grid load is watched for the tile before reloading it (#1067).
+TILE_RELOAD_EVERY_MS = 10_000
+
+
 async def open_tile_download_menu(
     page: Page,
     *,
@@ -136,10 +140,19 @@ async def open_tile_download_menu(
     await page.goto(
         MIGRATED_PROJECT_URL.format(project_id=project_id), wait_until="domcontentloaded"
     )
-    tile = await wait_for_or_none(page, tile_selector, tile_timeout_ms)
+    left_ms = tile_timeout_ms - TILE_RELOAD_EVERY_MS
+    tile = await wait_for_or_none(page, tile_selector, min(tile_timeout_ms, TILE_RELOAD_EVERY_MS))
     if not tile:
         # A --project Flow will not open lands on a known page, not drift (#1053).
         await raise_if_known_landing(page, requested=f"project {project_id}", at=route)
+    while not tile and left_ms > 0:
+        # #1067: the grid is a load-time listing, so a tile made seconds ago shows only
+        # after a reload; waiting on the same load never gains it.
+        log.info("migrated_upscale.tile_not_listed_reloading", kind=kind)
+        await page.reload(wait_until="domcontentloaded")
+        tile = await wait_for_or_none(page, tile_selector, min(left_ms, TILE_RELOAD_EVERY_MS))
+        left_ms -= TILE_RELOAD_EVERY_MS
+    if not tile:
         raise UiSelectorDriftError(
             detail=f"{prefix}: {kind} tile for media_id {media_id} not found on {page.url}",
             route=route,
