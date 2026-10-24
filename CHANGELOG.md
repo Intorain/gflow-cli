@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An image whose reply Chrome loses is still returned** on flow.google.com
+  ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)). Flow made the image every
+  time; only the submit reply's body was unreadable, and the run ended in exit 9. gflow
+  now reads the new tile off the project grid and downloads it. When the grid does not
+  show exactly the requested number of new images, the run still stops with exit 9, now
+  naming the project page to check.
+
 - **A hidden model picker on flow.google.com is refused instead of trusted**
   ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). When the picker was in the
   page but hidden (an agent-mode screen), gflow read its text, took the requested model as
