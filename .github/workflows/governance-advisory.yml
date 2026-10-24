@@ -39,3 +39,10 @@ jobs:
           git fetch --no-tags origin "$BASE_REF" || true
           uv run python scripts/ci/check_materiality.py \
             --base "origin/$BASE_REF"
+
+      - name: Gutted docs + orphaned references to deleted paths (advisory, #713)
+        # Same `env:` pattern as above — never interpolate BASE_REF into the body.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          uv run python scripts/ci/check_deletions.py --base "origin/$BASE_REF"
