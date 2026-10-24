@@ -79,5 +79,8 @@ release did not change).
 
 ## Post-tag evidence
 
-Filled after publish: the `Release` workflow run, the PyPI version, and `gflow --version` from a
-fresh install.
+- `Release` workflow run `40075047500` on tag `v0.89.1`: **success**.
+- GitHub Release `v0.89.1` published 2026-10-24T07:41:07Z (not a draft, not a prerelease).
+- PyPI: `pip index versions gflow-cli` → `gflow-cli (0.89.1)`.
+- Fresh install: `uvx --refresh --from "gflow-cli==0.89.1" gflow --version` → `gflow, version 0.89.1`.
+- Release PR #1081 merged into `main` with a merge commit; `main` back-merged into `develop`.
