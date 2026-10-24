@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A redirect to flow.google.com/about now names the one measured cause**
+  ([#881](https://github.com/ffroliva/gflow-cli/pull/881), [#902](https://github.com/ffroliva/gflow-cli/issues/902)).
+  Exit 31 used to say only "open the project in a browser". On the account that
+  reproduces it, the cause was Google asking the account to "Confirm it's you" while its
+  cookies were healthy; the hint now says to run `gflow auth login`, which waits on that
+  check. The exit code and `retryable: false` are unchanged.
+
 - **An image Flow refuses on upload is reported as declined, not as a broken reply**
   ([#755](https://github.com/ffroliva/gflow-cli/issues/755)). When Flow answers an upload
   with its INVALID_ARGUMENT refusal (measured for a 1x1 PNG), the error now says Flow

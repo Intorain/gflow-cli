@@ -256,3 +256,19 @@ async def test_project_not_found_landing_is_exit_11_and_not_retryable() -> None:
     assert "reason=project" in exc.detail and "selector drift" in exc.detail
     assert "--project" in exc.remediation_hint
     assert "transport" not in exc.remediation_hint.lower()  # not the class default
+
+
+@pytest.mark.asyncio
+async def test_about_landing_names_the_measured_identity_recheck() -> None:
+    """#881/#902: on the account that reproduces /about, the cause was Google's pending
+    "Confirm it's you" with healthy cookies (spike 2026-09-23), and `gflow auth login`
+    now waits on that check (#904). The hint names it without asserting it is the
+    only cause, and stays not retryable (5/5 measured, 2026-09-11)."""
+    from gflow_cli.errors import FlowAppError, is_retryable
+
+    exc = await _raise_on(_Page("https://flow.google.com/about"))
+
+    assert isinstance(exc, FlowAppError), exc
+    assert not is_retryable(exc)
+    assert "Confirm it's you" in exc.remediation_hint
+    assert "gflow auth login" in exc.remediation_hint
