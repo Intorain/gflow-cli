@@ -37,7 +37,7 @@ import os
 import pytest
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode
+from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import InsufficientCreditsError, UiSelectorDriftError
 from gflow_cli.paths import default_home, profile_subdir
 
@@ -79,6 +79,10 @@ async def test_a_drained_account_reports_insufficient_credits_not_drift() -> Non
                     prompt="a teal origami crane on a wooden table, slow push in",
                     mode=Mode.T2V,
                     aspect=Aspect.LANDSCAPE,
+                    # #745 item 6: the costliest tier (100 credits), so an account with a
+                    # little left is still refused before submit. Unpinned, the default
+                    # veo-lite (10) could submit and bill on this "zero-cost" test.
+                    model=VideoModel.VEO_3_1_QUALITY,
                 ),
                 project_id=project,
                 download=False,

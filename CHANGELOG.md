@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A credit shortfall on flow.google.com is recognised in every UI language, and only
+  when Flow shows it** ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). The
+  warning anchor had an English `aria-label` half, which Flow translates; it is now the
+  warning button's class alone (the measured element carries both). And the check now
+  requires the warning to be visible, so a hidden one Flow keeps mounted cannot turn a
+  real selector drift into "top up your credits" (exit 37).
+
 - **Selector drift is watched again, on flow.google.com**
   ([#1083](https://github.com/ffroliva/gflow-cli/issues/1083)). The nightly GitHub
   `selector-probe` workflow loaded the labs.google editor, which redirects to
