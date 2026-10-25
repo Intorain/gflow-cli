@@ -1907,6 +1907,22 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
                 "chrome` for this profile to rewrite it."
             ),
         }
+    elif status.outcome is verification.FlowSessionOutcome.COOKIE_STORE_UNREADABLE:
+        # #796: local file state like the marker case — a retry re-reads the
+        # same broken file, so not retryable, and not a network 503.
+        error = {
+            "type": "https://gflow-cli.dev/errors/cookie-store-unreadable",
+            "title": "Profile cookie store is unreadable",
+            "status": 409,
+            "detail": status.detail,
+            "message": status.detail,
+            "retryable": False,
+            "remediation_hint": (
+                "This profile's Chrome cookie database is corrupt or unreadable. "
+                "Close any Chrome window using this profile, then re-run "
+                "`gflow auth login` for it."
+            ),
+        }
     elif status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
         # A network/endpoint problem is not fixed by re-login — the
         # machine-readable discriminators must say so too (post-merge review:

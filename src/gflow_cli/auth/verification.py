@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
@@ -72,6 +73,10 @@ class FlowSessionOutcome(StrEnum):
     #: network — and telling the user to "check connectivity" sends them
     #: looking in the wrong place, on a profile a failed login just rolled back.
     PROFILE_MARKER_MISSING = "profile_marker_missing"
+    #: Chrome's cookie DB raised `sqlite3.DatabaseError` (corrupt, or not a
+    #: database at all), so it cannot be read (#796). Local file state, not the
+    #: network — and not retried through Playwright, which would raze the file.
+    COOKIE_STORE_UNREADABLE = "cookie_store_unreadable"
 
 
 _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
@@ -81,6 +86,9 @@ _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.VERIFICATION_ERROR: "Could not verify the Flow session.",
     FlowSessionOutcome.PROFILE_MARKER_MISSING: (
         "This profile is missing its Chrome-strategy marker."
+    ),
+    FlowSessionOutcome.COOKIE_STORE_UNREADABLE: (
+        "This profile's cookie store is corrupt or unreadable."
     ),
 }
 
@@ -560,6 +568,16 @@ async def verify_flow_profile(
         logger.warning("auth_profile_marker_missing", source=source)
         return FlowSessionStatus(
             outcome=FlowSessionOutcome.PROFILE_MARKER_MISSING,
+            user_email=None,
+            source=source,
+        )
+
+    # #796: same misdirection, different trigger — a corrupt cookie DB on the
+    # user's own disk was reported as "check network connectivity".
+    except sqlite3.DatabaseError as exc:
+        logger.warning("auth_cookie_store_unreadable", source=source, error=type(exc).__name__)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.COOKIE_STORE_UNREADABLE,
             user_email=None,
             source=source,
         )

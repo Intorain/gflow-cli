@@ -58,6 +58,9 @@ UNVERIFIED_MESSAGE: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.PROFILE_MARKER_MISSING: (
         "This profile is missing its Chrome-strategy marker, so its cookies cannot be read."
     ),
+    FlowSessionOutcome.COOKIE_STORE_UNREADABLE: (
+        "This profile's cookie store is corrupt or unreadable."
+    ),
 }
 UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.GOOGLE_SESSION_ONLY: (
@@ -70,6 +73,11 @@ UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.VERIFICATION_ERROR: ("Check your connection and re-run `gflow auth login`."),
     FlowSessionOutcome.PROFILE_MARKER_MISSING: (
         "Re-run `gflow auth login --browser chrome` to rewrite the profile marker."
+    ),
+    FlowSessionOutcome.COOKIE_STORE_UNREADABLE: (
+        "Close any Chrome window using this profile, then re-run `gflow auth login`. "
+        "If it repeats, delete the profile's `Default/Network/Cookies` file (this signs "
+        "the profile out) and log in again."
     ),
 }
 

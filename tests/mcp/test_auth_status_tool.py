@@ -103,3 +103,25 @@ async def test_a_missing_profile_marker_is_not_retryable_and_not_a_dead_session(
     assert result["error"]["retryable"] is False
     assert result["error"]["status"] == 409
     assert "--browser chrome" in result["error"]["remediation_hint"]
+
+
+async def test_an_unreadable_cookie_store_is_not_retryable_and_not_a_network_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#796 + MCP parity: a corrupt cookie DB is local profile state. A retry
+    re-reads the same broken file, so it is not retryable, and it is not the
+    503 network/endpoint envelope an agent would retry on."""
+    from gflow_cli.mcp import tools
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(
+        tools.verification,
+        "verify_flow_profile",
+        _probe(FlowSessionOutcome.COOKIE_STORE_UNREADABLE),
+    )
+    result = await tools.gflow_auth_status()
+    assert result["status"] == "cookie_store_unreadable"
+    assert result["error"]["retryable"] is False
+    assert result["error"]["status"] == 409
+    assert "connectivity" not in result["error"]["remediation_hint"]
+    assert "gflow auth login" in result["error"]["remediation_hint"]
