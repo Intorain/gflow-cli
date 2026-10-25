@@ -83,6 +83,22 @@ def test_exit_1_on_verification_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "connectivity" in result.output
 
 
+def test_corrupt_cookie_store_is_not_blamed_on_the_network() -> None:
+    """#796, end to end through the real probe: a corrupt cookie DB on disk
+    (no mock of verify_flow_profile or browser_cookie3) must not tell the user to
+    check network connectivity — the fault is the file on their own disk."""
+    pdir = get_settings().profile_subdir("corrupt")
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "Cookies").write_bytes(b"SQLite format 3\x00" + b"\xa5" * 4080)
+
+    result = CliRunner().invoke(main, ["auth", "status", "--profile", "corrupt"])
+
+    assert result.exit_code == 1
+    assert "connectivity" not in result.output
+    assert "cookie store" in result.output.lower()
+    assert "gflow auth login --profile corrupt" in result.output
+
+
 def test_bracketed_email_renders_without_markup_crash(monkeypatch: pytest.MonkeyPatch) -> None:
     """A server-supplied email is untrusted text — Rich markup must be escaped
     (this repo's known bracketed-text crash class)."""

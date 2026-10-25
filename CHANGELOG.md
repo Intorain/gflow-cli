@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A corrupt cookie store is no longer reported as a network problem**
+  ([#796](https://github.com/ffroliva/gflow-cli/issues/796)). When a profile's Chrome
+  cookie database could not be read as a database, `gflow auth status` said "check
+  network connectivity". It now names the cookie store and says to close any Chrome
+  window using the profile and run `gflow auth login` again. The MCP `gflow_auth_status`
+  tool returns a new `cookie_store_unreadable` outcome (HTTP 409, `retryable: false`)
+  instead of the retryable `verification_error` (#796).
+
 - **An output folder gflow cannot write is exit 11, not "Unexpected error"**
   ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)). After a successful
   generation, a failed local write (for example `--out` pointing at a protected folder)

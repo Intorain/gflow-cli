@@ -344,6 +344,33 @@ class TestVerifyFlowSession:
         fake_async_playwright.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_corrupt_cookie_store_is_not_reported_as_a_network_fault(
+        self, gflow_home: Path
+    ) -> None:
+        """#796: a corrupt cookie DB raises sqlite3.DatabaseError from the real
+        browser_cookie3 read. It is local profile state, so it must not land in
+        VERIFICATION_ERROR ("check network connectivity"), nor launch the
+        Playwright fallback — Chrome would raze the file during a status probe."""
+        profile = gflow_home / "profile_default"
+        cookies = profile / "Default" / "Network" / "Cookies"
+        cookies.parent.mkdir(parents=True)
+        cookies.write_bytes(b"SQLite format 3\x00" + b"\xa5" * 4080)  # real file, not a mock
+        (profile / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+        fake_async_playwright = MagicMock()
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
+            patch("gflow_cli.auth.strategies.async_playwright", fake_async_playwright),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile)
+
+        assert status.outcome is FlowSessionOutcome.COOKIE_STORE_UNREADABLE
+        assert not status.authenticated
+        assert "network" not in status.detail.lower()
+        fake_async_playwright.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_verification_error_on_browser_cookie_decryption_error(
         self, gflow_home: Path
     ) -> None:

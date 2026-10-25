@@ -387,6 +387,13 @@ def auth_status(profile: str | None) -> None:
                 f"Re-run [bold]gflow auth login --browser chrome --profile {name}[/bold] "
                 "to rewrite it.",
             )
+        elif status_result.outcome is verification.FlowSessionOutcome.COOKIE_STORE_UNREADABLE:
+            # #796: a corrupt cookie DB on disk, not the network.
+            console.print(
+                f"[yellow]{escape(str(status_result.detail))}[/yellow] "
+                "Close any Chrome window using this profile, then re-run "
+                f"[bold]gflow auth login --profile {name}[/bold].",
+            )
         elif status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
             # Re-login cannot fix an unreachable endpoint — don't send the
             # user into an interactive browser flow for a network problem.
