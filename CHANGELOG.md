@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded. The MCP image tool does the same. On labs, a file not yet recorded in the
   project still goes through the editor's own filename dedup (#314).
 
+- **A corrupt cookie store is no longer reported as a network problem**
+  ([#796](https://github.com/ffroliva/gflow-cli/issues/796)). When a profile's Chrome
+  cookie database could not be read as a database, `gflow auth status` said "check
+  network connectivity". It now names the cookie store and says to close any Chrome
+  window using the profile and run `gflow auth login` again. The MCP `gflow_auth_status`
+  tool returns a new `cookie_store_unreadable` outcome (HTTP 409, `retryable: false`)
+  instead of the retryable `verification_error` (#796).
+
 - **The MCP `wait` parameter is described where agents read it**. `gflow_generate_image`
   and `gflow_generate_video` now carry a `wait` description in `tools/list`: the default
   `true` runs the generation inside the call, which can outlast a client's tool timeout,
