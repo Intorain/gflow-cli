@@ -39,12 +39,13 @@ _GEN_TIMEOUT_S = 300
 class _StdioClient:
     """A minimal JSON-RPC client on a real ``gflow mcp run`` subprocess."""
 
-    def __init__(self) -> None:
+    def __init__(self, stderr_log: Path) -> None:
+        self.stderr_log = stderr_log
         self.proc = subprocess.Popen(
             [sys.executable, "-c", "from gflow_cli.cli import main; main()", "mcp", "run"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr_log.open("wb"),  # the server's events, for a failed run
             env={**os.environ, "PYTHONUTF8": "1"},
         )
         self._lines: queue.Queue[dict[str, Any]] = queue.Queue()
@@ -129,11 +130,12 @@ def _browsers_on(profile_dir: Path) -> list[str]:
 
 
 @pytest.fixture
-def ctx(e2e_profile_dir: Path) -> Any:
+def ctx(e2e_profile_dir: Path, tmp_path: Path) -> Any:
     reset_settings()
     state: dict[str, Any] = {
         "dir": e2e_profile_dir,
         "profile": e2e_profile_dir.name.removeprefix("profile_"),
+        "tmp": tmp_path,
     }
     yield state
     client = state.get("client")
@@ -144,7 +146,7 @@ def ctx(e2e_profile_dir: Path) -> Any:
 @given("a gflow mcp run server over stdio on the e2e profile")
 def _server(ctx: dict[str, Any]) -> None:
     assert not _browsers_on(ctx["dir"]), "a browser already holds the e2e profile"
-    ctx["client"] = client = _StdioClient()
+    ctx["client"] = client = _StdioClient(ctx["tmp"] / "server.stderr.log")
     client.initialize()
 
 
@@ -214,6 +216,7 @@ def _close_mid_job(ctx: dict[str, Any]) -> None:
 @then("the server exits within 60 seconds")
 def _exits(ctx: dict[str, Any]) -> None:
     ctx["client"].proc.wait(timeout=60)
+    print(f"server exited {time.monotonic() - ctx['closed_at']:.1f}s after stdin closed")
 
 
 @then("the job's row is no longer processing")

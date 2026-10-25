@@ -35,7 +35,21 @@ would do it:
 ## Consequence for the plan (T7)
 On HTTP, the drain has to run in the **ASGI lifespan shutdown**: cancel every detached
 task and await it, with a time limit. That point is reached before the signal re-raise.
-stdio needs no extra code, because `asyncio.run` already gives the handler time to commit.
+stdio seemed to need no extra code, because `asyncio.run` gave the fake handler time to commit. **Wrong for a real job; see the correction below.**
 
 A hard kill (`taskkill /F`, `SIGKILL`) still leaves the row `processing`. That case stays
 under the existing KNOWN_ISSUES manual-reconcile entry.
+
+## Correction, same day: stdio needs the drain too
+
+The stdio row above used a fake coroutine that held no browser. With a real job, the
+live e2e (`tests/e2e/test_mcp_wait_false_bdd.py`) once failed to exit within 60 s. The
+server log showed why: `browser_teardown.context_close_error` (`TimeoutError`) and then
+`force_close_failed`. `asyncio.run` cancels **every** task at once, Playwright's own
+connection tasks included, so the job's `context.close()` can never get a reply. It sits
+out its 30 s bound, the forced close fails, and the driver stop adds another 10 s.
+
+`run_stdio` therefore calls `drain_detached()` right after `server.run` returns, while
+Playwright is still alive. Measured on the same scenario: the server exited **1.1 s**
+after stdin closed, with no teardown errors, and the row ended `indeterminate` (that
+close landed after submit).

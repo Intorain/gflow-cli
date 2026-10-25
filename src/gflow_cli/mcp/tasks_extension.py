@@ -43,9 +43,10 @@ def detach(task_id: str, job: Coroutine[Any, Any, None]) -> None:
 async def drain_detached() -> None:
     """Cancel every running job and wait for each to record how far it got.
 
-    The HTTP server must call this from its lifespan: uvicorn re-raises the stop signal
-    after a graceful shutdown, which kills the process before ``asyncio.run`` would
-    cancel anything (spike 2026-10-25-mcp-detached-task-shutdown).
+    Both servers call this before ``asyncio.run`` tears down. Its blanket cancel would
+    also cancel Playwright's connection, so a job's browser could not close; and on HTTP,
+    uvicorn re-raises the stop signal and kills the process before that point anyway
+    (spike 2026-10-25-mcp-detached-task-shutdown).
     """
     tasks = list(DETACHED.values())
     for task in tasks:

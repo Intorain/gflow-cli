@@ -370,6 +370,9 @@ async def run_stdio() -> None:
             write_stream,
             mcp_server.create_initialization_options(),
         )
+    # Before asyncio.run cancels every task at once: that would cancel Playwright's own
+    # connection too, so a wait=false job's browser could not close cleanly.
+    await tasks_module.drain_detached()
 
 
 async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:

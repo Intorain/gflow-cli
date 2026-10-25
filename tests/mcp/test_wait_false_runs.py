@@ -319,3 +319,12 @@ async def test_cancel_of_a_finished_job_reports_it_as_finished(
 
     assert (_status(db, done["task_id"]), ok.status) == ("completed", "completed")
     assert (_status(db, "f"), failed.status) == ("failed", "failed")
+
+
+def test_stdio_drains_detached_jobs_before_asyncio_run_tears_down() -> None:
+    """At stdin EOF asyncio.run cancels every task, Playwright's connection included, so a
+    job's browser then cannot close (40 s+ of timeouts, live 2026-10-25). Drain first."""
+    from gflow_cli.mcp import server
+
+    body = inspect.getsource(server.run_stdio)
+    assert body.index("drain_detached()") > body.index("mcp_server.run(")
