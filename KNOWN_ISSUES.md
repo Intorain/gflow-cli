@@ -957,7 +957,11 @@ The worker queue (`generation_queue`, used by the `gflow serve` daemon and MCP t
 `gflow mcp run` / `gflow serve` process that accepted it. Closing the client, or stopping
 `gflow serve`, cancels it and records the truthful state above. A process killed outright
 (`taskkill /F`, `kill -9`, a crashed client host) records nothing, so its row stays
-`processing` and `tasks/get` keeps answering `working`. Reconcile it by hand as below.
+`processing` and `tasks/get` keeps answering `working`. A job killed before it was picked
+up stays `pending` the same way; `tasks/cancel` clears that one. Two narrower cases end the
+same way: a job whose browser takes longer than 10 s to close during shutdown, and a
+`tasks/cancel` sent to a server other than the one running the job (each server can stop
+only its own jobs; it reports the row's real status instead). Reconcile it by hand as below.
 Nothing resets such rows on its own: a startup sweep would also fail a job that another
 live `gflow mcp run` (one per client session) is still running.
 

@@ -293,17 +293,14 @@ class QueueRepository:
         flow_media_id: str | None = None,
         error: dict[str, Any] | None = None,
         only_from: tuple[str, ...] = (),
-    ) -> bool:
-        """Set a task's status; with ``only_from``, only while it is still in one of those.
-
-        Returns whether a row changed, so a caller racing a claim knows who won.
-        """
+    ) -> None:
+        """Set a task's status; with ``only_from``, only while it is still in one of those."""
         now = _utc_now()
         error_str = json.dumps(error) if error is not None else None
         guard = f" AND status IN ({','.join('?' * len(only_from))})" if only_from else ""
         try:
             with self._store.transaction(immediate=True):
-                cur = self._store.conn.execute(
+                self._store.conn.execute(
                     """
                     UPDATE generation_queue
                     SET status = ?,
@@ -316,7 +313,6 @@ class QueueRepository:
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="queue.update_task_status") from exc
-        return cur.rowcount > 0
 
 
 def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
@@ -359,6 +355,7 @@ def mark_interrupted(
     task_id: str,
     checkpoint: dict[str, Any] | None,
     reason: str,
+    only_from: tuple[str, ...] = (),
 ) -> str:
     """Persist the truthful terminal state for one interrupted task and return it.
 
@@ -367,7 +364,9 @@ def mark_interrupted(
     one place.
     """
     status = classify_interrupted(checkpoint)
-    repo.update_task_status(task_id, status=status, error=_recovery_error(status, reason))
+    repo.update_task_status(
+        task_id, status=status, error=_recovery_error(status, reason), only_from=only_from
+    )
     return status
 
 

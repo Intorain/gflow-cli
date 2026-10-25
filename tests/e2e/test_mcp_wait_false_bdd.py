@@ -75,11 +75,12 @@ class _StdioClient:
             except queue.Empty:
                 break
             if msg.get("id") == msg_id:
+                assert "result" in msg, msg  # a JSON-RPC error, shown whole
                 return msg
         raise AssertionError(f"no reply to {method} within {timeout}s")
 
     def initialize(self) -> None:
-        reply = self.request(
+        self.request(
             "initialize",
             {
                 "protocolVersion": "2025-06-18",
@@ -87,12 +88,17 @@ class _StdioClient:
                 "clientInfo": {"name": "e2e-1097", "version": "0"},
             },
         )
-        assert "result" in reply, reply
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
 
     def close(self) -> None:
+        """Close stdin first so a job still running shuts its Chrome; kill only if stuck."""
         if self.proc.poll() is None:
-            self.proc.kill()
+            if self.proc.stdin is not None and not self.proc.stdin.closed:
+                self.proc.stdin.close()
+            try:
+                self.proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
 
 
 def _row_status(task_id: str) -> str:

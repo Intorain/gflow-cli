@@ -76,7 +76,7 @@ _WAIT_DESCRIPTION = (
     "false: return {status: 'pending', task_id} at once and run the job in the "
     "background of this server process. With the SEP-2663 Tasks extension, tasks/get "
     "reads its state by task_id, tasks/result returns the same reply wait=true would "
-    "(files, project id) once it is done, and tasks/cancel stops it (a job cancelled "
+    "(files, project id, seed) once it is done, and tasks/cancel stops it (a job cancelled "
     "after submit is recorded as indeterminate: a credit may be spent). The job runs "
     "only while this server runs: if the client closes the server, it is cancelled."
 )
@@ -384,11 +384,20 @@ async def _run_detached(profile: str, task_id: str, db_path: Path) -> None:
 
 
 def _settle_unfinished(task_id: str, db_path: Path, reason: str) -> None:
-    with DataStore.open(db_path) as store:
-        repo = QueueRepository(store)
-        task = repo.get_task(task_id)
-        if task is not None and task.status in ("pending", "processing"):
-            mark_interrupted(repo, task_id, repo.read_checkpoint(task_id), reason)
+    # Guarded like process_task's own handler: a DB fault here must never replace the
+    # cancellation or crash being handled. `only_from` leaves a row process_task settled.
+    try:
+        with DataStore.open(db_path) as store:
+            repo = QueueRepository(store)
+            mark_interrupted(
+                repo,
+                task_id,
+                repo.read_checkpoint(task_id),
+                reason,
+                only_from=("pending", "processing"),
+            )
+    except Exception as exc:
+        log.warning("mcp.task.settle_failed", task_id=task_id, error_class=type(exc).__name__)
 
 
 def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
@@ -919,7 +928,7 @@ async def gflow_generate_image(
             given), or 'auto' (bind whatever renders, the default). If the arm
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
-        wait: Block until the generation finishes (default) or only enqueue it;
+        wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
 
     Returns:
@@ -1202,7 +1211,7 @@ async def gflow_generate_video(  # NOSONAR
             agent-only flow.google.com composer (#799) is routed to its own
             driver before that check, so 't2v' runs there under 'auto' or
             'classic'.
-        wait: Block until the generation finishes (default) or only enqueue it;
+        wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 

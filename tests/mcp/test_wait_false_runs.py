@@ -85,13 +85,15 @@ async def _finish(task_id: str) -> None:
         await asyncio.wait({task}, timeout=5)
 
 
-def _hang_after_submit(db: DataStore) -> AsyncMock:
-    """A generate call that records a submit, then never returns."""
+def _hang_after_submit(db: DataStore, client: Any) -> asyncio.Event:
+    """Make the fake client record a submit, then never return; the event marks the submit."""
+    submitted = asyncio.Event()
 
     async def hang(*_: Any, **__: Any) -> Any:
-        repo = QueueRepository(db)
-        (task_id,) = [t for t in tasks_extension.DETACHED]
-        repo.write_checkpoint(
+        (task_id,) = db.conn.execute(
+            "SELECT task_id FROM generation_queue WHERE status = 'processing'"
+        ).fetchone()
+        QueueRepository(db).write_checkpoint(
             task_id,
             make_checkpoint_document(
                 claimant="mcp:default",
@@ -100,9 +102,12 @@ def _hang_after_submit(db: DataStore) -> AsyncMock:
                 project_id="proj-abc",
             ),
         )
+        submitted.set()
         await asyncio.Event().wait()
 
-    return AsyncMock(side_effect=hang)
+    client.generate_images_batch = AsyncMock(side_effect=hang)
+    client.generate_image = AsyncMock(side_effect=hang)
+    return submitted
 
 
 async def test_a_wait_false_job_runs_to_completion(db: DataStore, wired: dict[str, Any]) -> None:
@@ -188,10 +193,9 @@ async def test_cancel_after_submit_leaves_the_row_indeterminate(
     db: DataStore, wired: dict[str, Any]
 ) -> None:
     """A credit may already be spent, so the row must never read as a clean failure."""
-    wired["client"].generate_images_batch = _hang_after_submit(db)
-    wired["client"].generate_image = _hang_after_submit(db)
+    submitted = _hang_after_submit(db, wired["client"])
     reply = await tools.gflow_generate_image(prompt="x", wait=False)
-    await asyncio.sleep(0.2)
+    await asyncio.wait_for(submitted.wait(), timeout=5)
 
     result = await TasksExtension(data_store=db)._handle_cancel_task(  # pyright: ignore[reportPrivateUsage]
         None, CancelTaskRequestParams(task_id=reply["task_id"])
@@ -249,10 +253,9 @@ async def test_draining_on_shutdown_classifies_a_running_job(
     db: DataStore, wired: dict[str, Any]
 ) -> None:
     """uvicorn re-raises the stop signal, so the HTTP lifespan must drain (spike 2026-10-25)."""
-    wired["client"].generate_images_batch = _hang_after_submit(db)
-    wired["client"].generate_image = _hang_after_submit(db)
+    submitted = _hang_after_submit(db, wired["client"])
     reply = await tools.gflow_generate_image(prompt="x", wait=False)
-    await asyncio.sleep(0.2)
+    await asyncio.wait_for(submitted.wait(), timeout=5)
 
     await tasks_extension.drain_detached()
 
@@ -268,3 +271,51 @@ async def test_the_http_app_drains_detached_tasks_on_shutdown() -> None:
             pass
 
     drain.assert_awaited_once()
+
+
+async def test_the_video_tool_runs_wait_false_through_the_same_path(
+    db: DataStore, wired: dict[str, Any]
+) -> None:
+    reply = await tools.gflow_generate_video(prompt="a quiet street", wait=False)
+
+    assert reply["status"] == "pending", reply
+    await _finish(reply["task_id"])
+    assert _status(db, reply["task_id"]) == "completed"
+
+
+async def test_an_expired_session_fails_the_row_and_tasks_result_says_why(
+    db: DataStore, wired: dict[str, Any]
+) -> None:
+    from gflow_cli.errors import AuthExpiredError
+
+    wired["client"].generate_images_batch.side_effect = AuthExpiredError(detail="session gone")
+    wired["client"].generate_image.side_effect = AuthExpiredError(detail="session gone")
+    reply = await tools.gflow_generate_image(prompt="x", wait=False)
+    await _finish(reply["task_id"])
+
+    result = await TasksExtension(data_store=db)._handle_task_result(  # pyright: ignore[reportPrivateUsage]
+        None, GetTaskPayloadRequestParams(task_id=reply["task_id"])
+    )
+    assert _status(db, reply["task_id"]) == "failed"
+    assert result.is_error
+    assert result.structured_content is not None
+    error = result.structured_content["error"]
+    assert error["type"].endswith("/auth-expired") and error["exit_code"] == 3, error
+
+
+async def test_cancel_of_a_finished_job_reports_it_as_finished(
+    db: DataStore, wired: dict[str, Any]
+) -> None:
+    """A cancel arriving after the job is done must neither rewrite nor relabel it."""
+    done = await tools.gflow_generate_image(prompt="a", wait=False)
+    await _finish(done["task_id"])
+    repo = QueueRepository(db)
+    repo.enqueue_task(task_id="f", profile_name="default", task_type="t2i", payload={})
+    repo.update_task_status("f", "failed")
+    ext = TasksExtension(data_store=db)
+
+    ok = await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id=done["task_id"]))  # pyright: ignore[reportPrivateUsage]
+    failed = await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id="f"))  # pyright: ignore[reportPrivateUsage]
+
+    assert (_status(db, done["task_id"]), ok.status) == ("completed", "completed")
+    assert (_status(db, "f"), failed.status) == ("failed", "failed")

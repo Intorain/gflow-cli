@@ -24,7 +24,7 @@ from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.worker.queue import QueueRepository, QueueTask
 
-log = structlog.get_logger(__name__)
+log = structlog.get_logger()
 
 # ``wait=false`` jobs running in this server's loop, by task id (#1097). The strong
 # reference is what keeps asyncio from collecting a task mid-run.
@@ -40,7 +40,7 @@ def detach(task_id: str, job: Coroutine[Any, Any, None]) -> None:
     task.add_done_callback(lambda _t: DETACHED.pop(task_id, None))
 
 
-async def drain_detached(timeout: float = _CANCEL_WAIT_S) -> None:
+async def drain_detached() -> None:
     """Cancel every running job and wait for each to record how far it got.
 
     The HTTP server must call this from its lifespan: uvicorn re-raises the stop signal
@@ -51,7 +51,7 @@ async def drain_detached(timeout: float = _CANCEL_WAIT_S) -> None:
     for task in tasks:
         task.cancel()
     if tasks:
-        await asyncio.wait(tasks, timeout=timeout)
+        await asyncio.wait(tasks, timeout=_CANCEL_WAIT_S)
 
 
 def _mcp_status(task: QueueTask) -> TaskStatus:
@@ -134,11 +134,13 @@ class TasksExtension(Extension):
         self, context: Any, params: CancelTaskRequestParams
     ) -> CancelTaskResult:
         task_id = params.task_id
-        self._get_task(task_id)
+        before = self._get_task(task_id)
         repo = QueueRepository(self._get_store())
         running = DETACHED.get(task_id)
         log.info("mcp.task.cancel_requested", task_id=task_id, running_here=running is not None)
-        if running is not None:
+        if before.status in ("completed", "failed", "indeterminate"):
+            pass  # already finished: report it as it is, never as a cancel
+        elif running is not None:
             # The job's own CancelledError handler records how far it got: a job past
             # submit becomes indeterminate (a credit may be spent), never failed.
             running.cancel()
@@ -151,11 +153,13 @@ class TasksExtension(Extension):
                 only_from=("pending",),
             )
 
+        # Re-read: the job's own handler, not this method, wrote the final row.
         queue_task = self._get_task(task_id)
         status = _mcp_status(queue_task)
+        cancelled = status == "failed" and before.status not in ("failed", "indeterminate")
         return CancelTaskResult(
             task_id=queue_task.task_id,
-            status="cancelled" if status == "failed" else status,
+            status="cancelled" if cancelled else status,
             status_message=(
                 "Cancelled after submit; a credit may have been spent. Check the Flow project."
                 if queue_task.status == "indeterminate"
