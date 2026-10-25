@@ -19,7 +19,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from mcp.types import CancelTaskRequestParams, GetTaskPayloadRequestParams
+from mcp.shared.exceptions import MCPError
+from mcp.types import (
+    INVALID_PARAMS,
+    CancelTaskRequestParams,
+    GetTaskPayloadRequestParams,
+    GetTaskRequestParams,
+)
 from structlog.testing import capture_logs
 
 from gflow_cli.data.store import DataStore
@@ -237,7 +243,7 @@ async def test_tasks_result_returns_what_wait_true_returns(
     assert payload["files"]
 
 
-async def test_tasks_result_of_an_unfinished_or_unknown_task_is_an_error(db: DataStore) -> None:
+async def test_tasks_result_of_an_unfinished_task_is_an_error(db: DataStore) -> None:
     QueueRepository(db).enqueue_task(
         task_id="busy", profile_name="default", task_type="t2i", payload={}
     )
@@ -245,8 +251,6 @@ async def test_tasks_result_of_an_unfinished_or_unknown_task_is_an_error(db: Dat
 
     busy = await ext._handle_task_result(None, GetTaskPayloadRequestParams(task_id="busy"))  # pyright: ignore[reportPrivateUsage]
     assert busy.is_error
-    with pytest.raises(KeyError, match="Task not found"):
-        await ext._handle_task_result(None, GetTaskPayloadRequestParams(task_id="nope"))  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_draining_on_shutdown_classifies_a_running_job(
@@ -321,10 +325,70 @@ async def test_cancel_of_a_finished_job_reports_it_as_finished(
     assert (_status(db, "f"), failed.status) == ("failed", "failed")
 
 
-def test_stdio_drains_detached_jobs_before_asyncio_run_tears_down() -> None:
+async def test_stdio_drains_even_when_the_server_run_raises() -> None:
     """At stdin EOF asyncio.run cancels every task, Playwright's connection included, so a
-    job's browser then cannot close (40 s+ of timeouts, live 2026-10-25). Drain first."""
+    job's browser then cannot close (40 s+ of timeouts, live 2026-10-25). Drain first, also
+    when the transport dies with an error (a client that closes stdout first)."""
+    from contextlib import asynccontextmanager
+
     from gflow_cli.mcp import server
 
-    body = inspect.getsource(server.run_stdio)
-    assert body.index("drain_detached()") > body.index("mcp_server.run(")
+    @asynccontextmanager
+    async def fake_stdio(**_: Any) -> Any:
+        yield (None, None)
+
+    lowlevel = MagicMock(run=AsyncMock(side_effect=BrokenPipeError))
+    with (
+        patch("mcp.server.stdio.stdio_server", fake_stdio),
+        patch.object(server, "sys", MagicMock()),
+        patch.object(server, "io", MagicMock()),
+        patch.object(server, "_apply_mcp_lease_wait_default"),
+        patch.object(server, "_configure_utf8_pipes"),
+        patch.object(server, "_redirect_stdout_to_stderr"),
+        patch.object(server, "_register_surfaces"),
+        patch.object(server.server, "_lowlevel_server", lowlevel, create=True),
+        patch("gflow_cli.mcp.tasks_extension.drain_detached", new=AsyncMock()) as drain,
+        pytest.raises(BrokenPipeError),
+    ):
+        await server.run_stdio()
+
+    drain.assert_awaited_once()
+
+
+async def test_a_job_cancelled_before_its_first_step_still_settles_its_row(
+    db: DataStore, wired: dict[str, Any]
+) -> None:
+    """asyncio skips a coroutine's own handler when the task is cancelled before it starts."""
+    reply = await tools.gflow_generate_image(prompt="x", wait=False)
+    await tasks_extension.drain_detached()  # same tick as the detach: the job never ran
+
+    assert _status(db, reply["task_id"]) == "failed"
+
+
+async def test_a_cancelled_job_stays_cancelled_in_tasks_get(
+    db: DataStore, wired: dict[str, Any]
+) -> None:
+    submitted = _hang_after_submit(db, wired["client"])
+    reply = await tools.gflow_generate_image(prompt="x", wait=False)
+    await asyncio.wait_for(submitted.wait(), timeout=5)
+    QueueRepository(db).enqueue_task(
+        task_id="p", profile_name="default", task_type="t2i", payload={}
+    )
+    ext = TasksExtension(data_store=db)
+
+    for task_id in (reply["task_id"], "p"):
+        await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id=task_id))  # pyright: ignore[reportPrivateUsage]
+        got = await ext._handle_get_task(None, GetTaskRequestParams(task_id=task_id))  # pyright: ignore[reportPrivateUsage]
+        assert got.status == "cancelled", task_id
+    got = await ext._handle_get_task(None, GetTaskRequestParams(task_id=reply["task_id"]))  # pyright: ignore[reportPrivateUsage]
+    assert got.status_message is not None and "credit" in got.status_message
+
+
+@pytest.mark.parametrize(
+    "method", ["_handle_get_task", "_handle_task_result", "_handle_cancel_task"]
+)
+async def test_an_unknown_task_id_is_invalid_params(db: DataStore, method: str) -> None:
+    params = GetTaskRequestParams(task_id="nope")
+    with pytest.raises(MCPError) as caught:
+        await getattr(TasksExtension(data_store=db), method)(None, params)
+    assert caught.value.code == INVALID_PARAMS

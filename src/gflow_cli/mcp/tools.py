@@ -368,15 +368,12 @@ async def _execute_claimed(profile: str, task_id: str, db_path: Path) -> None:
 async def _run_detached(profile: str, task_id: str, db_path: Path) -> None:
     """Run a ``wait=false`` job in the server's own loop and leave its row truthful.
 
-    ``process_task`` settles a row it claimed. This covers the rest: a cancel or a
-    crash before the claim, or one that escapes ``process_task``.
+    ``process_task`` settles a row it claimed. This covers a crash before the claim or
+    one that escapes ``process_task``; ``detach`` settles a cancelled job.
     """
     log.info("mcp.task.detached_started", task_id=task_id, profile=profile)
     try:
         await _execute_claimed(profile, task_id, db_path)
-    except asyncio.CancelledError:
-        _settle_unfinished(task_id, db_path, "cancelled")
-        raise
     except Exception as exc:
         # The error class only: a payload or exception locals can carry prompts.
         log.error("mcp.task.detached_failed", task_id=task_id, error_class=type(exc).__name__)
@@ -491,7 +488,12 @@ async def _run_generation_task(
         )
         if handle.get("status") == "pending":
             db_path = get_settings().resolved_db_path()
-            detach(handle["task_id"], _run_detached(profile, handle["task_id"], db_path))
+            task_id = handle["task_id"]
+            detach(
+                task_id,
+                _run_detached(profile, task_id, db_path),
+                functools.partial(_settle_unfinished, task_id, db_path, "cancelled"),
+            )
         return handle
 
     settings = get_settings()

@@ -364,15 +364,17 @@ async def run_stdio() -> None:
     # stdout we captured above (MCPServer.run_stdio_async exposes no stdout
     # param). ``Server.run`` is the dual-era driver — see the docstring.
     mcp_server = server._lowlevel_server  # type: ignore[attr-defined]
-    async with stdio_server(stdout=protocol_stdout) as (read_stream, write_stream):
-        await mcp_server.run(
-            read_stream,
-            write_stream,
-            mcp_server.create_initialization_options(),
-        )
-    # Before asyncio.run cancels every task at once: that would cancel Playwright's own
-    # connection too, so a wait=false job's browser could not close cleanly.
-    await tasks_module.drain_detached()
+    try:
+        async with stdio_server(stdout=protocol_stdout) as (read_stream, write_stream):
+            await mcp_server.run(
+                read_stream,
+                write_stream,
+                mcp_server.create_initialization_options(),
+            )
+    finally:
+        # Before asyncio.run cancels every task at once: that would cancel Playwright's
+        # own connection too, so a wait=false job's browser could not close cleanly.
+        await tasks_module.drain_detached()
 
 
 async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:

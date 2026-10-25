@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 import structlog
 from mcp.server.extension import Extension, MethodBinding
+from mcp.shared.exceptions import MCPError
 from mcp.types import (
+    INVALID_PARAMS,
     CallToolResult,
     CancelTaskRequestParams,
     CancelTaskResult,
@@ -33,11 +35,21 @@ DETACHED: dict[str, asyncio.Task[None]] = {}
 _CANCEL_WAIT_S = 10.0
 
 
-def detach(task_id: str, job: Coroutine[Any, Any, None]) -> None:
-    """Run ``job`` in the background and track it until it finishes."""
+def detach(task_id: str, job: Coroutine[Any, Any, None], settle: Callable[[], None]) -> None:
+    """Run ``job`` in the background and track it until it finishes.
+
+    ``settle`` runs when the job is cancelled, and must be idempotent: a cancel that
+    lands before the job's first step skips the job's own handlers entirely.
+    """
     task = asyncio.create_task(job)
     DETACHED[task_id] = task
-    task.add_done_callback(lambda _t: DETACHED.pop(task_id, None))
+
+    def done(t: asyncio.Task[None]) -> None:
+        DETACHED.pop(task_id, None)
+        if t.cancelled():
+            settle()
+
+    task.add_done_callback(done)
 
 
 async def drain_detached() -> None:
@@ -59,8 +71,14 @@ def _mcp_status(task: QueueTask) -> TaskStatus:
     if task.status == "completed":
         return "completed"
     if task.status in ("failed", "indeterminate"):
-        return "failed"
+        return "cancelled" if (task.error or {}).get("reason") == "cancelled" else "failed"
     return "working"
+
+
+def _status_message(task: QueueTask) -> str | None:
+    if task.status == "indeterminate":
+        return "Stopped after submit; a credit may have been spent. Check the Flow project."
+    return None
 
 
 class TasksExtension(Extension):
@@ -82,7 +100,7 @@ class TasksExtension(Extension):
     def _get_task(self, task_id: str) -> QueueTask:
         queue_task = QueueRepository(self._get_store()).get_task(task_id)
         if queue_task is None:
-            raise KeyError(f"Task not found: {task_id}")
+            raise MCPError(INVALID_PARAMS, f"Task not found: {task_id}")
         return queue_task
 
     def methods(self) -> list[MethodBinding]:
@@ -109,6 +127,7 @@ class TasksExtension(Extension):
         return GetTaskResult(
             task_id=queue_task.task_id,
             status=_mcp_status(queue_task),
+            status_message=_status_message(queue_task),
             created_at=queue_task.created_at or "",
             last_updated_at=queue_task.updated_at or "",
             ttl=3600,
@@ -150,22 +169,21 @@ class TasksExtension(Extension):
             repo.update_task_status(
                 task_id,
                 "failed",
-                error={"title": "Cancelled", "status": 499, "detail": "Cancelled before it ran."},
+                error={
+                    "title": "Cancelled",
+                    "status": 499,
+                    "detail": "Cancelled before it ran.",
+                    "reason": "cancelled",
+                },
                 only_from=("pending",),
             )
 
         # Re-read: the job's own handler, not this method, wrote the final row.
         queue_task = self._get_task(task_id)
-        status = _mcp_status(queue_task)
-        cancelled = status == "failed" and before.status not in ("failed", "indeterminate")
         return CancelTaskResult(
             task_id=queue_task.task_id,
-            status="cancelled" if cancelled else status,
-            status_message=(
-                "Cancelled after submit; a credit may have been spent. Check the Flow project."
-                if queue_task.status == "indeterminate"
-                else None
-            ),
+            status=_mcp_status(queue_task),
+            status_message=_status_message(queue_task),
             created_at=queue_task.created_at or "",
             last_updated_at=queue_task.updated_at or "",
             ttl=3600,

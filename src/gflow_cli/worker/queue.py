@@ -341,12 +341,14 @@ def _recovery_error(status: str, reason: str) -> dict[str, Any]:
                 f"Task interrupted ({reason}) after submit was attempted; a credit "
                 "may have been spent and the outcome is unknown. NOT retried automatically."
             ),
+            "reason": reason,
         }
     return {
         "type": "https://gflow-cli.dev/errors/daemon-recovery",
         "title": "Interrupted Before Submit",
         "status": 500,
         "detail": f"Task interrupted ({reason}) before any submit; nothing spent, safe to retry.",
+        "reason": reason,
     }
 
 
