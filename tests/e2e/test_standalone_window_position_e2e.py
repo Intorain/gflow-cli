@@ -35,23 +35,24 @@ async def _bounds(profile_dir: Path) -> dict[str, Any]:
 @pytest.mark.asyncio
 @pytest.mark.e2e_auth
 @pytest.mark.parametrize(
-    ("position", "corner"),
+    ("position", "corners"),
     [
-        # Windows clamps very large offsets: -30000 lands at -21845, still off every
-        # monitor (measured for #923; docs/CONFIGURATION.md).
-        ("-30000,-30000", -21845 if sys.platform == "win32" else -30000),
-        ("0,0", 0),
+        # Windows clamped -30000 to -21845 when #923 was measured and stopped clamping by
+        # 2026-10-25 (canary #559). Both are off every monitor, which is the contract.
+        ("-30000,-30000", {-30000, -21845} if sys.platform == "win32" else {-30000}),
+        ("0,0", {0}),
     ],
 )
 async def test_e2e_standalone_launch_places_the_window(
     e2e_profile_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     position: str,
-    corner: int,
+    corners: set[int],
 ) -> None:
     monkeypatch.setenv("GFLOW_CLI_BROWSER_WINDOW_POSITION", position)
     reset_settings()
 
     bounds = await _bounds(e2e_profile_dir)
 
-    assert (bounds.get("left"), bounds.get("top")) == (corner, corner), bounds
+    assert bounds.get("left") == bounds.get("top"), bounds
+    assert bounds.get("left") in corners, bounds

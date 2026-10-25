@@ -156,34 +156,50 @@ async def test_a_failed_generation_bundle_is_not_hollow(e2e_profile_dir: Path) -
     unreadable as evidence, and it reads exactly like a lost browser tab.
 
     The benchmark above captures deliberately on a HEALTHY page, which is why it
-    never saw this. This drives a genuine failure instead: a syntactically valid but
-    nonexistent project id, which lands on Flow's 404 and fails the settings-trigger
-    probe with exit 23. No generation is submitted, so it costs zero credits.
+    never saw this. This drives the real failure path instead: the CLI opens a real
+    project of this account with the settings-trigger anchor renamed to one Flow never
+    renders, so the composer raises selector drift (exit 23) from its own wait, through
+    its own ``finally``. No generation is submitted, so it costs zero credits.
+
+    It used a nonexistent project id until #974 taught gflow to recognise Flow's
+    project-not-found page: that is now a configuration error (exit 11), which by design
+    captures no bundle (canary #559, 2026-10-25).
     """
     settings = get_settings()
     incidents_root = settings.home / "incidents"
     profile_name = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
     before = _bundles(incidents_root)
 
+    env = {**os.environ, "PYTHONUTF8": "1", "GFLOW_CLI_HOME": str(settings.home)}
+    # The real catalog (the autouse isolation points GFLOW_CLI_DB_PATH at a temp db).
+    catalog_env = {k: v for k, v in env.items() if k != "GFLOW_CLI_DB_PATH"}
+    listed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "gflow_cli.cli", "project", "list"]
+        + ["--profile", profile_name, "--limit", "1", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=catalog_env,
+    )
+    assert listed.returncode == 0, listed.stderr[-800:]
+    projects = json.loads(listed.stdout)["projects"]
+    assert projects, "the catalog holds no project for this profile; run any image e2e first"
+
+    # The real CLI entry point, with one selector renamed so the composer's wait misses.
+    driver = (
+        "import sys; from gflow_cli.api.transports import migrated_composer as m; "
+        "m.READY_ANCHOR = '.gflow-e2e-no-such-trigger'; "
+        "from gflow_cli.cli import main; sys.argv[0] = 'gflow'; main()"
+    )
     result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "-m",
-            "gflow_cli.cli",
-            "image",
-            "t2i",
-            "a blue ceramic cup on oak",
-            "--profile",
-            profile_name,
-            "--project",
-            "00000000-0000-0000-0000-000000000000",
-        ],
+        [sys.executable, "-c", driver, "image", "t2i", "a blue ceramic cup on oak"]
+        + ["--profile", profile_name, "--project", projects[0]["project_id"]],
         capture_output=True,
         text=True,
         timeout=300,
-        env={**os.environ, "PYTHONUTF8": "1", "GFLOW_CLI_HOME": str(settings.home)},
+        env=env,
     )
-    assert result.returncode != 0, "the bogus project id was expected to fail"
+    assert result.returncode == 23, f"exit {result.returncode}: {result.stderr[-800:]}"
 
     new = sorted(_bundles(incidents_root) - before)
     assert new, f"a failed generation produced no incident bundle (exit {result.returncode})"
