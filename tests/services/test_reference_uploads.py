@@ -127,7 +127,9 @@ async def test_a_recorded_image_deleted_from_the_project_is_uploaded_again(ref: 
     async def _generate(req: GenerateImageRequest) -> str:
         attempts.append(req)
         if len(attempts) == 1:
-            raise ReferenceNotFoundError(detail="not in this project's grid")
+            raise ReferenceNotFoundError(
+                detail=f"image {req.refs[0].name} is not in this project's grid"
+            )
         return "ok"
 
     final = await _run(client, ref, generate=_generate)
@@ -151,3 +153,30 @@ async def test_a_miss_on_a_fresh_upload_is_not_retried(ref: Path) -> None:
     with pytest.raises(ReferenceNotFoundError):
         await _run(client, ref, generate=_generate)
     assert len(client.uploads) == 1
+
+
+async def test_an_unrelated_miss_is_not_retried_with_a_new_upload(ref: Path) -> None:
+    client = _Client()
+    await _run(client, ref)
+    attempts: list[GenerateImageRequest] = []
+
+    async def _generate(req: GenerateImageRequest) -> str:
+        attempts.append(req)
+        raise ReferenceNotFoundError(detail="character 'Kael' did not attach as an entity")
+
+    with pytest.raises(ReferenceNotFoundError):
+        await _run(client, ref, generate=_generate)
+    assert len(attempts) == 1
+    assert len(client.uploads) == 1
+
+
+async def test_a_file_the_upload_check_refuses_keeps_its_old_route(tmp_path: Path) -> None:
+    class _Refusing(_Client):
+        async def upload_reference_in_place(self, project_id: str, path: Path) -> ImageRef | None:
+            raise ValueError("not an image")
+
+    text = tmp_path / "notes.png"
+    text.write_text("not an image", encoding="utf-8")
+    req = await _run(_Refusing(), text)
+
+    assert req.ref_paths == (text,) and req.refs == ()

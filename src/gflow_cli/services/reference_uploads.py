@@ -6,8 +6,9 @@ recorded in the catalog, and a later run in the same project that names the same
 (same path, same bytes) mentions the recorded image instead. Shared by the CLI and the
 MCP worker, which build the request the same way.
 
-Where the host has no in-place upload (labs: the transport answers ``None``), the path
-is left for the editor's media dialog, which dedups by file name itself (#334).
+Where the host has no in-place upload (labs: the transport answers ``None``), a file not
+recorded in the project is left for the editor's media dialog, which dedups by file name
+itself (#314). A recorded one is referenced in place on either host.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import structlog
 
+from gflow_cli.api.client import MAX_IMAGE_BYTES
 from gflow_cli.api.dto import AssetInfo
 from gflow_cli.api.image import ImageRef, recorded_in_project
 from gflow_cli.errors import DataStoreError, ReferenceNotFoundError
@@ -53,7 +55,10 @@ async def generate_reusing_uploads(
     """
     if not request.ref_paths:
         return await generate(request), request
-    args = (client, recorder, profile_name, profile_dir, project)
+
+    async def upload(path: Path) -> ImageRef | None:
+        return await _upload(client, recorder, profile_name, profile_dir, project, path)
+
     reused: dict[str, Path] = {}
     refs: list[ImageRef] = []
     paths: list[Path] = []
@@ -62,7 +67,7 @@ async def generate_reusing_uploads(
         if ref is not None:
             reused[ref.name] = path
         else:
-            ref = await _upload(*args, path)
+            ref = await upload(path)
         if ref is None:
             paths.append(path)
         else:
@@ -70,14 +75,17 @@ async def generate_reusing_uploads(
     request = dataclasses.replace(request, refs=(*request.refs, *refs), ref_paths=tuple(paths))
     try:
         return await generate(request), request
-    except ReferenceNotFoundError:
-        if not reused:
+    except ReferenceNotFoundError as exc:
+        # Only a miss that names an image this run reused; any other (a character, a
+        # chip out of order) would fail the same way again after a needless upload.
+        if not any(media_id in str(exc.detail) for media_id in reused):
             raise
     log.info("reference_uploads.recorded_image_gone", count=len(reused), issue_ref="#772")
     fresh: list[ImageRef] = []
     for ref in request.refs:
         path = reused.get(ref.name)
-        fresh.append(ref if path is None else (await _upload(*args, path)) or ref)
+        new = await upload(path) if path is not None else None
+        fresh.append(new or ref)
     request = dataclasses.replace(request, refs=tuple(fresh))
     return await generate(request), request
 
@@ -88,6 +96,8 @@ def _recorded_upload(
     """The image this project already holds for this file, or ``None``."""
     try:
         resolved = path.resolve()
+        if resolved.stat().st_size > MAX_IMAGE_BYTES:
+            return None  # validate_image_file refuses it at upload; do not hash it first
         sha256 = hashlib.sha256(resolved.read_bytes()).hexdigest()
         repo = recorder.repository
         # shortcut: only the newest record of this file is checked; a copy uploaded to
@@ -121,7 +131,12 @@ async def _upload(
     project: ProjectInfo,
     path: Path,
 ) -> ImageRef | None:
-    ref = await client.upload_reference_in_place(project.project_id, path)
+    try:
+        ref = await client.upload_reference_in_place(project.project_id, path)
+    except (ValueError, FileNotFoundError):
+        # A file the upload check refuses keeps the route it had before #772 (the
+        # editor dialog on labs, the composer upload on flow.google.com).
+        return None
     if ref is None:
         return None
     asset = AssetInfo(

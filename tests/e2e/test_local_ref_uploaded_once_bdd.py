@@ -8,8 +8,12 @@ Only a live run proves the recorded caption is the one Flow's ``@`` picker finds
 later process, and that the submit carries the recorded media id.
 
 **Host-aware.** On labs the transport has no in-place upload and the editor's own dialog
-dedups by file name (#334), so this contract is flow.google.com's; a labs-served run is
+dedups by file name (#314), so this contract is flow.google.com's; a labs-served run is
 skipped with that reason rather than asserted against the wrong contract.
+
+**A recorded image the project no longer holds** (deleted since) is staged by pointing
+the catalog row at an id the project does not hold: the composer sees the same thing, no
+tile in the grid. The run waits out the in-place search (up to 90 s), then re-uploads.
 
 **Cost.** Two images of daily quota per scenario, zero Veo credits.
 """
@@ -17,6 +21,7 @@ skipped with that reason rather than asserted against the wrong contract.
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +72,7 @@ def _first(e2e_env: dict[str, str], tmp_path: Path) -> dict[str, Any]:
     if not any(n.startswith("migrated.") for n in names):
         # Skip only on positive evidence of labs: no events at all is a broken test.
         assert any(n.startswith("ui_automation") for n in names), sorted(names)
-        pytest.skip("labs served this account: its editor dialog dedups by file name (#334)")
+        pytest.skip("labs served this account: its editor dialog dedups by file name (#314)")
     uploaded = [e for e in events if e.get("event") == _UPLOADED]
     assert len(uploaded) == 1, f"the first run should upload once: {sorted(names)}"
     payload = _json_payload(first.stdout)
@@ -151,3 +156,33 @@ def _in_place(world: dict[str, Any]) -> None:
     assert list(attached[-1].get("media_ids") or []) == [world["media_id"]], attached[-1]
     guarded = [e for e in events if e.get("event") == "migrated.image_submit_guarded"]
     assert guarded and guarded[-1].get("outcome") == "passed", guarded
+
+
+_GONE = "00000000-0000-4000-8000-000000000772"
+
+
+@given("the catalog records that file under an image the project does not hold")
+def _forget(world: dict[str, Any]) -> None:
+    with sqlite3.connect(world["env"]["GFLOW_CLI_DB_PATH"]) as conn:
+        changed = conn.execute(
+            "UPDATE assets SET flow_media_id = ? WHERE flow_media_id = ?",
+            (_GONE, world["media_id"]),
+        ).rowcount
+    assert changed == 1, changed
+
+
+@then("the file was uploaded again after the miss, and the new copy recorded")
+def _reuploaded(world: dict[str, Any]) -> None:
+    events = world["events"]
+    names = [str(e.get("event", "")) for e in events]
+    reused = [e for e in events if e.get("event") == _REUSED]
+    assert reused and reused[-1].get("media_id") == _GONE, sorted(set(names))
+    assert "reference_uploads.recorded_image_gone" in names, sorted(set(names))
+    uploaded = [e for e in events if e.get("event") == _UPLOADED]
+    assert len(uploaded) == 1, sorted(set(names))
+    fresh = str(uploaded[0]["media_id"])
+    guarded = [e for e in events if e.get("event") == "migrated.image_submit_guarded"]
+    assert guarded and guarded[-1].get("outcome") == "passed", guarded
+    with sqlite3.connect(world["env"]["GFLOW_CLI_DB_PATH"]) as conn:
+        rows = conn.execute("SELECT 1 FROM assets WHERE flow_media_id = ?", (fresh,)).fetchall()
+    assert rows, f"the new upload {fresh} was not recorded"

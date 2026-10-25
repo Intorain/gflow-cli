@@ -25,8 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per run. The first upload is now recorded in the local catalog, and a later run in the
   same project with the same file (same path, same bytes) mentions that image in place.
   If it was deleted from the project since, the file is uploaded again and the new copy
-  recorded. The MCP image tool does the same. On labs, the editor's own filename dedup
-  (#334) is unchanged.
+  recorded. The MCP image tool does the same. On labs, a file not yet recorded in the
+  project still goes through the editor's own filename dedup (#314).
 
 - **An output folder gflow cannot write is exit 11, not "Unexpected error"**
   ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)). After a successful
