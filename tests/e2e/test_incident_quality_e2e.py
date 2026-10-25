@@ -181,6 +181,7 @@ async def test_a_failed_generation_bundle_is_not_hollow(e2e_profile_dir: Path) -
         timeout=120,
         env=catalog_env,
     )
+    assert listed.returncode == 0, listed.stderr[-800:]
     projects = json.loads(listed.stdout)["projects"]
     assert projects, "the catalog holds no project for this profile; run any image e2e first"
 
