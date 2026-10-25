@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`image i2i --ref <file>` no longer uploads the same file again on every run**
+  ([#772](https://github.com/ffroliva/gflow-cli/issues/772)). On flow.google.com, a loop
+  over prompts with one `--ref` file left one copy of that image in the project's library
+  per run. The first upload is now recorded in the local catalog, and a later run in the
+  same project with the same file (same path, same bytes) mentions that image in place.
+  If it was deleted from the project since, the file is uploaded again and the new copy
+  recorded. The MCP image tool does the same. On labs, a file not yet recorded in the
+  project still goes through the editor's own filename dedup (#314).
+
 - **A corrupt cookie store is no longer reported as a network problem**
   ([#796](https://github.com/ffroliva/gflow-cli/issues/796)). When a profile's Chrome
   cookie database could not be read as a database, `gflow auth status` said "check
