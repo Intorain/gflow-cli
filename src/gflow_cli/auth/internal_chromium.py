@@ -75,7 +75,9 @@ UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
         "Re-run `gflow auth login --browser chrome` to rewrite the profile marker."
     ),
     FlowSessionOutcome.COOKIE_STORE_UNREADABLE: (
-        "Close any Chrome window using this profile, then re-run `gflow auth login`."
+        "Close any Chrome window using this profile, then re-run `gflow auth login`. "
+        "If it repeats, delete the profile's `Default/Network/Cookies` file (this signs "
+        "the profile out) and log in again."
     ),
 }
 
