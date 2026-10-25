@@ -394,7 +394,7 @@ has not landed yet stay nameless until the next sync sweep.
 
 ### `gflow run --config` references cannot resume (#913)
 
-- **Status:** Open · **Severity:** Low (a re-run regenerates; nothing is lost) · **Affected:** every `gflow run --config` with `"ref"` rows (`batch:N` or a local file)
+- **Status:** Mitigated ([#934](https://github.com/ffroliva/gflow-cli/issues/934): `gflow run --resume`) · **Severity:** Low (a re-run regenerates; nothing is lost) · **Affected:** every `gflow run --config` with `"ref"` rows (`batch:N` or a local file)
 - **Tracked:** [#913](https://github.com/ffroliva/gflow-cli/issues/913)
 
 A run with `"ref": "batch:N"` rows has no resume: a re-run creates a new project (or, with
@@ -402,6 +402,10 @@ A run with `"ref": "batch:N"` rows has no resume: a re-run creates a new project
 it. The handle that makes in-place referencing work (Flow's reply for the parent) exists
 only within the run that generated it. A local-file `ref` is uploaded again into the
 re-run's new project for the same reason.
+
+**Mitigation:** `gflow run --resume` with the same project and output folder skips every
+row whose files are on disk and recorded in the catalog as that project's images, and its
+`batch:N` children reference it in place. A local-file `ref` is still uploaded again.
 
 ### Video duration control is absent on some account cohorts
 

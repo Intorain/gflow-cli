@@ -27,10 +27,11 @@ import weakref
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import click
 import structlog
+from pydantic import Field
 
 from gflow_cli import auth as auth_mod
 from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project
@@ -64,6 +65,20 @@ from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
 
 log = structlog.get_logger()
+
+# #481: a schema description, not a docstring ``Args:`` entry — the docstring never
+# reaches ``tools/list``. No shipped command (``gflow mcp run``, ``gflow serve``)
+# starts the queue worker, so the wait=false half must not be sold as a way out.
+_WAIT_DESCRIPTION = (
+    "true (default): run the generation inside this call and return the finished "
+    "result. The call stays open for the whole generation, minutes for a video, which "
+    "can outlast an MCP client's tool timeout; raise that timeout for generation calls. "
+    "false: only enqueue the job and return {status: 'pending', task_id} at once; the "
+    "SEP-2663 Tasks extension's tasks/get reads its state by task_id. No gflow command "
+    "runs the queue worker today, so a wait=false job is never generated: tasks/get "
+    "reports it as 'working' indefinitely, and tasks/cancel clears it. Use the default."
+)
+_WaitParam = Annotated[bool, Field(description=_WAIT_DESCRIPTION)]
 
 # ---------------------------------------------------------------------------
 # Token bucket rate limiter
@@ -817,7 +832,7 @@ async def gflow_generate_image(
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
     output: str | None = None,
-    wait: bool = True,
+    wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -864,6 +879,8 @@ async def gflow_generate_image(
             given), or 'auto' (bind whatever renders, the default). If the arm
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
+        wait: Block until the generation finishes (default) or only enqueue it;
+            agents read it from the tool schema (#481).
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -1061,7 +1078,7 @@ async def gflow_generate_video(  # NOSONAR
     project_name: str | None = None,
     ui_mode: str | None = None,
     output: str | None = None,
-    wait: bool = True,
+    wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -1145,6 +1162,8 @@ async def gflow_generate_video(  # NOSONAR
             agent-only flow.google.com composer (#799) is routed to its own
             driver before that check, so 't2v' runs there under 'auto' or
             'classic'.
+        wait: Block until the generation finishes (default) or only enqueue it;
+            agents read it from the tool schema (#481).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
@@ -1837,9 +1856,8 @@ async def gflow_list_projects(
     name="gflow_auth_status",
     description=(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
-        "BEFORE a generation tool to fail fast on expired auth — the queue is "
-        "async, so an auth failure otherwise surfaces only later from the "
-        "daemon. Never starts an interactive login flow; may boot a "
+        "BEFORE a generation tool to fail fast on expired auth, before a long "
+        "blocking generation call. Never starts an interactive login flow; may boot a "
         "short-lived headless browser only if cookie decryption requires the "
         "Playwright fallback. May take up to ~45s on a slow network."
     ),
@@ -1886,6 +1904,22 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
                 "This profile has no `.gflow_browser_strategy` marker, so its "
                 "cookies cannot be read. Re-run `gflow auth login --browser "
                 "chrome` for this profile to rewrite it."
+            ),
+        }
+    elif status.outcome is verification.FlowSessionOutcome.COOKIE_STORE_UNREADABLE:
+        # #796: local file state like the marker case — a retry re-reads the
+        # same broken file, so not retryable, and not a network 503.
+        error = {
+            "type": "https://gflow-cli.dev/errors/cookie-store-unreadable",
+            "title": "Profile cookie store is unreadable",
+            "status": 409,
+            "detail": status.detail,
+            "message": status.detail,
+            "retryable": False,
+            "remediation_hint": (
+                "This profile's Chrome cookie database is corrupt or unreadable. "
+                "Close any Chrome window using this profile, then re-run "
+                "`gflow auth login` for it."
             ),
         }
     elif status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:

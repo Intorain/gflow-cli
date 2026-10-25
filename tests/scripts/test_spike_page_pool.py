@@ -79,3 +79,50 @@ def test_every_page_borrower_returns_the_page() -> None:
         "Pair it: `page = await client._checkout_page()` / "
         "`finally: client._checkin_page(page)`."
     )
+
+
+# A third way to get a Page, used by the agent-only and migrated spikes (#745): a raw
+# tab on the client's context, outside the pool. It cannot exhaust the pool, but it is
+# only released by an explicit close or by the client's teardown, which closes the
+# context and every page on it — so it must be opened inside `async with build_client`.
+_OPEN = "_context.new_page("
+_RELEASES = ("async with build_client(", "async with FlowApiClient(", ".close()")
+_MIN_EXPECTED_OPENERS = 7
+
+
+def _opener_scripts() -> list[Path]:
+    return sorted(
+        path for path in _DEV_SCRIPTS.glob("*.py") if _OPEN in path.read_text(encoding="utf-8")
+    )
+
+
+def _releases_its_page(source: str) -> bool:
+    return any(release in source for release in _RELEASES)
+
+
+def test_the_scan_still_finds_the_raw_page_openers() -> None:
+    """Same canary as the borrowers', for the API the borrower scan cannot see."""
+    found = _opener_scripts()
+    assert len(found) >= _MIN_EXPECTED_OPENERS, (
+        f"only {len(found)} script(s) call {_OPEN}) under {_DEV_SCRIPTS} — the API was "
+        "probably renamed, which would empty this guard silently. Update _OPEN."
+    )
+
+
+def test_a_raw_page_outside_the_client_is_an_offender() -> None:
+    leaked = "client = build_client(p)\npage = await client._context.new_page()\n"
+    assert not _releases_its_page(leaked)
+    assert _releases_its_page("async with build_client(p) as client:\n    " + leaked)
+
+
+def test_every_raw_page_opener_releases_the_page() -> None:
+    offenders = [
+        path.name
+        for path in _opener_scripts()
+        if not _releases_its_page(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        f"these scripts open a raw Page on the client's context and never release it: "
+        f"{offenders}. Open it inside `async with build_client(...) as client:` (teardown "
+        "closes it) or `await page.close()` it in a `finally`."
+    )

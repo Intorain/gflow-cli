@@ -20,6 +20,9 @@ class FakeRecorder:
         self.closed = False
         # media_names the guard should treat as already-recorded (#281 tests).
         self.recorded_media_ids: set[str] = set()
+        # #772 looks a local --ref up in the catalog: an empty one records no upload.
+        self.repository = MagicMock()
+        self.repository.resolve_seed_image_by_file.return_value = None
 
     def close(self) -> None:
         self.closed = True
@@ -376,6 +379,8 @@ def _make_i2i_client(
     )
     client.generate_image = AsyncMock(return_value=images[0])
     client.generate_images_batch = AsyncMock(return_value=images)
+    # labs: no in-place upload, so a local --ref stays a path for the editor dialog (#772)
+    client.upload_reference_in_place = AsyncMock(return_value=None)
 
     async def _fake_download(image: GeneratedImage, out_path: Path) -> Path:
         out_path.parent.mkdir(parents=True, exist_ok=True)

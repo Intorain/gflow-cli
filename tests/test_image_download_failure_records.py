@@ -160,6 +160,26 @@ def test_t2i_download_failure_keeps_the_generation(tmp_path: Path, as_json: bool
         _assert_one_failed_op_holding(store, ["m1"])
 
 
+def test_an_unwritable_out_exits_11_not_unexpected(tmp_path: Path) -> None:
+    """#1091: the real storage error, through the CLI, is classified after the salvage."""
+    from gflow_cli.storage import write_asset_async
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_bytes(b"x")
+
+    async def _download(_img: GeneratedImage, target: Path) -> Path:
+        await write_asset_async(blocker / target.name, b"png")
+        return target
+
+    client = _failing_download(_make_t2i_client(images=[_make_generated_image(media_name="m4")]))
+    client.download_image = AsyncMock(side_effect=_download)
+    result = _invoke(["image", "t2i", "a cat", "--out", str(tmp_path / "out")], client, tmp_path)
+
+    assert result.exit_code == 11, result.output
+    assert "Unexpected error" not in result.output
+    _assert_recovery_hint(result.stderr, "m4")
+
+
 def test_i2i_download_failure_keeps_the_generation(tmp_path: Path) -> None:
     ref = "ddb6ef97-262d-49f4-8269-4a28c0fae6a2"
     client = _failing_download(_make_i2i_client(images=[_make_generated_image(media_name="m2")]))

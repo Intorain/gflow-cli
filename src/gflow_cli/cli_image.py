@@ -111,6 +111,7 @@ from gflow_cli.image_batch import (
 from gflow_cli.paths import image_output_path, resolve_batch_output_dir
 from gflow_cli.profile_store import account_locale_for
 from gflow_cli.services import catalog_sync
+from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 
 if TYPE_CHECKING:
@@ -1974,26 +1975,42 @@ async def _run_i2i(
                     f"  Generating {count} image(s) with {n_refs} ref(s) "
                     f"({req.model.value}, {req.aspect.value})...",
                 )
-            images, saved_paths = await _generate_verify_download(
+            project_ = project  # narrowed for the closure
+
+            async def _generate(
+                request: GenerateImageRequest,
+            ) -> tuple[list[GeneratedImage], list[Path]]:
+                return await _generate_verify_download(
+                    client,
+                    recorder=recorder,
+                    profile_name=profile_name,
+                    profile_dir=profile_dir,
+                    project=project_,
+                    project_created=project_created,
+                    req=request,
+                    count=count,
+                    out=out,
+                    output_root=output_root,
+                    output_file=output_file,
+                    operation_kind="i2i",
+                    undownloaded=undownloaded,
+                    input_media_ids=[ref.name for ref in request.refs],
+                    # #546 rename self-healing: on a picker miss for a UUID ref the
+                    # transport re-fetches the project listing for the CURRENT name.
+                    name_resolver=wire_refresh_resolver(
+                        client, profile_name=profile_name, project_id=project_.project_id
+                    ),
+                )
+
+            # #772: a local --ref goes into the project once; later runs mention it.
+            (images, saved_paths), req = await generate_reusing_uploads(
                 client,
+                req,
                 recorder=recorder,
                 profile_name=profile_name,
                 profile_dir=profile_dir,
                 project=project,
-                project_created=project_created,
-                req=req,
-                count=count,
-                out=out,
-                output_root=output_root,
-                output_file=output_file,
-                operation_kind="i2i",
-                undownloaded=undownloaded,
-                input_media_ids=[ref.name for ref in req.refs],
-                # #546 rename self-healing: on a picker miss for a UUID ref the
-                # transport re-fetches the project listing for the CURRENT name.
-                name_resolver=wire_refresh_resolver(
-                    client, profile_name=profile_name, project_id=project.project_id
-                ),
+                generate=_generate,
             )
 
             if as_json:

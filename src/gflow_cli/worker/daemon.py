@@ -9,7 +9,7 @@ from typing import Any, cast
 import structlog
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.dto import GenerationCheckpoint, ProjectInfo
+from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.video import GenerateVideoRequest, VideoStarted
 from gflow_cli.config import get_settings
@@ -26,6 +26,7 @@ from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
+from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
 from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
@@ -219,20 +220,31 @@ class FlowWorker:
                             quiet=True,
                         )
 
-                        if count == 1:
-                            img = await client.generate_image(
+                        async def _generate(request: GenerateImageRequest) -> list[GeneratedImage]:
+                            if count == 1:
+                                img = await client.generate_image(
+                                    project_id=project_flow_id,
+                                    req=request,
+                                    on_checkpoint=observe_checkpoint,
+                                )
+                                return [img]
+                            return await client.generate_images_batch(
                                 project_id=project_flow_id,
-                                req=req,
-                                on_checkpoint=observe_checkpoint,
-                            )
-                            images = [img]
-                        else:
-                            images = await client.generate_images_batch(
-                                project_id=project_flow_id,
-                                req=req,
+                                req=request,
                                 count=count,
                                 on_checkpoint=observe_checkpoint,
                             )
+
+                        # #772: a local ref goes into the project once; later tasks mention it.
+                        images, req = await generate_reusing_uploads(
+                            client,
+                            req,
+                            recorder=recorder,
+                            profile_name=self.profile_name,
+                            profile_dir=profile_dir,
+                            project=project,
+                            generate=_generate,
+                        )
 
                         recorder.verify_media_attribution(
                             profile_name=self.profile_name, images=images

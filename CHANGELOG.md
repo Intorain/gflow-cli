@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.0] — 2026-10-25
+
+### Added
+
+- **`gflow run --resume` picks up where a run stopped**
+  ([#934](https://github.com/ffroliva/gflow-cli/issues/934)). With the same config,
+  project and output folder, a row whose images are already on disk and recorded in the
+  local catalog as that project's is shown as `RESUMED` and not generated again, and a
+  `batch:N` child references it in place. Before, a re-run regenerated every row, parents
+  included, spending image quota twice. `--resume` needs `--project` or a config
+  `"project"` (exit 11 otherwise). CLI only, like `gflow run` itself.
+
+### Fixed
+
+- **`image i2i --ref <file>` no longer uploads the same file again on every run**
+  ([#772](https://github.com/ffroliva/gflow-cli/issues/772)). On flow.google.com, a loop
+  over prompts with one `--ref` file left one copy of that image in the project's library
+  per run. The first upload is now recorded in the local catalog, and a later run in the
+  same project with the same file (same path, same bytes) mentions that image in place.
+  If it was deleted from the project since, the file is uploaded again and the new copy
+  recorded. The MCP image tool does the same. On labs, a file not yet recorded in the
+  project still goes through the editor's own filename dedup (#314).
+
+- **A corrupt cookie store is no longer reported as a network problem**
+  ([#796](https://github.com/ffroliva/gflow-cli/issues/796)). When a profile's Chrome
+  cookie database could not be read as a database, `gflow auth status` said "check
+  network connectivity". It now names the cookie store and says to close any Chrome
+  window using the profile and run `gflow auth login` again. The MCP `gflow_auth_status`
+  tool returns a new `cookie_store_unreadable` outcome (HTTP 409, `retryable: false`)
+  instead of the retryable `verification_error` (#796).
+
+- **The MCP `wait` parameter is described where agents read it**. `gflow_generate_image`
+  and `gflow_generate_video` now carry a `wait` description in `tools/list`: the default
+  `true` runs the generation inside the call, which can outlast a client's tool timeout,
+  and `false` only enqueues it and returns a `task_id` for `tasks/get`. It also says that
+  no gflow command runs the queue worker yet, so a `wait=false` job is never generated
+  (`tasks/get` keeps reporting it as `working`; #1097). The default is unchanged. See
+  [MCP](docs/MCP.md) (#481).
+
+- **`movie run` refuses costume `variants` on an entity character**
+  ([#724](https://github.com/ffroliva/gflow-cli/issues/724)). A variant appends a text
+  delta to the prompt, but an `identity = "entity"` character's body reference already
+  fixes one outfit, so the two contradicted each other inside one generation with no
+  telling which would win. Such a manifest used to run; it is now a configuration error
+  (exit 11) when it is parsed, before any browser starts, and the message says what to do
+  instead: one entity per costume, sharing the same `face_prompt`. Variants on
+  `identity = "text"` characters are unchanged.
+
+- **An output folder gflow cannot write is exit 11, not "Unexpected error"**
+  ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)). After a successful
+  generation, a failed local write (for example `--out` pointing at a protected folder)
+  kept the media id (#1035) but then ended in the catch-all, with exit 1 and a "file a
+  bug" message. It now ends as a configuration error (exit 11) that says the asset is
+  still in the Flow project. This covers image downloads, upscale and extend exports and
+  scene output, on both the CLI and MCP; a generated video clip keeps its exit 6
+  ([#1003](https://github.com/ffroliva/gflow-cli/issues/1003)).
+
+- **A credit shortfall on flow.google.com is recognised in every UI language, and only
+  when Flow shows it** ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). The
+  warning anchor had an English `aria-label` half, which Flow translates; it is now the
+  warning button's class alone (the measured element carries both). And the check now
+  requires the warning to be visible, so a hidden one Flow keeps mounted cannot turn a
+  real selector drift into "top up your credits" (exit 37).
+
+- **Selector drift is watched again, on flow.google.com**
+  ([#1083](https://github.com/ffroliva/gflow-cli/issues/1083)). The nightly GitHub
+  `selector-probe` workflow loaded the labs.google editor, which redirects to
+  flow.google.com for every account we hold, so it failed as "no recognizable editor" on
+  every run from 2026-08-21 and checked nothing. The selector registry gains a
+  `migrated_editor` surface built from the migrated composer's own constants, graded by a
+  new `$0` `e2e_auth` test that the local canary runs nightly (`run_canary.py --project`);
+  the dead workflow is retired. The canary's labs REST upload test now skips with the
+  measured reason (labs.google serves no session token) instead of reading as RED.
+
+- **The flow.google.com reference-to-video chip-count refusal states the numbers it
+  compared** ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). The guard counts
+  image references and characters together, but the message printed only the image
+  count, so a mismatch caused by a character read as "1 requested but 1 on the prompt".
+  It now reads, for example, "1 image reference(s) + 1 character(s) = 2 chip(s) requested
+  but 1 on the prompt".
+
+### Changed
+
+- **A signed media URL that answers an HTTP error is a failed download, exit 6, not
+  exit 7** ([#941](https://github.com/ffroliva/gflow-cli/issues/941), part 2). After Flow
+  reports a clip done, an error status on its download link (an expired link, for example)
+  used to raise `WireFormatError` (exit 7) and leave the clip `pending` in the catalog. It
+  now raises `MediaDownloadError` (exit 6, `retryable: false`) naming the clip, so the
+  catalog marks it generated and `gflow data download <media_id>` recovers it for free.
+  Scripts that branch on exit 7 for this case should branch on 6.
+
 ## [0.89.1] — 2026-10-24
 
 ### Added
@@ -6576,7 +6667,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.89.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.90.0...HEAD
+[0.90.0]: https://github.com/ffroliva/gflow-cli/compare/v0.89.1...v0.90.0
 [0.89.1]: https://github.com/ffroliva/gflow-cli/compare/v0.89.0...v0.89.1
 [0.89.0]: https://github.com/ffroliva/gflow-cli/compare/v0.88.0...v0.89.0
 [0.88.0]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...v0.88.0

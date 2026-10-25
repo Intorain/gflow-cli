@@ -33,7 +33,9 @@ param(
     [string]$RepoRoot = (Resolve-Path "$PSScriptRoot\..\.."),
     [string]$Time = '03:00',
     [string]$TaskName = 'gflow-canary',
-    [string]$Markers = 'e2e_auth'
+    [string]$Markers = 'e2e_auth',
+    # A project the profile owns: the migrated selector-drift e2e skips without it (#1083).
+    [string]$Project = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,6 +59,7 @@ $arguments = @(
     '--profile', "`"$CanaryProfile`""
     '--issue', "$Issue"
     '--markers', "`"$Markers`""
+    $(if ($Project) { '--project', "`"$Project`"" })
     '--pull'
 ) -join ' '
 

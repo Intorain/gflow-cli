@@ -13,6 +13,8 @@ Section D for the formal schema.
 from __future__ import annotations
 
 import asyncio
+import glob
+import hashlib
 import json
 import sys
 from dataclasses import dataclass, replace
@@ -31,15 +33,19 @@ from gflow_cli._cli_helpers import (
     default_project,
 )
 from gflow_cli.api.client import FlowApiClient, validate_image_file
+from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.transports import EXPERIMENTAL_TRANSPORTS
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
-from gflow_cli.errors import ConfigurationError
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
+from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.image_batch import (
     MAX_PROMPTS,
     MIN_PROMPTS,
     BatchOutcome,
     BatchPromptItem,
+    batch_parent,
     order_batch_rows,
     parse_batch_item_dict,
     render_image_batch_summary,
@@ -196,6 +202,87 @@ class BatchConfig:
 # ---------------------------------------------------------------------------
 
 
+def _resumed_rows(
+    prompts: tuple[BatchPromptItem, ...], output_dir: Path, project_id: str, profile_name: str
+) -> dict[int, BatchOutcome]:
+    """Rows a previous run already made in ``project_id`` (#934), by row index.
+
+    A row counts only when EVERY file it writes (``<stem>_<n>.<ext>``) exists, the catalog
+    records exactly those bytes at that path as an image of this profile in this project,
+    and its recorded prompt is the row's: a renamed, overwritten or re-prompted file is not
+    the row's output (#934 review). A parent some ``batch:N`` row references also needs its
+    Flow display name, which an in-place reference searches by, and a child is only
+    resumed with its parent. Anything less regenerates the row. The default ``output_dir``
+    is dated, so resuming on another day needs the same ``--output-dir`` or config value.
+    """
+    parents = {p for item in prompts if (p := batch_parent(item)) is not None}
+    done: dict[int, BatchOutcome] = {}
+    try:
+        with DataStore.open(get_settings().resolved_db_path()) as store:
+            repo = DataRepository(store)
+            for item in prompts:
+                stem = glob.escape(item.output_filename or f"prompt_{item.index}")
+                paths: list[Path] = []
+                images: list[GeneratedImage] = []
+                for n in range(item.count):
+                    # The extension is the bytes' (#96 saves a JPEG as .jpg), not .png.
+                    found = [
+                        (path, seed)
+                        for path in sorted(output_dir.glob(f"{stem}_{n}.*"))
+                        if path.is_file()
+                        and (
+                            seed := repo.resolve_seed_image_by_file(
+                                profile_name,
+                                path.resolve(),
+                                hashlib.sha256(path.read_bytes()).hexdigest(),
+                            )
+                        )
+                        and seed.flow_project_id == project_id
+                        and seed.prompt in (item.text, item.original_prompt)
+                    ]
+                    if not found:
+                        break
+                    path, seed = found[0]
+                    paths.append(path)
+                    asset = repo.get_asset_by_flow_media_id(profile_name, seed.flow_media_id)
+                    name = asset.metadata_json.get("display_name") if asset else None
+                    images.append(
+                        GeneratedImage(
+                            media_name=seed.flow_media_id,
+                            workflow_id=seed.flow_workflow_id or "",
+                            seed=0,
+                            prompt=item.text,
+                            model_name_type=seed.model,
+                            aspect_ratio=seed.aspect_ratio or "",
+                            fife_url="",
+                            dimensions=(seed.width or 0, seed.height or 0),
+                            display_name=name if isinstance(name, str) and name else None,
+                        )
+                    )
+                complete = len(images) == item.count
+                if complete and (item.index not in parents or images[0].display_name):
+                    done[item.index] = BatchOutcome(
+                        index=item.index,
+                        prompt=item,
+                        status="resumed",
+                        saved_paths=paths,
+                        images=images,
+                    )
+        # A child built from a parent that is about to be regenerated is stale too.
+        while stale := [
+            i
+            for i, o in done.items()
+            if (p := batch_parent(o.prompt)) is not None and p not in done
+        ]:
+            for i in stale:
+                del done[i]
+    except (DataStoreError, OSError) as exc:
+        # An unreadable catalog resumes nothing: every row is generated, never guessed.
+        console.print(f"[yellow]Resume skipped:[/yellow] catalog unreadable ({escape(str(exc))})")
+        return {}
+    return done
+
+
 def _check_transport_gated(transport: str | None) -> None:
     """Per spec D.1 rule 5: experimental transports require env var.
 
@@ -233,6 +320,7 @@ async def _run_batch(
     profile_name: str | None = None,
     recorder: OperationRecorder | None = None,
     project_id: str | None = None,
+    resumed: dict[int, BatchOutcome] | None = None,
 ) -> list[BatchOutcome]:
     """Run ``prompts`` sequentially through ONE FlowApiClient session.
 
@@ -254,6 +342,7 @@ async def _run_batch(
         _recorder=recorder,
         _command="run",
         project_id=project_id,
+        resumed=resumed,
     )
     return outcomes
 
@@ -302,12 +391,23 @@ async def _run_batch(
         "prompts (default); --fail-fast halts the batch immediately."
     ),
 )
+@click.option(
+    "--resume",
+    is_flag=True,
+    default=False,
+    help=(
+        "Skip rows a previous run already made in this project (their files are in the "
+        "output dir and recorded in the local catalog); a batch:N child references them "
+        "in place. Needs --project or a config 'project'."
+    ),
+)
 def run(
     config_path: Path,
     output_dir_override: Path | None,
     profile: str | None,
     project_id: str | None,
     continue_on_error: bool,
+    resume: bool,
 ) -> None:
     """Execute a JSON-described batch of image generations sequentially."""
     try:
@@ -337,6 +437,16 @@ def run(
         console.print(f"  project: [dim]{project_id}[/dim] [dim](existing)[/dim]")
     if not continue_on_error:
         console.print("  mode: [yellow]fail-fast[/yellow]")
+    resumed: dict[int, BatchOutcome] = {}
+    if resume:
+        if not project_id:
+            err = ConfigurationError(
+                detail="--resume needs the run's project: pass --project <id> or set 'project'"
+            )
+            console.print(f"[red]Config error:[/red] {escape(err.detail)}")
+            sys.exit(resolve_exit_code(err))
+        resumed = _resumed_rows(cfg.prompts, output_dir, project_id, profile_name)
+        console.print(f"  resume: [dim]{len(resumed)} row(s) already made[/dim]")
 
     recorder = OperationRecorder.open(settings)
     try:
@@ -351,6 +461,7 @@ def run(
                 profile_name=profile_name,
                 recorder=recorder,
                 project_id=project_id,
+                resumed=resumed,
             ),
         )
     finally:

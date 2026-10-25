@@ -78,6 +78,7 @@ gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out D
 gflow run --config <batch.json> [--project ID]            # JSON image batch; a row's "ref" may be "batch:N" (an earlier
                                                           # row's image, in place, no upload) or a local file (uploaded once);
                                                           # --project (or "project" in the config) reuses an existing project
+gflow run --config <batch.json> --project ID --resume     # skip rows already on disk + in the catalog (#934)
 # For accounts Flow serves flow.google.com (#639), t2i, i2i, and upscale are ported (a project is
 # created when --project is omitted, #864): i2i accepts local --ref files only, all
 # five aspects. Images take a character by name (@Name, or --reference-entity with

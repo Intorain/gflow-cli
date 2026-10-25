@@ -82,6 +82,7 @@ from gflow_cli.errors import (
     FlowHostMigratedError,
     GFlowError,
     InsufficientCreditsError,
+    MediaDownloadError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
     RpcResponseUnavailableError,
@@ -172,15 +173,15 @@ FRAMES_LIGATURE = "crop_free"
 DIALOG = "[role='dialog']"
 # What Flow puts WHERE the submit button was when the account cannot afford the model.
 # Short of credits, not necessarily out of them: measured 2026-09-07, 50 credits held
-# against a 100-credit veo-quality request still rendered this. Both
-# halves are structural (a component class and an ARIA label), not a display string, so
-# this stays locale-invariant: the aria-label is the English attribute Angular emits, not
-# rendered text. Measured 2026-09-07 by A/B on a short vs a funded account
+# against a 100-credit veo-quality request still rendered this. Anchored on the component
+# class only: the measured element also carried an English aria-label, but this host
+# localises aria-labels (`aria-label="Formatar"`, #745), so that half was a text selector.
+# Measured 2026-09-07 by A/B on a short vs a funded account
 # (scripts/dev/spike_migrated_submit_anchor.py). Finding, with the arithmetic and
 # four things named as NOT measured -- including that the positive match on
 # prompt-warning-button was seen exactly once:
 # docs/superpowers/spikes/2026-09-07-credit-shortfall-looks-like-selector-drift.md
-CREDITS_WARNING = "button.prompt-warning-button, [aria-label*='Insufficient credits']"
+CREDITS_WARNING = "button.prompt-warning-button"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
 
 #: Google's `glue` consent bar — a Google-wide component, not one of Flow's. It is
@@ -940,10 +941,11 @@ async def _raise_if_out_of_credits(page: Any) -> None:
 
     Called from every path that concludes "the submit anchor is unusable", because an
     credit shortfall and a moved frontend are indistinguishable at that point -- and only
-    one of them is a bug in gflow. Silent when the warning is absent, so genuine
-    selector drift still surfaces as drift.
+    one of them is a bug in gflow. Silent when the warning is absent or hidden (a node
+    kept mounted on a funded account must not turn real drift into exit 37, #745), so
+    genuine selector drift still surfaces as drift.
     """
-    if await page.locator(CREDITS_WARNING).count():
+    if await page.locator(CREDITS_WARNING).first.is_visible():
         log.info("migrated.submit_blocked_by_credits")
         raise InsufficientCreditsError(
             detail=(
@@ -3575,11 +3577,14 @@ class MigratedComposer:
                 retryable=False,  # billed: a re-run bills again (#941)
             )
             if resp.status >= 300:
-                raise WireFormatError(
+                # #941: the clip is done and billed; this is a failed DOWNLOAD, recoverable.
+                raise MediaDownloadError(
+                    media_id=record.media_id,
                     detail=f"migrated host: signed media URL returned HTTP {resp.status}",
                     status=resp.status,
                     route="flow-content.google",
                     remediation_hint=expired_link_hint(record.media_id),
+                    retryable=False,
                 )
             body = await resp.body()
             if body[4:8] == b"ftyp":
@@ -3710,12 +3715,14 @@ async def run_video(
     await composer.send_prompt(page, request.prompt, append=has_mentions)
     if request.mode is Mode.R2V:
         attached = await composer.read_chips(page)
-        if len(attached) != len(request.reference_images) + len(request.reference_entities):
+        n_images, n_chars = len(request.reference_images), len(request.reference_entities)
+        if len(attached) != n_images + n_chars:
             raise ReferenceNotFoundError(
                 detail=(
-                    f"migrated host: {len(request.reference_images)} reference(s) requested "
-                    f"but {len(attached)} on the prompt at submit time — refusing to spend "
-                    f"credits on a run that would ignore them"
+                    f"migrated host: {n_images} image reference(s) + {n_chars} character(s) "
+                    f"= {n_images + n_chars} chip(s) requested but {len(attached)} on the "
+                    f"prompt at submit time — refusing to spend credits on a run that would "
+                    f"ignore them"
                 ),
             )
     record = await composer.submit_and_observe(
