@@ -411,6 +411,37 @@ variant="white"
         with pytest.raises(ConfigurationError, match="face_prompt"):
             MovieManifest.from_toml_path(path)
 
+    def test_entity_identity_with_variants_raises(self, tmp_path: Path) -> None:
+        # #724: a variant is a text delta; on an entity it fights the body reference.
+        path = _write_toml(
+            tmp_path,
+            (
+                'title = "T"\nproject = "p"\n'
+                '[[characters]]\nname = "X"\nidentity = "entity"\nface_prompt = "a face"\n'
+                '[characters.variants]\ncoat = "a heavy coat"\n'
+                '[[scenes]]\nid = "s"\naction = "z"\n'
+            ),
+        )
+        with pytest.raises(ConfigurationError, match=r"characters\[0\].*variants") as exc:
+            MovieManifest.from_toml_path(path)
+        # `movie run` prints only str(exc), so the fix must be in the message itself.
+        for text in (str(exc.value), exc.value.remediation_hint):
+            assert "face_prompt" in text
+            assert "body_prompt" in text
+
+    def test_text_identity_with_variants_still_parses(self, tmp_path: Path) -> None:
+        path = _write_toml(
+            tmp_path,
+            (
+                'title = "T"\nproject = "p"\n'
+                '[[characters]]\nname = "X"\nappearance = "y"\n'
+                '[characters.variants]\ncoat = "a heavy coat"\n'
+                '[[scenes]]\nid = "s"\naction = "z"\n'
+            ),
+        )
+        m = MovieManifest.from_toml_path(path)
+        assert m.characters["X"].variants == {"coat": "a heavy coat"}
+
     def test_invalid_character_model_raises(self, tmp_path: Path) -> None:
         path = _write_toml(
             tmp_path,

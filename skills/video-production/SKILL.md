@@ -255,14 +255,15 @@ The face prompt must be **byte-identical** across costume states; only the body 
 Then every scene names the costume-state entity, not the character, and continuity becomes a
 lookup instead of a hope.
 
-**This is not what `movie.toml` does today [CONSTRAINT].** `Character.variants` is a
+**`movie.toml` refuses the variant shortcut here [CONSTRAINT].** `Character.variants` is a
 `Mapping[str, str]` and `resolve_variant()` appends a text delta to the prose appearance
 (`composition.py:67-80`), while the runner creates exactly **one entity per character name**
-(`cli_movie.py:589-597`). On an `identity = "entity"` character a variant therefore changes
-the *words* while the entity's body plate keeps the original outfit, and the two argue inside
-one generation. Until that is fixed, express costume states as **separate entries in the
-manifest's characters array**, each with `identity = "entity"` and a shared face prompt —
-not as `variants`. See [MOVIE.md](../../docs/MOVIE.md) for the TOML.
+(`cli_movie.py:589-597`). On an `identity = "entity"` character a variant would change the
+*words* while the entity's body plate kept the original outfit, and the two would argue inside
+one generation. The manifest parser therefore **rejects** `variants` on an
+`identity = "entity"` character (exit 11, #724): express costume states as **separate entries
+in the manifest's characters array**, each with `identity = "entity"` and a shared face
+prompt. See [MOVIE.md](../../docs/MOVIE.md) for the TOML.
 
 Full method in **[`consistency.md`](consistency.md)**. The rest of the short form:
 

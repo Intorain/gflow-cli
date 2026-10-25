@@ -235,8 +235,10 @@ entity-consistent scene there. Tracked in
 (`composition.py:67-80`), and the runner creates **one entity per character name**
 (`cli_movie.py:589-597`). That is coherent for `identity = "text"` and **incoherent for
 `identity = "entity"`**: the entity's body reference fixes one outfit permanently, so a
-variant asking for another puts the reference and the prose in conflict inside one
-generation, with an undefined winner.
+variant asking for another would put the reference and the prose in conflict inside one
+generation, with an undefined winner. So `variants` on an `identity = "entity"` character is
+**rejected when the manifest is parsed** (exit 11, before any browser starts); variants stay
+valid on `identity = "text"` characters.
 
 A Flow character entity bundles face **and** wardrobe. So model a costume change as two
 entities sharing a byte-identical `face_prompt` and differing only in `body_prompt`:
@@ -255,8 +257,8 @@ face_prompt = "<the same canonical face, byte-identical>"
 body_prompt = "a heavy oiled coat, hood down"
 ```
 
-Scenes then name the costume state, and continuity is a lookup rather than a hope. Tracked in
-[#724](https://github.com/ffroliva/gflow-cli/issues/724).
+Scenes then name the costume state, and continuity is a lookup rather than a hope
+([#724](https://github.com/ffroliva/gflow-cli/issues/724)).
 
 **The full identity resolution ladder** — entity, then the entity's own plate, then a plate cut
 from a take, then prose canon, with the rule that descending a rung is recorded next to the

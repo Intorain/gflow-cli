@@ -28,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded. The MCP image tool does the same. On labs, a file not yet recorded in the
   project still goes through the editor's own filename dedup (#314).
 
+- **The MCP `wait` parameter is described where agents read it**. `gflow_generate_image`
+  and `gflow_generate_video` now carry a `wait` description in `tools/list`: the default
+  `true` runs the generation inside the call, which can outlast a client's tool timeout,
+  and `false` only enqueues it and returns a `task_id` for `tasks/get`. It also says that
+  no gflow command runs the queue worker yet, so a `wait=false` job is never generated
+  (`tasks/get` keeps reporting it as `working`; #1097). The default is unchanged. See
+  [MCP](docs/MCP.md) (#481).
+
+- **`movie run` refuses costume `variants` on an entity character**
+  ([#724](https://github.com/ffroliva/gflow-cli/issues/724)). A variant appends a text
+  delta to the prompt, but an `identity = "entity"` character's body reference already
+  fixes one outfit, so the two contradicted each other inside one generation with no
+  telling which would win. Such a manifest used to run; it is now a configuration error
+  (exit 11) when it is parsed, before any browser starts, and the message says what to do
+  instead: one entity per costume, sharing the same `face_prompt`. Variants on
+  `identity = "text"` characters are unchanged.
+
 - **An output folder gflow cannot write is exit 11, not "Unexpected error"**
   ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)). After a successful
   generation, a failed local write (for example `--out` pointing at a protected folder)
