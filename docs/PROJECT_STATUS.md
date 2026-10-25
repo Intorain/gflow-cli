@@ -4,6 +4,30 @@
 
 ## Current release
 
+**v0.90.0 — alpha.** A batch run can be resumed, a reference file is uploaded once per
+project, and five failures now say what actually went wrong.
+
+**Resume and reuse.** `gflow run --resume` skips the rows already on disk and recorded in the
+catalog, so a re-run does not spend image quota twice (#934). On flow.google.com,
+`image i2i --ref <file>` uploads the file into a project once and mentions that copy on later
+runs, from the CLI and the MCP image tool alike, instead of filling the library with copies
+(#772).
+
+**The right cause, the right exit.** An output folder gflow cannot write is exit 11 with a
+hint, not "Unexpected error" (#1091). A corrupt cookie store is no longer reported as a
+network problem (#796). A signed media URL that answers an HTTP error is a failed download,
+exit 6 (#941). A credit shortfall is recognised in every UI language (#745), and a
+`movie.toml` entity character with costume `variants` is refused when the manifest is
+read (#724).
+
+**For agents.** The MCP generation tools describe `wait` where agents read it, including
+that `wait=false` is not generated yet (#481, #1097). Selector drift on flow.google.com is
+watched again by the canary (#1083).
+
+Full ledger: [LIVE_VERIFICATION_v0.90.0](LIVE_VERIFICATION_v0.90.0.md).
+
+<details><summary>v0.89.1 — lost image replies recovered, upscale after generating</summary>
+
 **v0.89.1 — alpha.** Images Flow made are no longer lost to a dropped reply, and an upscale
 right after generating works.
 
@@ -20,6 +44,8 @@ cause, Google's "Confirm it's you" (#881, #902). A declined upload says so (#755
 completed `character create` keeps its id and name in the catalog (#737).
 
 Full ledger: [LIVE_VERIFICATION_v0.89.1](LIVE_VERIFICATION_v0.89.1.md).
+
+</details>
 
 <details><summary>v0.89.0 — a default project, errors that name the cause, fewer ways to pay twice</summary>
 
@@ -629,6 +655,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `gflow run --resume` (#934); a local `--ref` uploaded once per project (#772); unwritable output, corrupt cookie store and signed-URL errors classified (#1091, #796, #941) | ✅ done (v0.90.0) |
 | Lost image replies recovered from the grid, upscale after generating, hidden picker refused (#1075, #1067, #788) | ✅ done (v0.89.1) |
 | Default project, Flow model names, clearer exit-11 causes, refuse-before-billing and diagnostics privacy (#1039, #1038, #883, #974, #984, #1008, #890) | ✅ done (v0.89.0) |
 | Browser proxy setting (#1036); slow-link create and lost-reply writes no longer report false failures (#1037, #992, #1035) | ✅ done (v0.88.0) |

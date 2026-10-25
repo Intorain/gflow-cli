@@ -1856,9 +1856,8 @@ async def gflow_list_projects(
     name="gflow_auth_status",
     description=(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
-        "BEFORE a generation tool to fail fast on expired auth — the queue is "
-        "async, so an auth failure otherwise surfaces only later from the "
-        "daemon. Never starts an interactive login flow; may boot a "
+        "BEFORE a generation tool to fail fast on expired auth, before a long "
+        "blocking generation call. Never starts an interactive login flow; may boot a "
         "short-lived headless browser only if cookie decryption requires the "
         "Playwright fallback. May take up to ~45s on a slow network."
     ),

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.0] — 2026-10-25
+
 ### Added
 
 - **`gflow run --resume` picks up where a run stopped**
@@ -78,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new `$0` `e2e_auth` test that the local canary runs nightly (`run_canary.py --project`);
   the dead workflow is retired. The canary's labs REST upload test now skips with the
   measured reason (labs.google serves no session token) instead of reading as RED.
+
 - **The flow.google.com reference-to-video chip-count refusal states the numbers it
   compared** ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). The guard counts
   image references and characters together, but the message printed only the image
@@ -6664,7 +6667,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.89.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.90.0...HEAD
+[0.90.0]: https://github.com/ffroliva/gflow-cli/compare/v0.89.1...v0.90.0
 [0.89.1]: https://github.com/ffroliva/gflow-cli/compare/v0.89.0...v0.89.1
 [0.89.0]: https://github.com/ffroliva/gflow-cli/compare/v0.88.0...v0.89.0
 [0.88.0]: https://github.com/ffroliva/gflow-cli/compare/v0.87.1...v0.88.0
