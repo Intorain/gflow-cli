@@ -406,6 +406,18 @@ def _parse_character(data: object, idx: int) -> Character:
     face_prompt = _character_opt_str(d, "face_prompt", idx)
     if identity == "entity" and not face_prompt:
         raise ConfigurationError(f"characters[{idx}] identity='entity' requires face_prompt.")
+    if identity == "entity" and variants:
+        # A variant is a prose delta; an entity's body reference already fixes the outfit (#724).
+        fix = (
+            "Model each costume as its own [[characters]] entry with identity='entity', "
+            "the same face_prompt (byte-identical) and that costume's body_prompt, "
+            "and name that entry in the scenes that use it."
+        )
+        raise ConfigurationError(
+            f"characters[{idx}] identity='entity' cannot have variants: the entity's body "
+            f"reference fixes one outfit, so a variant's text would conflict with it. {fix}",
+            remediation_hint=fix,
+        )
 
     return Character(
         name=name.strip(),
