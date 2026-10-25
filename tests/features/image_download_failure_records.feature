@@ -9,6 +9,7 @@ Feature: A generated image whose download fails is still recorded
     Given an output directory gflow cannot write to
     When image t2i runs with --out pointed at that directory
     Then the run fails and stderr names the media id and the project, with no signed URL
+    And the failure exits 11 naming the unwritable path, not as an unexpected error
     And the catalog keeps the media id with no local copy, under one FAILED operation
 
   Scenario: the MCP image tool writing to a path it cannot write reports the media id

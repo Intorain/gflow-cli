@@ -12,6 +12,9 @@ the bytes from Flow, i.e. after a real generation.
 deny-write ACE for Everyone on Windows (``icacls``), mode ``0o500`` on POSIX. A control
 write proves the denial holds before any quota is spent.
 
+#1091 adds the exit: ``storage.write_asset_async`` classifies that ``OSError`` as a
+``ConfigurationError`` (exit 11) instead of letting it reach the "Unexpected error" catch-all.
+
 **Cost.** One image of daily quota per scenario, zero Veo credits.
 """
 
@@ -132,7 +135,7 @@ def _catalog(world: dict[str, Any]) -> tuple[list[dict[str, Any]], list[sqlite3.
 @then("the run fails and stderr names the media id and the project, with no signed URL")
 def _cli_failed(world: dict[str, Any]) -> None:
     proc = world["proc"]
-    assert proc.returncode == 1, f"exit {proc.returncode}; stderr tail: {proc.stderr[-800:]!r}"
+    assert proc.returncode != 0, f"exit {proc.returncode}; stderr tail: {proc.stderr[-800:]!r}"
     hint = [line for line in proc.stderr.splitlines() if not line.lstrip().startswith("{")]
     text = "\n".join(hint)
     assert "download failed" in text, text
@@ -154,6 +157,17 @@ def _cli_failed(world: dict[str, Any]) -> None:
     assert len(url_lines) == 1 and any(r.match(url_lines[0]) for r in shapes), url_lines
     print(f"[1035-cli] media={media_id} project={rows[0]['project_id']}")
     print("[1035-cli] hint:\n" + text)
+
+
+@then("the failure exits 11 naming the unwritable path, not as an unexpected error")
+def _classified(world: dict[str, Any]) -> None:
+    # #1091: the raw PermissionError used to reach the catch-all ("file a bug", exit 1).
+    proc = world["proc"]
+    assert proc.returncode == 11, f"exit {proc.returncode}; stderr tail: {proc.stderr[-800:]!r}"
+    assert "Unexpected error" not in proc.stderr
+    # The classified message is Rich console output (stdout), which wraps the long path.
+    flat = "".join(proc.stdout.split())
+    assert "Configurationerror:Couldnotwrite" + str(world["dir"]) in flat, proc.stdout[-800:]
 
 
 @then("the failed task carries the media id and the project id")

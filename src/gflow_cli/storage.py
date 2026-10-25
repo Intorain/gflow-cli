@@ -159,8 +159,23 @@ async def write_asset_async(target: AnyPath, data: bytes) -> None:
       thread pool via ``asyncio.to_thread()``.
     * **Cloud** ``UPath``: delegates to the fsspec backend (gcsfs / s3fs)
       via ``asyncio.to_thread()`` so the Playwright event loop is not stalled.
+
+    Raises:
+        ConfigurationError: *target* cannot be written (#1091). By then Flow has
+            generated the asset, so callers salvage its id first (#1035).
     """
-    if is_cloud_path(target):
-        await asyncio.to_thread(target.write_bytes, data)
-    else:
-        await asyncio.to_thread(_write_local, Path(str(target)), data)
+    try:
+        if is_cloud_path(target):
+            await asyncio.to_thread(target.write_bytes, data)
+        else:
+            await asyncio.to_thread(_write_local, Path(str(target)), data)
+    except OSError as exc:
+        from gflow_cli.errors import ConfigurationError
+
+        raise ConfigurationError(
+            detail=f"Could not write {target}: {exc.strerror or exc}",
+            remediation_hint=(
+                "Point --out (or GFLOW_CLI_OUTPUT_DIR / GFLOW_CLI_STORAGE_URI) at a "
+                "location this process can write. The asset is still in the Flow project."
+            ),
+        ) from exc
