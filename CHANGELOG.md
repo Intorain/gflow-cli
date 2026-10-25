@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP `wait=false` generations now run**
+  ([#1097](https://github.com/ffroliva/gflow-cli/issues/1097)). Before, `gflow_generate_image`
+  and `gflow_generate_video` with `wait=false` saved the job and returned a `task_id`, but no
+  gflow command ever ran it: `tasks/get` said `working` forever. The job now runs in the
+  background of the server that accepted it, one job at a time per profile, sharing the
+  profile with `wait=true` calls. The new `tasks/result` returns the same reply `wait=true`
+  would (files, project id, seed). `tasks/cancel` now stops the job instead of only
+  relabelling its row, and a job cancelled after its submit fired is recorded as
+  `indeterminate` (a credit may be spent), not `failed`. When the client closes a stdio
+  server or `gflow serve` stops, running jobs are cancelled and recorded the same way.
+  Jobs queued by older releases are never picked up. See [MCP](docs/MCP.md).
+
 ## [0.90.0] — 2026-10-25
 
 ### Added

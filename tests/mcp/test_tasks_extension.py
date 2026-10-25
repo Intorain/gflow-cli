@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from mcp.types import CancelTaskRequestParams, GetTaskRequestParams
@@ -87,6 +88,8 @@ async def test_mcp_generate_image_non_blocking(
     monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "home"))
     (tmp_path / "home" / "profile_default").mkdir(parents=True, exist_ok=True)
     (tmp_path / "home" / "profile_default" / ".gflow_account").write_text("user@example.com")
+    # wait=false now runs the job in the background (#1097); this test is about the handle.
+    monkeypatch.setattr("gflow_cli.mcp.tools._run_detached", AsyncMock())
 
     resp = await gflow_generate_image(prompt="test prompt", wait=False)
     assert resp.get("status") == "pending"

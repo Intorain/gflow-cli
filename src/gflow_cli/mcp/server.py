@@ -14,7 +14,9 @@ import hmac
 import io
 import os
 import sys
-from typing import Literal
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import Any, Literal
 
 import structlog
 from mcp.server import MCPServer
@@ -26,6 +28,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gflow_cli import __version__
 from gflow_cli.config import get_settings, reset_settings
+from gflow_cli.mcp import tasks_extension as tasks_module
 from gflow_cli.mcp.tasks_extension import TasksExtension
 
 log = structlog.get_logger()
@@ -281,6 +284,21 @@ def build_app(
         # transport's rebinding guard, or an unauthenticated caller learns the
         # Host allow-list from a 421.
         app.add_middleware(_BearerAuthMiddleware, token=token)
+
+    inner_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(a: Starlette) -> AsyncGenerator[Any]:
+        async with inner_lifespan(a) as state:
+            try:
+                yield state
+            finally:
+                # Here, not after serve(): uvicorn re-raises the stop signal once it
+                # has shut down, killing the process before asyncio.run cancels the
+                # wait=false jobs (spike 2026-10-25-mcp-detached-task-shutdown).
+                await tasks_module.drain_detached()
+
+    app.router.lifespan_context = lifespan
     return app
 
 

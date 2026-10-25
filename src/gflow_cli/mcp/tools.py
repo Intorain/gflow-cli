@@ -50,6 +50,7 @@ from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, is_retryable
 from gflow_cli.mcp.server import server
+from gflow_cli.mcp.tasks_extension import detach
 from gflow_cli.profile_store import (
     NoDefaultProfileError,
     NoProfilesError,
@@ -62,21 +63,22 @@ from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
-from gflow_cli.worker.queue import QueueRepository
+from gflow_cli.worker.queue import QueueRepository, mark_interrupted
 
 log = structlog.get_logger()
 
 # #481: a schema description, not a docstring ``Args:`` entry — the docstring never
-# reaches ``tools/list``. No shipped command (``gflow mcp run``, ``gflow serve``)
-# starts the queue worker, so the wait=false half must not be sold as a way out.
+# reaches ``tools/list``.
 _WAIT_DESCRIPTION = (
     "true (default): run the generation inside this call and return the finished "
     "result. The call stays open for the whole generation, minutes for a video, which "
-    "can outlast an MCP client's tool timeout; raise that timeout for generation calls. "
-    "false: only enqueue the job and return {status: 'pending', task_id} at once; the "
-    "SEP-2663 Tasks extension's tasks/get reads its state by task_id. No gflow command "
-    "runs the queue worker today, so a wait=false job is never generated: tasks/get "
-    "reports it as 'working' indefinitely, and tasks/cancel clears it. Use the default."
+    "can outlast an MCP client's tool timeout; raise that timeout, or use false. "
+    "false: return {status: 'pending', task_id} at once and run the job in the "
+    "background of this server process. With the SEP-2663 Tasks extension, tasks/get "
+    "reads its state by task_id, tasks/result returns the same reply wait=true would "
+    "(files, project id) once it is done, and tasks/cancel stops it (a job cancelled "
+    "after submit is recorded as indeterminate: a credit may be spent). The job runs "
+    "only while this server runs: if the client closes the server, it is cancelled."
 )
 _WaitParam = Annotated[bool, Field(description=_WAIT_DESCRIPTION)]
 
@@ -345,6 +347,125 @@ def _enqueue_generation_task(
     }
 
 
+async def _execute_claimed(profile: str, task_id: str, db_path: Path) -> None:
+    """Claim exactly ``task_id`` and run it on this profile, one browser job at a time.
+
+    Claiming by id, never ``claim_next_pending``, is what keeps rows queued by older
+    releases (whose ``wait=false`` ran nothing) from starting to bill (#1097). A None
+    claim = invalid payload failed at claim time (no browser) or already taken; the
+    read-back reports it.
+    """
+    async with _profile_lock(profile):
+        worker = FlowWorker(profile_name=profile, db_path=str(db_path))
+        try:
+            claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
+            if claimed is not None:
+                await worker.process_task(claimed)
+        finally:
+            worker.close()
+
+
+async def _run_detached(profile: str, task_id: str, db_path: Path) -> None:
+    """Run a ``wait=false`` job in the server's own loop and leave its row truthful.
+
+    ``process_task`` settles a row it claimed. This covers the rest: a cancel or a
+    crash before the claim, or one that escapes ``process_task``.
+    """
+    log.info("mcp.task.detached_started", task_id=task_id, profile=profile)
+    try:
+        await _execute_claimed(profile, task_id, db_path)
+    except asyncio.CancelledError:
+        _settle_unfinished(task_id, db_path, "cancelled")
+        raise
+    except Exception as exc:
+        # The error class only: a payload or exception locals can carry prompts.
+        log.error("mcp.task.detached_failed", task_id=task_id, error_class=type(exc).__name__)
+        _settle_unfinished(task_id, db_path, "crashed")
+
+
+def _settle_unfinished(task_id: str, db_path: Path, reason: str) -> None:
+    with DataStore.open(db_path) as store:
+        repo = QueueRepository(store)
+        task = repo.get_task(task_id)
+        if task is not None and task.status in ("pending", "processing"):
+            mark_interrupted(repo, task_id, repo.read_checkpoint(task_id), reason)
+
+
+def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
+    """The tool reply for a finished task: what ``wait=true`` returns and ``tasks/result`` reads."""
+    with DataStore.open(db_path) as store:
+        completed_task = QueueRepository(store).get_task(task_id)
+        if completed_task is None:
+            return {
+                "status": "error",
+                "error": f"Task {task_id!r} disappeared from queue after execution.",
+            }
+
+        # Treat anything other than an explicit "completed" as a failure —
+        # a row stuck in "processing"/"pending" must not be reported as a
+        # success with an empty file list.
+        if completed_task.status != "completed":
+            log.warning(
+                "mcp.tool.task_failed",
+                task_id=task_id,
+                status=completed_task.status,
+                error=completed_task.error,
+            )
+            failed: dict[str, Any] = {
+                "status": "failed",
+                "task_id": task_id,
+                "error": completed_task.error
+                or {"detail": f"Task ended in unexpected status {completed_task.status!r}"},
+            }
+            # #1035/#895: media Flow generated before the failure (a lost
+            # download) is still reachable by these ids.
+            if completed_task.flow_media_id:
+                failed["flow_media_id"] = completed_task.flow_media_id
+                asset = DataRepository(store).get_asset_by_flow_media_id(
+                    profile, completed_task.flow_media_id
+                )
+                if asset is not None:
+                    failed["flow_project_id"] = asset.flow_project_id
+            return failed
+
+        # Resolve local file paths from the asset catalog.
+        file_paths: list[str] = []
+        flow_project_id: str | None = None
+        flow_workflow_id: str | None = None
+        seed: int | None = None
+        if completed_task.flow_media_id:
+            asset = DataRepository(store).get_asset_by_flow_media_id(
+                profile,
+                completed_task.flow_media_id,
+            )
+            if asset:
+                flow_project_id = asset.flow_project_id
+                flow_workflow_id = asset.flow_workflow_id
+                # The catalogued seed (#1013): Flow's own on the classic image paths, the
+                # requested one for video, a 0 placeholder on the agentic/agent-only arms.
+                seed = asset.seed
+                if asset.local_files:
+                    file_paths = [str(lf.path) for lf in asset.local_files if lf.path is not None]
+
+    log.info(
+        "mcp.tool.task_completed",
+        task_id=task_id,
+        flow_project_id=flow_project_id,
+        flow_media_id=completed_task.flow_media_id,
+        file_count=len(file_paths),
+    )
+
+    return {
+        "status": "completed",
+        "task_id": task_id,
+        "flow_project_id": flow_project_id,
+        "flow_media_id": completed_task.flow_media_id,
+        "flow_workflow_id": flow_workflow_id,
+        "seed": seed,
+        "files": file_paths,
+    }
+
+
 async def _run_generation_task(
     *,
     profile: str,
@@ -354,11 +475,15 @@ async def _run_generation_task(
 ) -> dict[str, Any]:
     """Enqueue a generation task and either return handle immediately or wait for completion."""
     if not wait:
-        return _enqueue_generation_task(
+        handle = _enqueue_generation_task(
             profile=profile,
             task_type=task_type,
             payload=payload,
         )
+        if handle.get("status") == "pending":
+            db_path = get_settings().resolved_db_path()
+            detach(handle["task_id"], _run_detached(profile, handle["task_id"], db_path))
+        return handle
 
     settings = get_settings()
     db_path = settings.resolved_db_path()
@@ -404,93 +529,8 @@ async def _run_generation_task(
             profile=profile,
         )
 
-        # 2. Atomically claim the task we just enqueued, then run it. The claim
-        #    (shared with the daemon poll loop) is what guarantees this row is
-        #    executed at most once. A None claim = invalid payload failed at
-        #    claim time (no browser) or already taken; the read-back reports it.
-        async with _profile_lock(profile):
-            worker = FlowWorker(profile_name=profile, db_path=str(db_path))
-            try:
-                claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
-                if claimed is not None:
-                    await worker.process_task(claimed)
-            finally:
-                worker.close()
-
-        # 3. Read the final task state back.
-        with DataStore.open(db_path) as store:
-            completed_task = QueueRepository(store).get_task(task_id)
-            if completed_task is None:
-                return {
-                    "status": "error",
-                    "error": f"Task {task_id!r} disappeared from queue after execution.",
-                }
-
-            # Treat anything other than an explicit "completed" as a failure —
-            # a row stuck in "processing"/"pending" must not be reported as a
-            # success with an empty file list.
-            if completed_task.status != "completed":
-                log.warning(
-                    "mcp.tool.task_failed",
-                    task_id=task_id,
-                    status=completed_task.status,
-                    error=completed_task.error,
-                )
-                failed: dict[str, Any] = {
-                    "status": "failed",
-                    "task_id": task_id,
-                    "error": completed_task.error
-                    or {"detail": f"Task ended in unexpected status {completed_task.status!r}"},
-                }
-                # #1035/#895: media Flow generated before the failure (a lost
-                # download) is still reachable by these ids.
-                if completed_task.flow_media_id:
-                    failed["flow_media_id"] = completed_task.flow_media_id
-                    asset = DataRepository(store).get_asset_by_flow_media_id(
-                        profile, completed_task.flow_media_id
-                    )
-                    if asset is not None:
-                        failed["flow_project_id"] = asset.flow_project_id
-                return failed
-
-            # Resolve local file paths from the asset catalog.
-            file_paths: list[str] = []
-            flow_project_id: str | None = None
-            flow_workflow_id: str | None = None
-            seed: int | None = None
-            if completed_task.flow_media_id:
-                asset = DataRepository(store).get_asset_by_flow_media_id(
-                    profile,
-                    completed_task.flow_media_id,
-                )
-                if asset:
-                    flow_project_id = asset.flow_project_id
-                    flow_workflow_id = asset.flow_workflow_id
-                    # The catalogued seed (#1013): Flow's own on the classic image paths, the
-                    # requested one for video, a 0 placeholder on the agentic/agent-only arms.
-                    seed = asset.seed
-                    if asset.local_files:
-                        file_paths = [
-                            str(lf.path) for lf in asset.local_files if lf.path is not None
-                        ]
-
-        log.info(
-            "mcp.tool.task_completed",
-            task_id=task_id,
-            flow_project_id=flow_project_id,
-            flow_media_id=completed_task.flow_media_id,
-            file_count=len(file_paths),
-        )
-
-        return {
-            "status": "completed",
-            "task_id": task_id,
-            "flow_project_id": flow_project_id,
-            "flow_media_id": completed_task.flow_media_id,
-            "flow_workflow_id": flow_workflow_id,
-            "seed": seed,
-            "files": file_paths,
-        }
+        await _execute_claimed(profile, task_id, db_path)
+        return task_payload(profile, task_id, db_path)
 
     except GFlowError as exc:
         log.error("mcp.tool.gflow_error", task_id=task_id, error=str(exc))

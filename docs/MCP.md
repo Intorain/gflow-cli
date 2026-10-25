@@ -94,19 +94,22 @@ The server registers three protocol surfaces:
 > different axis entirely: it buys a *look*, not an identity. Use
 > `gflow_character_list` to discover ids. See [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md).
 
-> **`wait` and long generations ([#481](https://github.com/ffroliva/gflow-cli/issues/481)).**
+> **`wait` and long generations ([#481](https://github.com/ffroliva/gflow-cli/issues/481), [#1097](https://github.com/ffroliva/gflow-cli/issues/1097)).**
 > Both generation tools take `wait` (default `true`), and its schema description in
-> `tools/list` says what follows. With `wait=true` the tool enqueues the job, then
-> claims and runs it **inside the call**, so the call stays open for the whole
-> generation — minutes for a video — which can outlast an MCP client's tool timeout.
-> Raise the client's tool timeout for these two tools. With `wait=false` the tool only
-> enqueues the job and returns `{"status": "pending", "task_id": ...}` at once;
-> `tasks/get` under the SEP-2663 Tasks extension (`io.modelcontextprotocol/tasks`)
-> reads its state by `task_id` — there is no polling *tool*. **No gflow command runs
-> the queue worker today**: neither `gflow mcp run` nor `gflow serve` starts one, so a
-> `wait=false` job is never generated. `tasks/get` reports it as `working` for as long
-> as you poll, which reads like progress; `tasks/cancel` clears it. Use the default
-> until a worker ships ([#1097](https://github.com/ffroliva/gflow-cli/issues/1097)).
+> `tools/list` says what follows. With `wait=true` the tool runs the job **inside the
+> call**, so the call stays open for the whole generation — minutes for a video — which
+> can outlast an MCP client's tool timeout. Raise the client's tool timeout, or use
+> `wait=false`. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
+> at once and runs the job in the background of the same server process, one job at a
+> time per profile. Read it back with the SEP-2663 Tasks extension
+> (`io.modelcontextprotocol/tasks`): `tasks/get` gives its status, `tasks/result` gives
+> the same reply `wait=true` returns (files, project id, seed) once it has finished, and
+> `tasks/cancel` stops it. A job cancelled after its submit fired ends `indeterminate`,
+> not `failed`: a credit may have been spent, so check the Flow project before you
+> retry. **The job lives only as long as the server**: when the client closes a stdio
+> server, or `gflow serve` stops, running jobs are cancelled and recorded the same way.
+> A server killed outright leaves its row `processing` — see
+> [Known issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md).
 
 
 * `gflow_auth_status(profile)`: Credit-free, non-interactive Flow session probe (#497) — wraps the same fail-closed `verify_flow_profile` check as `gflow auth status`. Returns `{"status": "authenticated", "profile", "user_email"}` or a problem-details error with a `remediation_hint`; a `verification_error` outcome (HTTP 503, `retryable: true`) means a network/endpoint problem, which re-login does not fix, and a `profile_marker_missing` outcome (HTTP 409, `retryable: false`, #796) means the profile lost its `.gflow_browser_strategy` marker so its cookies cannot be read — a retry does not help, and neither does a plain `gflow auth login`; re-run `gflow auth login --browser chrome` for that profile. A `cookie_store_unreadable` outcome (HTTP 409, `retryable: false`, #796) means the profile's Chrome cookie database is corrupt or unreadable — a local file fault, not the network; close any Chrome window using that profile, then re-run `gflow auth login` for it. Any other unauthenticated outcome is a dead session (HTTP 401). Call it before a generation tool to fail fast on dead auth, before a long blocking generation call. Login/logout remain CLI-only (genuinely interactive).

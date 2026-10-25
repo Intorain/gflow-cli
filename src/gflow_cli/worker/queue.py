@@ -292,24 +292,31 @@ class QueueRepository:
         status: str,
         flow_media_id: str | None = None,
         error: dict[str, Any] | None = None,
-    ) -> None:
+        only_from: tuple[str, ...] = (),
+    ) -> bool:
+        """Set a task's status; with ``only_from``, only while it is still in one of those.
+
+        Returns whether a row changed, so a caller racing a claim knows who won.
+        """
         now = _utc_now()
         error_str = json.dumps(error) if error is not None else None
+        guard = f" AND status IN ({','.join('?' * len(only_from))})" if only_from else ""
         try:
             with self._store.transaction(immediate=True):
-                self._store.conn.execute(
+                cur = self._store.conn.execute(
                     """
                     UPDATE generation_queue
                     SET status = ?,
                         flow_media_id = COALESCE(?, flow_media_id),
                         error_json = COALESCE(?, error_json),
                         updated_at = ?
-                    WHERE task_id = ?
-                    """,
-                    (status, flow_media_id, error_str, now, task_id),
+                    WHERE task_id = ?"""
+                    + guard,
+                    (status, flow_media_id, error_str, now, task_id, *only_from),
                 )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="queue.update_task_status") from exc
+        return cur.rowcount > 0
 
 
 def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
