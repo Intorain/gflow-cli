@@ -23,9 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)). After a successful
   generation, a failed local write (for example `--out` pointing at a protected folder)
   kept the media id (#1035) but then ended in the catch-all, with exit 1 and a "file a
-  bug" message. It now ends as a configuration error (exit 11) that names the path and
-  says the asset is still in the Flow project. This covers every image and video
-  download, on both the CLI and MCP.
+  bug" message. It now ends as a configuration error (exit 11) that says the asset is
+  still in the Flow project. This covers image downloads, upscale and extend exports and
+  scene output, on both the CLI and MCP; a generated video clip keeps its exit 6
+  ([#1003](https://github.com/ffroliva/gflow-cli/issues/1003)).
 
 - **A credit shortfall on flow.google.com is recognised in every UI language, and only
   when Flow shows it** ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). The

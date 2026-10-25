@@ -172,8 +172,9 @@ async def write_asset_async(target: AnyPath, data: bytes) -> None:
     except OSError as exc:
         from gflow_cli.errors import ConfigurationError
 
+        # No path or bucket URI in the detail: it is persisted to the catalog.
         raise ConfigurationError(
-            detail=f"Could not write {target}: {exc.strerror or exc}",
+            detail=f"Could not write the output file ({exc.strerror or type(exc).__name__})",
             remediation_hint=(
                 "Point --out (or GFLOW_CLI_OUTPUT_DIR / GFLOW_CLI_STORAGE_URI) at a "
                 "location this process can write. The asset is still in the Flow project."

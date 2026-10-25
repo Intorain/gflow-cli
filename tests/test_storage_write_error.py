@@ -25,7 +25,8 @@ def test_an_unwritable_output_path_raises_a_classified_error(tmp_path: Path) -> 
 
     err = info.value
     assert isinstance(err.__cause__, OSError)
-    assert str(target) in err.detail
+    assert err.detail.startswith("Could not write the output file (")
+    assert str(tmp_path) not in err.detail  # the detail is persisted to the catalog
     assert "--out" in err.remediation_hint
     assert next(c for cls, c in EXIT_CODE_MAP.items() if isinstance(err, cls)) == 11
     assert not is_retryable(err)

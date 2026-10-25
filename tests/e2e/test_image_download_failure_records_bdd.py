@@ -159,15 +159,16 @@ def _cli_failed(world: dict[str, Any]) -> None:
     print("[1035-cli] hint:\n" + text)
 
 
-@then("the failure exits 11 naming the unwritable path, not as an unexpected error")
+@then("the failure exits 11 as a configuration error, not as an unexpected error")
 def _classified(world: dict[str, Any]) -> None:
     # #1091: the raw PermissionError used to reach the catch-all ("file a bug", exit 1).
     proc = world["proc"]
     assert proc.returncode == 11, f"exit {proc.returncode}; stderr tail: {proc.stderr[-800:]!r}"
     assert "Unexpected error" not in proc.stderr
-    # The classified message is Rich console output (stdout), which wraps the long path.
+    # The classified message is Rich console output (stdout), which may wrap.
     flat = "".join(proc.stdout.split())
-    assert "Configurationerror:Couldnotwrite" + str(world["dir"]) in flat, proc.stdout[-800:]
+    assert "Configurationerror:Couldnotwritetheoutputfile" in flat, proc.stdout[-800:]
+    assert str(world["dir"]) not in proc.stdout  # the detail is persisted to the catalog
 
 
 @then("the failed task carries the media id and the project id")
