@@ -6,6 +6,7 @@ behavior is covered by tests/auth/test_verification*.py.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,13 @@ def test_exit_1_on_verification_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "connectivity" in result.output
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason=(
+        "browser_cookie3 reads the keyring key before opening the DB on Linux/macOS; "
+        "without a keyring (CI) it falls back first and never reaches the corrupt file"
+    ),
+)
 def test_corrupt_cookie_store_is_not_blamed_on_the_network() -> None:
     """#796, end to end through the real probe: a corrupt cookie DB on disk
     (no mock of verify_flow_profile or browser_cookie3) must not tell the user to
