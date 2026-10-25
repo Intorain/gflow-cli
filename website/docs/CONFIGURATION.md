@@ -407,8 +407,9 @@ unaffected and always opens where you can see it.
 | animation frames / 100 ms timer ticks in 5 s | 300 / 50 | 295 / 50 |
 
 Chrome does not throttle an off-screen window: the page still counts as visible.
-Windows clamps very large offsets, so `-30000,-30000` lands at `-21845,-21845`, still
-past any monitor, on every launch measured. A visible position such as `100,100` opened
+On Windows, `-30000,-30000` landed at `-21845,-21845` (a clamp) on every launch measured
+in September 2026, and at `-30000,-30000` unclamped from 2026-10-25. Either way it is past
+any monitor. A visible position such as `100,100` opened
 exactly there on 8 of 10 launches. In the other two the window was found elsewhere, and
 once it was seen moving mid-run: a visible window can be moved like any other once it
 is open. Not yet measured on macOS or

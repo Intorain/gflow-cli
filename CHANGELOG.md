@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`tasks/get` keeps reporting it as `working`; #1097). The default is unchanged. See
   [MCP](docs/MCP.md) (#481).
 
+- **`movie run` refuses costume `variants` on an entity character**
+  ([#724](https://github.com/ffroliva/gflow-cli/issues/724)). A variant appends a text
+  delta to the prompt, but an `identity = "entity"` character's body reference already
+  fixes one outfit, so the two contradicted each other inside one generation with no
+  telling which would win. Such a manifest used to run; it is now a configuration error
+  (exit 11) when it is parsed, before any browser starts, and the message says what to do
+  instead: one entity per costume, sharing the same `face_prompt`. Variants on
+  `identity = "text"` characters are unchanged.
+
 - **An output folder gflow cannot write is exit 11, not "Unexpected error"**
   ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)). After a successful
   generation, a failed local write (for example `--out` pointing at a protected folder)
