@@ -75,8 +75,8 @@ _WAIT_DESCRIPTION = (
     "can outlast an MCP client's tool timeout; raise that timeout for generation calls. "
     "false: only enqueue the job and return {status: 'pending', task_id} at once; the "
     "SEP-2663 Tasks extension's tasks/get reads its state by task_id. No gflow command "
-    "runs the queue worker today, so a wait=false job stays pending and is never "
-    "generated."
+    "runs the queue worker today, so a wait=false job is never generated: tasks/get "
+    "reports it as 'working' indefinitely, and tasks/cancel clears it. Use the default."
 )
 _WaitParam = Annotated[bool, Field(description=_WAIT_DESCRIPTION)]
 
@@ -880,7 +880,7 @@ async def gflow_generate_image(
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
         wait: Block until the generation finishes (default) or only enqueue it;
-            agents read ``_WAIT_DESCRIPTION`` from the schema (#481).
+            agents read it from the tool schema (#481).
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
@@ -1163,7 +1163,7 @@ async def gflow_generate_video(  # NOSONAR
             driver before that check, so 't2v' runs there under 'auto' or
             'classic'.
         wait: Block until the generation finishes (default) or only enqueue it;
-            agents read ``_WAIT_DESCRIPTION`` from the schema (#481).
+            agents read it from the tool schema (#481).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
