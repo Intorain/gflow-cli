@@ -2084,17 +2084,21 @@ class FlowApiClient:
         """
         from gflow_cli.api.image import ImageRef  # noqa: PLC0415 - typing-only at module level
 
+        ref = await self.upload_reference_in_place(project_id, path)
+        if ref is not None:
+            return ref
+        asset = await self.upload_image(project_id, path)
+        return ImageRef(name=asset.name, display_name=asset.display_name, in_project=True)
+
+    async def upload_reference_in_place(self, project_id: str, path: Path) -> ImageRef | None:
+        """:meth:`upload_reference` without the REST fallback: ``None`` where the host Flow
+        served has no in-place upload (labs), so the caller keeps its own path (#772)."""
         await validate_image_file(path)
         uploader = cast(
             "Callable[..., Awaitable[ImageRef | None]] | None",
             getattr(self.transport, "upload_reference", None),
         )
-        if uploader is not None:
-            ref = await uploader(project_id=project_id, path=path)
-            if ref is not None:
-                return ref
-        asset = await self.upload_image(project_id, path)
-        return ImageRef(name=asset.name, display_name=asset.display_name, in_project=True)
+        return None if uploader is None else await uploader(project_id=project_id, path=path)
 
     async def download(self, name_or_url: str, out_path: Path) -> Path:
         """Download an asset (image or video) to `out_path`. Returns out_path.
