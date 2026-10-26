@@ -170,12 +170,17 @@ async def test_tasks_get_speaks_sep_2663_on_the_wire(served: DataStore, mode: st
 
 
 @pytest.mark.asyncio
-async def test_tasks_cancel_is_an_empty_ack_on_the_wire(served: DataStore) -> None:
+@pytest.mark.parametrize(
+    ("mode", "expected"), [("legacy", {}), ("2026-07-28", {"resultType": "complete"})]
+)
+async def test_tasks_cancel_is_an_empty_ack_on_the_wire(
+    served: DataStore, mode: str, expected: dict[str, Any]
+) -> None:
     _enqueue(served, "t")
 
-    ack = await _wire("2026-07-28", "tasks/cancel", "t")
+    ack = await _wire(mode, "tasks/cancel", "t")
 
-    assert {k: v for k, v in ack.items() if k != "_meta"} == {"resultType": "complete"}
+    assert {k: v for k, v in ack.items() if k != "_meta"} == expected
 
 
 @pytest.mark.asyncio

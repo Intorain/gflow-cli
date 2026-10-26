@@ -3,7 +3,7 @@
 5-Layer Evidence Ledger Verification:
 1. File / Queue Row Count: Asserts SQLite generation_queue row insertion and update.
 2. Magic Bytes / Field Value: Verifies task_id UUID, payload schema, and status transitions.
-3. Dimensions / Protocol Shape: Validates GetTaskResult / CancelTaskResult schema.
+3. Dimensions / Protocol Shape: tasks/get and tasks/cancel replies match SEP-2663.
 4. Structlog Invariants: Asserts task_enqueued log events.
 5. User-Confirmable Artifact: Produces evidence report at tmp/live-verify/mcp-tasks.md.
 """

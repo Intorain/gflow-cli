@@ -41,7 +41,7 @@ Measured on the wire before any change (in-process `mcp.Client`, both eras, 2026
 
 ## Deferred
 - #13: a log line per poll of a completed task. Low; the payload builder logs on read.
-- `tools/call` never returns `resultType: "task"`. The SEP allows that (L951), and gflow's handle stays app-level. The docs must not claim more than this. A follow-up issue covers server-directed task creation.
+- `tools/call` never returns `resultType: "task"`. The SEP allows that (L951), and gflow's handle stays app-level. The docs must not claim more than this. Server-directed task creation is #1105.
 - Task ids are bearer capabilities on `gflow serve` (any holder of the daemon token can read or cancel any id). This predates the change; it is noted in docs/MCP.md.
 
 ## Suggested BDD scenarios
