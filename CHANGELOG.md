@@ -34,6 +34,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tasks/cancel` answers with an empty acknowledgement instead of a task; read the outcome
   from `tasks/get`. There is no `tasks/result`; the server answers it `-32601`.
 
+### Security
+
+- **The agent-only composer reads a credit confirmation before approving it**
+  ([#988](https://github.com/ffroliva/gflow-cli/issues/988)). On an account Flow serves the
+  agent-only composer, one confirmation can bill several generations, and gflow used to
+  approve the first one without reading it, so an agent that queued too much was caught only
+  after the credits were spent. gflow now reads the numbers in the confirmation's title and
+  **rejects** one that quotes more than requested (exit 25, nothing approved). A video
+  confirmation whose count cannot be read is not approved either. This matters most over MCP,
+  where the prompt may come from an untrusted source. Measured on English and Russian titles
+  from a contributor's account; not yet run on a maintainer account, because none is served
+  this composer.
+
 ## [0.90.0] — 2026-10-25
 
 ### Added
