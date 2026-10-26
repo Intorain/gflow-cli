@@ -953,6 +953,18 @@ The worker queue (`generation_queue`, used by the `gflow serve` daemon and MCP t
 
 **Decision (2026-07-21):** keep the safe stub — `recover_processing` marks post-submit interruptions `indeterminate` and never auto-resubmits, which is already correct. Building the auto-reconciler is deferred until **F1** (credit-free project-page re-entry) is confirmed against live Flow; until then a blind reconciler would be speculative code against unverified blackbox behavior. The `client` reconcile-hook seam and the live-gated `tests/e2e/test_crash_recovery_e2e.py` are already in place for when F1 lands.
 
+**A server that is killed, not stopped (#1097).** An MCP `wait=false` job runs inside the
+`gflow mcp run` / `gflow serve` process that accepted it. Closing the client, or stopping
+`gflow serve`, cancels it and records the truthful state above. A process killed outright
+(`taskkill /F`, `kill -9`, a crashed client host) records nothing, so its row stays
+`processing` and `tasks/get` keeps answering `working`. A job killed before it was picked
+up stays `pending` the same way; `tasks/cancel` clears that one. Two narrower cases end the
+same way: a job whose browser takes longer than 10 s to close during shutdown, and a
+`tasks/cancel` sent to a server other than the one running the job (each server can stop
+only its own jobs; it reports the row's real status instead). Reconcile it by hand as below.
+Nothing resets such rows on its own: a startup sweep would also fail a job that another
+live `gflow mcp run` (one per client session) is still running.
+
 **Manual reconciliation:** an `indeterminate` row's checkpoint retains whatever handle/project info was captured before interruption. To resolve one by hand: open the relevant Flow project in the browser and check whether the expected asset appears.
 - **Found** — the generation completed; no action needed (the credit was spent as intended, just not auto-recorded locally).
 - **Not found after a few minutes** — it likely never completed; safe to resubmit the same prompt manually.

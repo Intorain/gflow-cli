@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
+from mcp.shared.exceptions import MCPError
 from mcp.types import CancelTaskRequestParams, GetTaskRequestParams
 
 from gflow_cli.data.store import DataStore
@@ -46,7 +48,7 @@ async def test_tasks_extension_get_task_success(test_db: DataStore) -> None:
 @pytest.mark.asyncio
 async def test_tasks_extension_get_task_not_found(test_db: DataStore) -> None:
     ext = TasksExtension(data_store=test_db)
-    with pytest.raises(KeyError, match="Task not found"):
+    with pytest.raises(MCPError, match="Task not found"):
         await ext._handle_get_task(
             context=None,
             params=GetTaskRequestParams(task_id="non-existent-task"),
@@ -87,6 +89,8 @@ async def test_mcp_generate_image_non_blocking(
     monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "home"))
     (tmp_path / "home" / "profile_default").mkdir(parents=True, exist_ok=True)
     (tmp_path / "home" / "profile_default" / ".gflow_account").write_text("user@example.com")
+    # wait=false now runs the job in the background (#1097); this test is about the handle.
+    monkeypatch.setattr("gflow_cli.mcp.tools._run_detached", AsyncMock())
 
     resp = await gflow_generate_image(prompt="test prompt", wait=False)
     assert resp.get("status") == "pending"

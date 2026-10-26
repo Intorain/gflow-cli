@@ -20,9 +20,10 @@ exit 6 (#941). A credit shortfall is recognised in every UI language (#745), and
 `movie.toml` entity character with costume `variants` is refused when the manifest is
 read (#724).
 
-**For agents.** The MCP generation tools describe `wait` where agents read it, including
-that `wait=false` is not generated yet (#481, #1097). Selector drift on flow.google.com is
-watched again by the canary (#1083).
+**For agents.** The MCP generation tools describe `wait` where agents read it (#481). On
+`develop` (unreleased), `wait=false` runs the job in the background of the server and
+`tasks/result` returns it (#1097). Selector drift on flow.google.com is watched again by
+the canary (#1083).
 
 Full ledger: [LIVE_VERIFICATION_v0.90.0](LIVE_VERIFICATION_v0.90.0.md).
 
