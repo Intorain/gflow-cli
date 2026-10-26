@@ -74,11 +74,13 @@ _WAIT_DESCRIPTION = (
     "result. The call stays open for the whole generation, minutes for a video, which "
     "can outlast an MCP client's tool timeout; raise that timeout, or use false. "
     "false: return {status: 'pending', task_id} at once and run the job in the "
-    "background of this server process. With the SEP-2663 Tasks extension, tasks/get "
-    "reads its state by task_id, tasks/result returns the same reply wait=true would "
-    "(files, project id, seed) once it is done, and tasks/cancel stops it (a job cancelled "
-    "after submit is recorded as indeterminate: a credit may be spent). The job runs "
-    "only while this server runs: if the client closes the server, it is cancelled."
+    "background of this server process. With the SEP-2663 Tasks extension, poll tasks/get "
+    "by task_id: while it runs the status is working; once done it is completed and its "
+    "result field holds the same reply wait=true would (files, project id, seed). A failed "
+    "generation is also completed, with result.isError true, so check isError. "
+    "tasks/cancel stops the job; tasks/get then reads cancelled (a job cancelled after "
+    "submit is recorded as indeterminate: a credit may be spent). The job runs only while "
+    "this server runs: if the client closes the server, it is cancelled."
 )
 _WaitParam = Annotated[bool, Field(description=_WAIT_DESCRIPTION)]
 
@@ -398,7 +400,7 @@ def _settle_unfinished(task_id: str, db_path: Path, reason: str) -> None:
 
 
 def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
-    """The tool reply for a finished task: what ``wait=true`` returns and ``tasks/result`` reads."""
+    """The tool reply for a finished task: what ``wait=true`` returns and ``tasks/get`` carries."""
     with DataStore.open(db_path) as store:
         completed_task = QueueRepository(store).get_task(task_id)
         if completed_task is None:

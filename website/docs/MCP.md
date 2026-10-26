@@ -102,9 +102,17 @@ The server registers three protocol surfaces:
 > `wait=false`. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
 > at once and runs the job in the background of the same server process, one job at a
 > time per profile within that server. Read it back with the SEP-2663 Tasks extension
-> (`io.modelcontextprotocol/tasks`): `tasks/get` gives its status, `tasks/result` gives
-> the same reply `wait=true` returns (files, project id, seed) once it has finished, and
-> `tasks/cancel` stops it (`tasks/get` then answers `cancelled`). A job cancelled after
+> (`io.modelcontextprotocol/tasks`): poll `tasks/get`. While the job runs it answers
+> `working`; once it has finished it answers `completed`, and its `result` field holds the
+> same reply `wait=true` returns (files, project id, seed). **A failed generation is
+> `completed` too, with `result.isError: true`** — SEP-2663 keeps `failed` for protocol
+> errors — so check `isError` before you use the files. `tasks/cancel` stops the job and
+> answers with an empty acknowledgement; `tasks/get` then answers `cancelled`. There is no
+> `tasks/result`: SEP-2663 removed it, and the server answers it `-32601`. Two limits:
+> `tools/call` returns gflow's own `{status, task_id}` handle, not a SEP-2663
+> `resultType: "task"`, so a client's built-in task support will not pick the job up;
+> and a task id is a bearer capability — any client that can reach the server and knows
+> the id can read or cancel it. A job cancelled after
 > its submit fired is stored as `indeterminate`,
 > not `failed`: a credit may have been spent, so check the Flow project before you
 > retry. **The job lives only as long as the server**: when the client closes a stdio

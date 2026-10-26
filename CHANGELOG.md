@@ -15,13 +15,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gflow command ever ran it: `tasks/get` said `working` forever. The job now runs in the
   background of the server that accepted it, one job at a time per profile within that
   server, sharing the
-  profile with `wait=true` calls. The new `tasks/result` returns the same reply `wait=true`
-  would (files, project id, seed). `tasks/cancel` now stops the job instead of only
+  profile with `wait=true` calls. Once it has finished, `tasks/get` carries the same reply
+  `wait=true` would (files, project id, seed). `tasks/cancel` now stops the job instead of only
   relabelling its row, and a job cancelled after its submit fired is recorded as
   `indeterminate` (a credit may be spent), not `failed`; `tasks/get` then answers
   `cancelled`. When the client closes a stdio
   server or `gflow serve` stops, running jobs are cancelled and recorded the same way.
   Jobs queued by older releases are never picked up. See [MCP](docs/MCP.md).
+
+### Changed
+
+- **MCP `tasks/get` and `tasks/cancel` now speak SEP-2663**, the Tasks extension the server
+  declares ([#1102](https://github.com/ffroliva/gflow-cli/issues/1102)). They used the shapes
+  of the older 2025-11-25 tasks spec. `tasks/get` now sends `ttlMs` (null: rows do not
+  expire) instead of `ttl: 3600`, and carries the finished tool result in a `result` field. A
+  generation that failed now reads `completed` with `result.isError: true` instead of
+  `failed`, because SEP-2663 keeps `failed` for protocol errors: **check `isError`**.
+  `tasks/cancel` answers with an empty acknowledgement instead of a task; read the outcome
+  from `tasks/get`. There is no `tasks/result`; the server answers it `-32601`.
 
 ## [0.90.0] — 2026-10-25
 
