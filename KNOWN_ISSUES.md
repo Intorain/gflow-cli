@@ -1433,12 +1433,17 @@ video per request.
   `img[data-media-id]`; gflow downloads the original size by rewriting the size spec to `=s0`.
 - The request text is English. Whether the agent honours it on a non-English account is
   unmeasured (the original reporter's account is `ru`).
-- **The confirmation step does not bound the spend of the first ask.** gflow approves the
-  first confirmation without reading the count it names, and one confirmation can cover
-  several generations. Only a *second* confirmation is stopped before billing; an agent that
-  queues more than requested under the first is detected after the fact (more clips pending,
-  or more images on the grid, than requested), with the credits already spent — even with
-  `GFLOW_CLI_AGENT_CONFIRM=always`.
+- **The confirmation is read before it is approved
+  ([#988](https://github.com/ffroliva/gflow-cli/issues/988)).** One confirmation can cover
+  several generations, so gflow reads the numbers in its title (count first, credits last,
+  measured on English and Russian) and **rejects** it when it quotes more than requested:
+  nothing is approved, exit 25. A video confirmation whose numbers cannot be read is not
+  approved either (exit 25; it stays open in Flow — reject it there). Not yet measured: the
+  wording of a confirmation for several clips, and of an image confirmation; an image one
+  that cannot be read is approved, and more images than requested still fail the run after
+  the fact. Only a confirmation is checked: with `GFLOW_CLI_AGENT_CONFIRM=never`, or an
+  account set to Never under `account`, Flow asks nothing, and an over-count is detected
+  only after the credits are spent.
 - An image whose orientation does not match the requested aspect is kept (the run is
   billed and the file is valid) and logged as `migrated.agent_only.aspect_mismatch`.
 
