@@ -80,6 +80,7 @@ uv run python scripts/ci/check_repo_hygiene.py
 uv run python scripts/ci/check_doc_links.py
 uv run python scripts/ci/check_website_docs_pii.py
 uv run python scripts/ci/generate_website_docs.py --check
+uv run python scripts/ci/generate_plugin_skills.py --check
 uv run python scripts/ci/check_council_memory.py
 uv run ruff check src tests
 uv run ruff format --check src tests
@@ -94,13 +95,17 @@ the five other mirror axes), which no command here can check and no CI gate can 
 > **Do not trim this list again.** It previously omitted
 > `generate_website_docs.py --check`, so an agent following AGENTS.md instead of the skill
 > shipped a stale `website/docs/` mirror to a green local run and a red CI (#626 session,
-> 2026-09-02). Two lists that disagree means the shorter one is silently wrong.
+> 2026-09-02). Two lists that disagree means the shorter one is silently wrong. It
+> happened again with `generate_plugin_skills.py --check`: an edit to
+> `skills/gflow-cli/SKILL.md` passed every gate here and failed CI, because the plugin
+> ships a byte copy of that file (#988, 2026-10-26). The CI workflow is the source; this
+> list follows it.
 
 - Use `pytest -m "not live and not e2e and not smoke"` locally; full suite OOMs on small dev machines. Scope to changed dirs; trust CI for the full sweep.
 - **Parallel runs (`pytest-xdist`):** add `-n 8` (or `-n auto`) to cut the offline suite from ~390 s to ~200 s. Every worker is a full process, so cap `-n` on a small machine. CI runs `-n auto`. A test that passes alone but fails under `-n` shares state with another test: **fix the shared state** (two measured cases: `tests/mcp/conftest.py` and `test_every_shipped_skill_is_byte_identical_to_its_source`). If two tests genuinely need the same exclusive resource (a fixed port, a file lock), mark both `@pytest.mark.xdist_group("<resource>")` so they run on one worker, one after another, while the rest stays parallel.
 - TDD is non-negotiable. Coverage floor: 80% overall.
 - Documentation is a first-class deliverable. Every behavior, workflow, config, or operator-facing change must update the relevant docs or state why no docs changed in the PR/checklist. `scripts/ci/check_doc_links.py` is a merge gate.
-- **A PR is not done until its SonarCloud gate is green (zero new issues).** The nine gates above are local/pre-commit; SonarCloud is server-side and runs in CI (`sonar.qualitygate.wait=true` → a red gate turns the `SonarCloud analysis` check red). Before calling a PR merge-ready, verify it with `/gflow:sonar <N>` (it is skipped on fork PRs — maintainer-checked there).
+- **A PR is not done until its SonarCloud gate is green (zero new issues).** The ten gates above are local/pre-commit; SonarCloud is server-side and runs in CI (`sonar.qualitygate.wait=true` → a red gate turns the `SonarCloud analysis` check red). Before calling a PR merge-ready, verify it with `/gflow:sonar <N>` (it is skipped on fork PRs — maintainer-checked there).
 - **E2E is the decisive layer, and it is required for every behavior change that touches a Flow surface.** Run the `tests/e2e/` test that covers the change, or write one — offline-green proves only that *our* code does what we think, never that Flow still behaves as captured. `/gflow:live-verify` does **not** satisfy this: it drives CLI commands by hand into a gitignored note and never runs `pytest -m e2e`. The two are complementary — an e2e test is a re-runnable regression, a live-verify ledger is a narrative record. A change touching no Flow surface at all (docs, help text, exit-code plumbing) is out of scope — say so explicitly rather than leaving it blank. Anything else follows the **Iron Law** above: run it, or name the external blocker that stops you. "A maintainer will run it" is a handoff, not a verification, and is only available once the blocker is named.
 - E2E tests require `GFLOW_CLI_E2E_PROFILE` and `-m e2e` (excluded from the default `addopts`, so they never run by accident). Cost sub-markers: `e2e_auth` (zero credits, browser only), `e2e_image` (zero credits, daily cap), `e2e_scene`, `e2e_data`, `e2e_batch`, `e2e_character` (opt in with `GFLOW_CLI_E2E_RUN_CHARACTER=1`), the migrated refusal e2e (`e2e_image`, opt in with `GFLOW_CLI_E2E_RUN_REFUSAL=1` — it sends one corrupted reCAPTCHA token, so run it on a probe profile), the slow-link project create (`e2e_auth`, opt in with `GFLOW_CLI_E2E_RUN_SLOW_LINK=1` — each test leaves an empty project), `e2e_video` (spends Veo credits — opt in with `GFLOW_CLI_E2E_RUN_VIDEO=1`). Redact account identifiers and any token or cookie value before pasting output into a PR.
 - Live tests (`@pytest.mark.live`) opt in via `GFLOW_LIVE=1`.
