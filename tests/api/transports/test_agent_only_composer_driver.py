@@ -53,7 +53,7 @@ FIXTURE = r"""
 <script>
 const S = Object.assign({kind: 'image', gates: 0, produce: 1, delay: 120, idle: false,
   staleGate: false, preMedia: false, dupe: false, posterOnly: false}, window.SCENARIO || {});
-window.log = {submitted: null, approvals: 0, rejections: 0, saves: []};
+window.log = {submitted: null, approvals: 0, rejections: 0, approvedTitles: [], saves: []};
 const state = {groups: [0, 1, 0, 0],
   models: {image: '\u{1F34C} Nano Banana 2', video: 'Omni 1.1 Flash'}, confirm: 0};
 const LIGS = [['crop_16_9', 'crop_landscape', 'crop_square', 'crop_portrait', 'crop_9_16'],
@@ -114,20 +114,21 @@ function videoTile(n) {
   }, S.delay * 2);
 }
 // Measured title (#988, en): count first, credits last. `titleLag` renders it late.
-function gateTitle() {
+function gateTitle(quoted) {
   return S.gateTitle !== undefined ? S.gateTitle
-    : `Would you like me to kick off this ${S.quoted || 1} video generation, costing 10 credits?`;
+    : `Would you like me to kick off this ${quoted || S.quoted || 1} video generation, costing 10 credits?`;
 }
-function gate() {
+function gate(quoted) {
   const m = document.createElement('flow-permission-message');
   m.innerHTML = '<p class="title"></p><div role="radiogroup">' + ['check', 'check', 'close'].map(l =>
     `<div role="radio" class="option-row"><mat-icon>${l}</mat-icon></div>`).join('') + '</div>';
   const title = m.querySelector('p.title');
-  if (S.titleLag) setTimeout(() => { title.textContent = gateTitle(); }, S.titleLag);
-  else title.textContent = gateTitle();
+  if (S.titleLag) setTimeout(() => { title.textContent = gateTitle(quoted); }, S.titleLag);
+  else title.textContent = gateTitle(quoted);
   const rows = m.querySelectorAll('.option-row');
   const answer = () => rows.forEach(r => r.classList.add('read-only'));
   rows[0].onclick = () => {
+    window.log.approvedTitles.push(title.textContent);
     answer();
     window.log.approvals++;
     if (window.log.approvals < S.gates) setTimeout(gate, S.delay); else produce();
@@ -159,7 +160,7 @@ function submit() {
       if (S.reply) document.getElementById('chat').insertAdjacentHTML('beforeend', `<flow-chat-bubble>${S.reply}</flow-chat-bubble>`);
       return;
     }
-    if (S.gates > 0) { setSubmit(false); gate(); return; }
+    if (S.gates > 0) { setSubmit(false); gate(); if (S.extraGate) gate(S.extraGate); return; }
     produce();
   }, S.delay);
 }
@@ -300,7 +301,19 @@ async def test_a_gate_title_that_renders_late_is_read_once_complete(page: Page) 
     await _load(page, kind="video", gates=1, titleLag=300)
     (media,) = await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
     assert "/video/" in media.src
-    assert (await _log(page))["approvals"] == 1
+    log = await _log(page)
+    assert log["approvals"] == 1
+    assert "1 video generation" in log["approvedTitles"][0], "approved before the title rendered"
+
+
+@pytest.mark.asyncio
+async def test_two_gates_at_once_never_approve_the_one_that_was_not_read(page: Page) -> None:
+    """Review of #988: the gate whose count was read is the gate that is approved."""
+    await _load(page, kind="video", gates=1, extraGate=2)
+    with pytest.raises(FlowAgentUiError, match="second") as exc:
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
+    assert (await _log(page))["approvals"] == 0
+    _assert_not_retried(exc.value)
 
 
 @pytest.mark.asyncio
@@ -1043,7 +1056,7 @@ async def test_an_approved_gate_that_never_turns_read_only_is_drift() -> None:
     loc.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout exceeded"))
     with pytest.raises(UiSelectorDriftError, match="did not turn read-only"):
         await aoc.AgentOnlyComposer()._approve_gate(page, 0)  # pyright: ignore[reportPrivateUsage]
-    loc.nth.assert_called_once_with(0)
+    assert {c.args for c in loc.nth.call_args_list} == {(0,)}  # the gate that was read
     assert loc.wait_for.await_args.kwargs["state"] == "detached"
 
 

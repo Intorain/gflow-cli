@@ -284,7 +284,8 @@ def gate_quotes_more(title: str, count: int) -> bool | None:
 
     None while the title is not readable: the count and the credits are both needed, so a
     title rendered halfway ("...kick off this 1") never parses. Every number but the last
-    (the credits) is checked, so a digit the prompt slipped in can only refuse, not approve.
+    (the credits) is checked, so a digit the prompt slipped in can only refuse, not approve
+    - as long as Flow writes the count as a digit, as it did on every measured title.
     """
     numbers = [int(n) for n in _NUMBER_RE.findall(title)]
     if len(numbers) < 2:
@@ -556,7 +557,10 @@ class AgentOnlyComposer:
 
     async def _approve_gate(self, page: Page, baseline_gates: int) -> None:
         try:
-            await page.locator(LIVE_GATE).last.locator(APPROVE_ROW).first.click(timeout=5000)
+            # The gate whose title was read, not ``.last``: with two live at once, the
+            # newer one's count was never checked (#988 review).
+            gate = page.locator(LIVE_GATE).nth(baseline_gates)
+            await gate.locator(APPROVE_ROW).first.click(timeout=5000)
         except PlaywrightError as exc:
             # After the submit: whether the gate took the click is unknown, so never retry.
             raise FlowAgentUiError(
@@ -589,9 +593,11 @@ class AgentOnlyComposer:
                     "again)."
                 ),
             )
-        if await page.locator(LIVE_GATE).count() <= run.baseline_gates:
+        live = await page.locator(LIVE_GATE).count()
+        if live <= run.baseline_gates:
             return False
-        if run.approvals:
+        # Two new gates at once: only one can be read before an approval (#988 review).
+        if run.approvals or live > run.baseline_gates + 1:
             raise FlowAgentUiError(
                 detail=(
                     "agent-only composer: the agent asked for a second credit "
