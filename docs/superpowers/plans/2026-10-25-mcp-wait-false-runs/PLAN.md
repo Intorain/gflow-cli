@@ -137,7 +137,7 @@ any design depends on it.
 
 ## Task 10: Gates
 - [x] `/gflow:check` green
-- [ ] Then `/gflow:branch-review`, then the PR, then `/gflow:sonar`
+- [x] Then `/gflow:branch-review`, then the PR, then `/gflow:sonar` (PR #1101 merged ef7bf3e1; peer review YELLOW, fixed in 6cc5c979; SonarCloud 0 issues)
 
 ---
 
@@ -148,5 +148,5 @@ any design depends on it.
 - [x] `CHANGELOG.md` `[Unreleased]` updated
 - [x] `docs/MCP.md` and the tool schema text are truthful
 - [x] Every Critical and High scenario from SCENARIO.md is covered by a test
-- [ ] The T8 e2e test has run live and its output is in the PR
+- [x] The T8 e2e test has run live and its output is in the PR (2 passed in 80 s on 6cc5c979)
 - [x] No `# TODO` in the diff without a tracked issue link
