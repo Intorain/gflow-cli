@@ -5,9 +5,9 @@ Binds ``tests/features/mcp_wait_false.feature`` (``@e2e @e2e_image``), so it is 
 
 **Why an e2e.** The MCP queued path is its own surface (AGENTS.md, Iron Law). Offline
 tests fake ``FlowApiClient`` and call the tool in-process. Only a real ``gflow mcp run``
-over stdio shows that the job outlives its tool call, that ``tasks/get`` and
-``tasks/result`` answer over the wire, and that closing stdin cancels a job holding a
-real Chrome.
+over stdio shows that the job outlives its tool call, that ``tasks/get`` answers over
+the wire with the finished result inline (SEP-2663, #1102), and that closing stdin
+cancels a job holding a real Chrome.
 
 **Cost.** Up to two images of daily quota, zero Veo credits.
 """
@@ -176,21 +176,25 @@ def _pending(ctx: dict[str, Any]) -> None:
 def _completed(ctx: dict[str, Any]) -> None:
     end = time.monotonic() + _GEN_TIMEOUT_S
     status = None
+    got: dict[str, Any] = {}
     while time.monotonic() < end:
-        reply = ctx["client"].request("tasks/get", {"taskId": ctx["task_id"]})
-        status = reply["result"]["status"]
+        got = ctx["client"].request("tasks/get", {"taskId": ctx["task_id"]})["result"]
+        status = got["status"]
         if status != "working":
             break
         time.sleep(5)
     assert status == "completed", (
         f"last tasks/get status {status!r}; row {_row_status(ctx['task_id'])}"
     )
+    assert "ttl" not in got and got["ttlMs"] is None, got  # SEP-2663 keys (#1102)
+    ctx["task"] = got
 
 
-@then("tasks/result returns an image file that exists on disk")
+@then("the completed task carries an image file that exists on disk")
 def _result(ctx: dict[str, Any]) -> None:
-    reply = ctx["client"].request("tasks/result", {"taskId": ctx["task_id"]})
-    payload = reply["result"]["structuredContent"]
+    result = ctx["task"]["result"]
+    assert result["isError"] is False, result
+    payload = result["structuredContent"]
     assert payload["status"] == "completed", payload
     assert payload["files"], payload
     for path in payload["files"]:

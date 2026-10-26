@@ -22,7 +22,7 @@ read (#724).
 
 **For agents.** The MCP generation tools describe `wait` where agents read it (#481). On
 `develop` (unreleased), `wait=false` runs the job in the background of the server and
-`tasks/result` returns it (#1097). Selector drift on flow.google.com is watched again by
+`tasks/get` returns its result (#1097, #1102). Selector drift on flow.google.com is watched again by
 the canary (#1083).
 
 Full ledger: [LIVE_VERIFICATION_v0.90.0](LIVE_VERIFICATION_v0.90.0.md).

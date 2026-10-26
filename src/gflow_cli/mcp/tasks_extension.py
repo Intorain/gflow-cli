@@ -1,4 +1,9 @@
-"""MCP Tasks extension implementation (SEP-2663) for gflow-cli."""
+"""MCP Tasks extension implementation (SEP-2663) for gflow-cli.
+
+``tasks/get`` and ``tasks/cancel`` follow SEP-2663, which this server declares. The mcp
+SDK's task types model only the older 2025-11-25 spec, so the replies are built by hand
+(#1102). SEP-2663 removes ``tasks/result``: the finished result rides on ``tasks/get``.
+"""
 
 from __future__ import annotations
 
@@ -14,10 +19,7 @@ from mcp.types import (
     INVALID_PARAMS,
     CallToolResult,
     CancelTaskRequestParams,
-    CancelTaskResult,
-    GetTaskPayloadRequestParams,
     GetTaskRequestParams,
-    GetTaskResult,
     TaskStatus,
     TextContent,
 )
@@ -68,10 +70,12 @@ async def drain_detached() -> None:
 
 
 def _mcp_status(task: QueueTask) -> TaskStatus:
+    # SEP-2663 keeps ``failed`` for JSON-RPC errors. A generation that failed is a tool
+    # result with ``isError``, which the spec files under ``completed``.
+    if task.status in ("failed", "indeterminate"):
+        return "cancelled" if (task.error or {}).get("reason") == "cancelled" else "completed"
     if task.status == "completed":
         return "completed"
-    if task.status in ("failed", "indeterminate"):
-        return "cancelled" if (task.error or {}).get("reason") == "cancelled" else "failed"
     return "working"
 
 
@@ -82,7 +86,7 @@ def _status_message(task: QueueTask) -> str | None:
 
 
 class TasksExtension(Extension):
-    """Extension subclass handling SEP-2663 tasks/get, tasks/result and tasks/cancel."""
+    """Extension subclass handling SEP-2663 tasks/get and tasks/cancel."""
 
     identifier = "io.modelcontextprotocol/tasks"
 
@@ -111,58 +115,53 @@ class TasksExtension(Extension):
                 handler=self._handle_get_task,
             ),
             MethodBinding(
-                method="tasks/result",
-                params_type=GetTaskPayloadRequestParams,
-                handler=self._handle_task_result,
-            ),
-            MethodBinding(
                 method="tasks/cancel",
                 params_type=CancelTaskRequestParams,
                 handler=self._handle_cancel_task,
             ),
         ]
 
-    async def _handle_get_task(self, context: Any, params: GetTaskRequestParams) -> GetTaskResult:
+    async def _handle_get_task(self, context: Any, params: GetTaskRequestParams) -> dict[str, Any]:
         queue_task = self._get_task(params.task_id)
-        return GetTaskResult(
-            task_id=queue_task.task_id,
-            status=_mcp_status(queue_task),
-            status_message=_status_message(queue_task),
-            created_at=queue_task.created_at or "",
-            last_updated_at=queue_task.updated_at or "",
-            ttl=3600,
-        )
+        status = _mcp_status(queue_task)
+        reply: dict[str, Any] = {
+            "taskId": queue_task.task_id,
+            "status": status,
+            "createdAt": queue_task.created_at or "",
+            "lastUpdatedAt": queue_task.updated_at or "",
+            "ttlMs": None,  # rows are kept with no expiry
+        }
+        if (message := _status_message(queue_task)) is not None:
+            reply["statusMessage"] = message
+        if status == "completed":
+            reply["result"] = self._tool_result(queue_task)
+        return reply
 
-    async def _handle_task_result(
-        self, context: Any, params: GetTaskPayloadRequestParams
-    ) -> CallToolResult:
+    def _tool_result(self, queue_task: QueueTask) -> dict[str, Any]:
         """The finished job's tool reply: the same payload ``wait=true`` returns."""
         from gflow_cli.mcp.tools import task_payload  # tools imports this module
 
-        queue_task = self._get_task(params.task_id)
-        if _mcp_status(queue_task) == "working":
-            text = f"Task {params.task_id} is still running; poll tasks/get until it finishes."
-            return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
-        payload = task_payload(queue_task.profile_name, params.task_id, self._get_store().path)
+        payload = task_payload(queue_task.profile_name, queue_task.task_id, self._get_store().path)
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(payload, indent=2))],
             structured_content=payload,
             is_error=payload["status"] != "completed",
-        )
+        ).model_dump(by_alias=True, mode="json", exclude_none=True)
 
     async def _handle_cancel_task(
         self, context: Any, params: CancelTaskRequestParams
-    ) -> CancelTaskResult:
+    ) -> dict[str, Any]:
         task_id = params.task_id
         before = self._get_task(task_id)
         repo = QueueRepository(self._get_store())
         running = DETACHED.get(task_id)
         log.info("mcp.task.cancel_requested", task_id=task_id, running_here=running is not None)
         if before.status in ("completed", "failed", "indeterminate"):
-            pass  # already finished: report it as it is, never as a cancel
+            pass  # already finished: a cancel is cooperative and changes nothing
         elif running is not None:
             # The job's own CancelledError handler records how far it got: a job past
-            # submit becomes indeterminate (a credit may be spent), never failed.
+            # submit becomes indeterminate (a credit may be spent), never failed. Waiting
+            # for it keeps the next tasks/get consistent with this ack.
             running.cancel()
             await asyncio.wait({running}, timeout=_CANCEL_WAIT_S)
         else:
@@ -177,14 +176,4 @@ class TasksExtension(Extension):
                 },
                 only_from=("pending",),
             )
-
-        # Re-read: the job's own handler, not this method, wrote the final row.
-        queue_task = self._get_task(task_id)
-        return CancelTaskResult(
-            task_id=queue_task.task_id,
-            status=_mcp_status(queue_task),
-            status_message=_status_message(queue_task),
-            created_at=queue_task.created_at or "",
-            last_updated_at=queue_task.updated_at or "",
-            ttl=3600,
-        )
+        return {}  # SEP-2663: an empty acknowledgement; tasks/get reads the outcome

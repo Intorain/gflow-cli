@@ -29,7 +29,8 @@ def test_both_generation_tools_take_wait(mcp_server: Any) -> None:
     [
         "task_id",  # what wait=false returns
         "tasks/get",  # status read-back (SEP-2663 Tasks extension)
-        "tasks/result",  # the finished job's files (#1097)
+        "result field",  # the finished job's files ride on tasks/get (#1102)
+        "isError",  # a failed generation reads completed (SEP-2663, #1102)
         "tasks/cancel",  # stops the job, not only the row (#1097)
         "pending",  # what the call returns at once
         "tool timeout",  # why an agent would reach for it at all
@@ -44,6 +45,12 @@ def test_wait_description_names_the_queued_contract(mcp_server: Any, phrase: str
 def test_wait_default_stays_true(mcp_server: Any) -> None:
     for name, prop in _tools_with_wait(mcp_server).items():
         assert prop.get("default") is True, f"{name}: `wait` default changed"
+
+
+def test_wait_description_does_not_send_agents_to_tasks_result(mcp_server: Any) -> None:
+    """SEP-2663 removes tasks/result; the server answers it -32601 (#1102)."""
+    for name, prop in _tools_with_wait(mcp_server).items():
+        assert "tasks/result" not in prop.get("description", ""), name
 
 
 def test_wait_description_no_longer_says_the_job_never_runs(mcp_server: Any) -> None:

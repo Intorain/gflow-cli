@@ -20,12 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mcp.shared.exceptions import MCPError
-from mcp.types import (
-    INVALID_PARAMS,
-    CancelTaskRequestParams,
-    GetTaskPayloadRequestParams,
-    GetTaskRequestParams,
-)
+from mcp.types import INVALID_PARAMS, CancelTaskRequestParams, GetTaskRequestParams
 from structlog.testing import capture_logs
 
 from gflow_cli.data.store import DataStore
@@ -195,6 +190,18 @@ async def test_a_detached_crash_is_logged_and_fails_the_row(
     assert "payload" not in events[0]
 
 
+async def _get(db: DataStore, task_id: str) -> dict[str, Any]:
+    return await TasksExtension(data_store=db)._handle_get_task(  # pyright: ignore[reportPrivateUsage]
+        None, GetTaskRequestParams(task_id=task_id)
+    )
+
+
+async def _cancel(db: DataStore, task_id: str) -> dict[str, Any]:
+    return await TasksExtension(data_store=db)._handle_cancel_task(  # pyright: ignore[reportPrivateUsage]
+        None, CancelTaskRequestParams(task_id=task_id)
+    )
+
+
 async def test_cancel_after_submit_leaves_the_row_indeterminate(
     db: DataStore, wired: dict[str, Any]
 ) -> None:
@@ -203,12 +210,11 @@ async def test_cancel_after_submit_leaves_the_row_indeterminate(
     reply = await tools.gflow_generate_image(prompt="x", wait=False)
     await asyncio.wait_for(submitted.wait(), timeout=5)
 
-    result = await TasksExtension(data_store=db)._handle_cancel_task(  # pyright: ignore[reportPrivateUsage]
-        None, CancelTaskRequestParams(task_id=reply["task_id"])
-    )
+    assert await _cancel(db, reply["task_id"]) == {}
 
+    # The cancel waited for the job's own handler: the very next read is settled.
     assert _status(db, reply["task_id"]) == "indeterminate"
-    assert result.status == "cancelled"
+    assert (await _get(db, reply["task_id"]))["status"] == "cancelled"
     assert reply["task_id"] not in tasks_extension.DETACHED
 
 
@@ -217,40 +223,37 @@ async def test_cancel_of_a_row_nobody_runs_fails_only_a_pending_row(db: DataStor
     repo.enqueue_task(task_id="p", profile_name="default", task_type="t2i", payload={})
     repo.enqueue_task(task_id="c", profile_name="default", task_type="t2i", payload={})
     repo.update_task_status("c", "completed")
-    ext = TasksExtension(data_store=db)
 
-    pending = await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id="p"))  # pyright: ignore[reportPrivateUsage]
-    done = await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id="c"))  # pyright: ignore[reportPrivateUsage]
+    await _cancel(db, "p")
+    await _cancel(db, "c")
 
-    assert (_status(db, "p"), pending.status) == ("failed", "cancelled")
-    assert (_status(db, "c"), done.status) == ("completed", "completed")
+    assert (_status(db, "p"), (await _get(db, "p"))["status"]) == ("failed", "cancelled")
+    assert (_status(db, "c"), (await _get(db, "c"))["status"]) == ("completed", "completed")
 
 
-async def test_tasks_result_returns_what_wait_true_returns(
+async def test_tasks_get_carries_what_wait_true_returns(
     db: DataStore, wired: dict[str, Any]
 ) -> None:
     reply = await tools.gflow_generate_image(prompt="a lighthouse", wait=False)
     await _finish(reply["task_id"])
 
-    result = await TasksExtension(data_store=db)._handle_task_result(  # pyright: ignore[reportPrivateUsage]
-        None, GetTaskPayloadRequestParams(task_id=reply["task_id"])
-    )
+    got = await _get(db, reply["task_id"])
 
-    payload = result.structured_content
-    assert payload is not None
+    assert got["status"] == "completed"
+    assert got["result"]["isError"] is False
+    payload = got["result"]["structuredContent"]
     assert payload["status"] == "completed"
     assert payload["task_id"] == reply["task_id"]
     assert payload["files"]
 
 
-async def test_tasks_result_of_an_unfinished_task_is_an_error(db: DataStore) -> None:
+async def test_an_unfinished_task_carries_no_result(db: DataStore) -> None:
     QueueRepository(db).enqueue_task(
         task_id="busy", profile_name="default", task_type="t2i", payload={}
     )
-    ext = TasksExtension(data_store=db)
 
-    busy = await ext._handle_task_result(None, GetTaskPayloadRequestParams(task_id="busy"))  # pyright: ignore[reportPrivateUsage]
-    assert busy.is_error
+    got = await _get(db, "busy")
+    assert got["status"] == "working" and "result" not in got
 
 
 async def test_draining_on_shutdown_classifies_a_running_job(
@@ -287,7 +290,7 @@ async def test_the_video_tool_runs_wait_false_through_the_same_path(
     assert _status(db, reply["task_id"]) == "completed"
 
 
-async def test_an_expired_session_fails_the_row_and_tasks_result_says_why(
+async def test_an_expired_session_fails_the_row_and_tasks_get_says_why(
     db: DataStore, wired: dict[str, Any]
 ) -> None:
     from gflow_cli.errors import AuthExpiredError
@@ -297,13 +300,11 @@ async def test_an_expired_session_fails_the_row_and_tasks_result_says_why(
     reply = await tools.gflow_generate_image(prompt="x", wait=False)
     await _finish(reply["task_id"])
 
-    result = await TasksExtension(data_store=db)._handle_task_result(  # pyright: ignore[reportPrivateUsage]
-        None, GetTaskPayloadRequestParams(task_id=reply["task_id"])
-    )
+    got = await _get(db, reply["task_id"])
     assert _status(db, reply["task_id"]) == "failed"
-    assert result.is_error
-    assert result.structured_content is not None
-    error = result.structured_content["error"]
+    assert got["status"] == "completed"  # a tool error, not a JSON-RPC one (SEP-2663)
+    assert got["result"]["isError"] is True
+    error = got["result"]["structuredContent"]["error"]
     assert error["type"].endswith("/auth-expired") and error["exit_code"] == 3, error
 
 
@@ -316,13 +317,15 @@ async def test_cancel_of_a_finished_job_reports_it_as_finished(
     repo = QueueRepository(db)
     repo.enqueue_task(task_id="f", profile_name="default", task_type="t2i", payload={})
     repo.update_task_status("f", "failed")
-    ext = TasksExtension(data_store=db)
 
-    ok = await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id=done["task_id"]))  # pyright: ignore[reportPrivateUsage]
-    failed = await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id="f"))  # pyright: ignore[reportPrivateUsage]
+    await _cancel(db, done["task_id"])
+    await _cancel(db, "f")
 
-    assert (_status(db, done["task_id"]), ok.status) == ("completed", "completed")
-    assert (_status(db, "f"), failed.status) == ("failed", "failed")
+    ok, failed = await _get(db, done["task_id"]), await _get(db, "f")
+    assert (_status(db, done["task_id"]), ok["status"]) == ("completed", "completed")
+    assert ok["result"]["isError"] is False
+    assert (_status(db, "f"), failed["status"]) == ("failed", "completed")
+    assert failed["result"]["isError"] is True
 
 
 async def test_stdio_drains_even_when_the_server_run_raises() -> None:
@@ -374,19 +377,14 @@ async def test_a_cancelled_job_stays_cancelled_in_tasks_get(
     QueueRepository(db).enqueue_task(
         task_id="p", profile_name="default", task_type="t2i", payload={}
     )
-    ext = TasksExtension(data_store=db)
 
     for task_id in (reply["task_id"], "p"):
-        await ext._handle_cancel_task(None, CancelTaskRequestParams(task_id=task_id))  # pyright: ignore[reportPrivateUsage]
-        got = await ext._handle_get_task(None, GetTaskRequestParams(task_id=task_id))  # pyright: ignore[reportPrivateUsage]
-        assert got.status == "cancelled", task_id
-    got = await ext._handle_get_task(None, GetTaskRequestParams(task_id=reply["task_id"]))  # pyright: ignore[reportPrivateUsage]
-    assert got.status_message is not None and "credit" in got.status_message
+        await _cancel(db, task_id)
+        assert (await _get(db, task_id))["status"] == "cancelled", task_id
+    assert "credit" in (await _get(db, reply["task_id"]))["statusMessage"]
 
 
-@pytest.mark.parametrize(
-    "method", ["_handle_get_task", "_handle_task_result", "_handle_cancel_task"]
-)
+@pytest.mark.parametrize("method", ["_handle_get_task", "_handle_cancel_task"])
 async def test_an_unknown_task_id_is_invalid_params(db: DataStore, method: str) -> None:
     params = GetTaskRequestParams(task_id="nope")
     with pytest.raises(MCPError) as caught:
